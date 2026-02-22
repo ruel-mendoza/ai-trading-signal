@@ -1,38 +1,38 @@
-import { type User, type InsertUser } from "@shared/schema";
-import { randomUUID } from "crypto";
-
-// modify the interface with any CRUD methods
-// you might need
+import { type Signal, type InsertSignal, signals } from "@shared/schema";
+import { db } from "./db";
+import { eq, desc } from "drizzle-orm";
 
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  getAllSignals(): Promise<Signal[]>;
+  getSignalById(id: number): Promise<Signal | undefined>;
+  getSignalsByCategory(category: string): Promise<Signal[]>;
+  createSignal(signal: InsertSignal): Promise<Signal>;
+  updateSignalStatus(id: number, status: string): Promise<Signal | undefined>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
-
-  constructor() {
-    this.users = new Map();
+export class DatabaseStorage implements IStorage {
+  async getAllSignals(): Promise<Signal[]> {
+    return db.select().from(signals).orderBy(desc(signals.createdAt));
   }
 
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+  async getSignalById(id: number): Promise<Signal | undefined> {
+    const [signal] = await db.select().from(signals).where(eq(signals.id, id));
+    return signal;
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+  async getSignalsByCategory(category: string): Promise<Signal[]> {
+    return db.select().from(signals).where(eq(signals.category, category)).orderBy(desc(signals.createdAt));
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+  async createSignal(signal: InsertSignal): Promise<Signal> {
+    const [created] = await db.insert(signals).values(signal).returning();
+    return created;
+  }
+
+  async updateSignalStatus(id: number, status: string): Promise<Signal | undefined> {
+    const [updated] = await db.update(signals).set({ status }).where(eq(signals.id, id)).returning();
+    return updated;
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();
