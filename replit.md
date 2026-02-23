@@ -27,7 +27,7 @@ server/
   routes.ts   - API routes (/api/signals, /api/pairs, /api/signals/generate)
   storage.ts  - Database storage layer
   db.ts       - Database connection
-  seed.ts     - Seed data
+  seed.ts     - Seed data (7 realistic trading signals)
 shared/
   schema.ts   - Drizzle schema (users, signals tables)
 ```
@@ -38,10 +38,15 @@ shared/
 - Signal status management (active/closed/expired)
 - Detailed technical analysis per signal
 - Real-time signal generation via SSE streaming
+- Category filtering and signal stats
 
 ## API Endpoints
 - `GET /api/signals?category=` - List signals (filter by category)
 - `GET /api/signals/:id` - Get signal details
 - `POST /api/signals/generate` - Generate AI signal (SSE stream)
 - `PATCH /api/signals/:id/status` - Update signal status
-- `GET /api/pairs` - List available trading pairs
+- `GET /api/pairs` - List available trading pairs (14 pairs across forex/crypto/commodities)
+
+## Data Model
+- signals table: id (serial), pair, category, direction, entryPrice, stopLoss, takeProfit, status, confidence, analysis, shortSummary, createdAt, updatedAt
+- Query keys use array segments: ["/api/signals", category] for list, ["/api/signals", "detail", id] for detail

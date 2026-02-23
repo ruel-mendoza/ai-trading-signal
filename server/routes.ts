@@ -9,7 +9,7 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-const FOREX_PAIRS = [
+const TRADING_PAIRS = [
   { pair: "EUR/USD", category: "forex" },
   { pair: "GBP/USD", category: "forex" },
   { pair: "USD/JPY", category: "forex" },
@@ -20,6 +20,7 @@ const FOREX_PAIRS = [
   { pair: "EUR/GBP", category: "forex" },
   { pair: "BTC/USD", category: "crypto" },
   { pair: "ETH/USD", category: "crypto" },
+  { pair: "SOL/USD", category: "crypto" },
   { pair: "XAU/USD", category: "commodities" },
   { pair: "XAG/USD", category: "commodities" },
   { pair: "WTI/USD", category: "commodities" },
@@ -32,12 +33,10 @@ export async function registerRoutes(
   app.get("/api/signals", async (req, res) => {
     try {
       const { category } = req.query;
-      let results;
-      if (category && category !== "all") {
-        results = await storage.getSignalsByCategory(category as string);
-      } else {
-        results = await storage.getAllSignals();
-      }
+      const results =
+        category && category !== "all"
+          ? await storage.getSignalsByCategory(category as string)
+          : await storage.getAllSignals();
       res.json(results);
     } catch (error) {
       console.error("Error fetching signals:", error);
@@ -48,10 +47,9 @@ export async function registerRoutes(
   app.get("/api/signals/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid signal ID" });
       const signal = await storage.getSignalById(id);
-      if (!signal) {
-        return res.status(404).json({ error: "Signal not found" });
-      }
+      if (!signal) return res.status(404).json({ error: "Signal not found" });
       res.json(signal);
     } catch (error) {
       console.error("Error fetching signal:", error);
@@ -62,42 +60,46 @@ export async function registerRoutes(
   app.post("/api/signals/generate", async (req, res) => {
     try {
       const { pair } = req.body;
-      const pairInfo = FOREX_PAIRS.find(p => p.pair === pair);
-      if (!pairInfo) {
-        return res.status(400).json({ error: "Invalid trading pair" });
-      }
+      const pairInfo = TRADING_PAIRS.find((p) => p.pair === pair);
+      if (!pairInfo) return res.status(400).json({ error: "Invalid trading pair" });
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
-      res.write(`data: ${JSON.stringify({ type: "status", message: "Analyzing market conditions..." })}\n\n`);
+      const sendEvent = (data: object) => {
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+      };
+
+      sendEvent({ type: "status", message: "Analyzing market conditions..." });
 
       const response = await openai.chat.completions.create({
         model: "gpt-5-mini",
         messages: [
           {
             role: "system",
-            content: `You are a professional forex technical analyst. Generate a realistic trading signal for the given currency pair. You must respond with valid JSON only (no markdown, no code blocks).
+            content: `You are a professional trading analyst. Generate a realistic trading signal for the given pair. Respond with valid JSON only, no markdown or code blocks.
 
-Respond with this exact JSON structure:
+JSON structure:
 {
   "direction": "Buy" or "Sell",
-  "entryPrice": number (realistic current market price),
-  "stopLoss": number (realistic stop loss level),
-  "takeProfit": number (realistic take profit level),
+  "entryPrice": number,
+  "stopLoss": number,
+  "takeProfit": number,
   "confidence": number (60-95),
-  "analysis": "A detailed 2-3 paragraph technical analysis explaining the signal reasoning, mentioning key support/resistance levels, indicators, and market conditions.",
-  "shortSummary": "A concise one-sentence summary of the signal."
-}`
+  "analysis": "2-3 paragraph technical analysis with support/resistance levels, indicators, and market conditions.",
+  "shortSummary": "One sentence summary of the signal."
+}`,
           },
           {
             role: "user",
-            content: `Generate a trading signal for ${pair}. Consider current market dynamics, key technical levels, and provide realistic price targets. Today's date is ${new Date().toISOString().split('T')[0]}.`
-          }
+            content: `Generate a trading signal for ${pair}. Use realistic current market prices. Today is ${new Date().toISOString().split("T")[0]}.`,
+          },
         ],
         max_completion_tokens: 1024,
       });
+
+      sendEvent({ type: "status", message: "Building signal..." });
 
       const content = response.choices[0]?.message?.content || "";
       let signalData;
@@ -112,9 +114,7 @@ Respond with this exact JSON structure:
         }
       }
 
-      res.write(`data: ${JSON.stringify({ type: "status", message: "Generating signal..." })}\n\n`);
-
-      const signalInsert = {
+      const parsed = insertSignalSchema.parse({
         pair: pairInfo.pair,
         category: pairInfo.category,
         direction: signalData.direction,
@@ -125,12 +125,10 @@ Respond with this exact JSON structure:
         analysis: signalData.analysis,
         shortSummary: signalData.shortSummary,
         status: "active",
-      };
+      });
 
-      const parsed = insertSignalSchema.parse(signalInsert);
       const created = await storage.createSignal(parsed);
-
-      res.write(`data: ${JSON.stringify({ type: "complete", signal: created })}\n\n`);
+      sendEvent({ type: "complete", signal: created });
       res.end();
     } catch (error) {
       console.error("Error generating signal:", error);
@@ -146,14 +144,13 @@ Respond with this exact JSON structure:
   app.patch("/api/signals/:id/status", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid signal ID" });
       const { status } = req.body;
       if (!["active", "closed", "expired"].includes(status)) {
         return res.status(400).json({ error: "Invalid status" });
       }
       const updated = await storage.updateSignalStatus(id, status);
-      if (!updated) {
-        return res.status(404).json({ error: "Signal not found" });
-      }
+      if (!updated) return res.status(404).json({ error: "Signal not found" });
       res.json(updated);
     } catch (error) {
       console.error("Error updating signal:", error);
@@ -162,7 +159,7 @@ Respond with this exact JSON structure:
   });
 
   app.get("/api/pairs", (_req, res) => {
-    res.json(FOREX_PAIRS);
+    res.json(TRADING_PAIRS);
   });
 
   return httpServer;
