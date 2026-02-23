@@ -1,7 +1,10 @@
 import httpx
 import os
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
+
+logger = logging.getLogger("trading_engine.fcsapi")
 
 BASE_URL = "https://fcsapi.com/api-v3/forex"
 
@@ -65,23 +68,56 @@ class FCSAPIClient:
         from trading_engine.database import get_setting
         db_key = get_setting("fcsapi_key")
         if db_key:
+            logger.info("[API-KEY] Source: database (local storage)")
             return db_key
         if self._static_key:
+            logger.info("[API-KEY] Source: constructor parameter")
             return self._static_key
-        return os.environ.get("FCSAPI_KEY", "")
+        env_key = os.environ.get("FCSAPI_KEY", "")
+        if env_key:
+            logger.info("[API-KEY] Source: FCSAPI_KEY environment variable")
+        else:
+            logger.warning("[API-KEY] No API key found in database, constructor, or environment")
+        return env_key
 
     def _get(self, endpoint: str, params: dict) -> dict:
         from trading_engine.database import log_api_usage
         params["access_key"] = self.api_key
         url = f"{BASE_URL}/{endpoint}"
-        response = self.client.get(url, params=params)
-        response.raise_for_status()
+        logger.info(f"[FCSAPI-REQUEST] {endpoint} | symbol={params.get('symbol')} | timeframe={params.get('time')} | period={params.get('period')}")
+        try:
+            response = self.client.get(url, params=params)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"[FCSAPI-HTTP-ERROR] {endpoint} | status={e.response.status_code} | body={e.response.text[:500]}")
+            raise
+        except Exception as e:
+            logger.error(f"[FCSAPI-ERROR] {endpoint} | error={str(e)}")
+            raise
+        data = response.json()
+        status = data.get("status")
+        code = data.get("code")
+        msg = data.get("msg", "")
+        info = data.get("info", {})
+        credit_count = info.get("credit_count", "N/A")
+        logger.info(f"[FCSAPI-RESPONSE] {endpoint} | status={status} | code={code} | msg={msg} | credits_remaining={credit_count}")
+        if status is False or code == 101:
+            logger.error(f"[FCSAPI-API-ERROR] {endpoint} | API returned error: {msg}")
+        if "out of credit" in msg.lower() or "credit" in msg.lower():
+            logger.critical(f"[FCSAPI-CREDITS] OUT OF CREDITS detected: {msg}")
+        response_data = data.get("response")
+        if response_data is None:
+            logger.warning(f"[FCSAPI-RESPONSE] {endpoint} | response field is None/missing")
+        elif isinstance(response_data, list):
+            logger.info(f"[FCSAPI-RESPONSE] {endpoint} | response contains {len(response_data)} items")
+        elif isinstance(response_data, dict):
+            logger.info(f"[FCSAPI-RESPONSE] {endpoint} | response contains {len(response_data)} keys")
         log_api_usage(
             endpoint=endpoint,
             symbol=params.get("symbol"),
             timeframe=params.get("time"),
         )
-        return response.json()
+        return data
 
     def test_connection(self) -> dict:
         from trading_engine.database import log_api_usage, get_api_usage_stats
@@ -122,12 +158,16 @@ class FCSAPIClient:
             "period": str(period),
             "time": tf,
         }
+        logger.info(f"[FETCH-HISTORY] {symbol} | tf={timeframe}({tf}) | period={period}")
         data = self._get("history", params)
 
         if data.get("status") is False or not data.get("response"):
+            logger.warning(f"[FETCH-HISTORY] {symbol} | No data returned (status={data.get('status')}, response={'empty' if not data.get('response') else 'present'})")
             return []
 
-        return _parse_response_items(data["response"])
+        candles = _parse_response_items(data["response"])
+        logger.info(f"[FETCH-HISTORY] {symbol} | Parsed {len(candles)} candles | first={candles[0]['open_time'] if candles else 'N/A'} | last={candles[-1]['open_time'] if candles else 'N/A'}")
+        return candles
 
     def fetch_latest(self, symbol: str, timeframe: str) -> list[dict]:
         tf = TIMEFRAME_MAP.get(timeframe, "1h")
@@ -136,12 +176,16 @@ class FCSAPIClient:
             "period": "5",
             "time": tf,
         }
+        logger.info(f"[FETCH-LATEST] {symbol} | tf={timeframe}({tf})")
         data = self._get("history", params)
 
         if data.get("status") is False or not data.get("response"):
+            logger.warning(f"[FETCH-LATEST] {symbol} | No data returned")
             return []
 
-        return _parse_response_items(data["response"])
+        candles = _parse_response_items(data["response"])
+        logger.info(f"[FETCH-LATEST] {symbol} | Parsed {len(candles)} candles")
+        return candles
 
     def get_available_symbols(self) -> list[str]:
         params = {"type": "forex"}

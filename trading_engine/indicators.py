@@ -1,5 +1,8 @@
+import logging
 import numpy as np
 from typing import Optional
+
+logger = logging.getLogger("trading_engine.indicators")
 
 
 class IndicatorEngine:
@@ -97,11 +100,22 @@ class IndicatorEngine:
     @classmethod
     def calculate_all(cls, candles: list[dict]) -> dict:
         if not candles:
+            logger.warning("[INDICATORS] calculate_all called with 0 candles")
             return {}
 
+        num_bars = len(candles)
         closes = [c["close"] for c in candles]
         highs = [c["high"] for c in candles]
         lows = [c["low"] for c in candles]
+
+        logger.info(f"[INDICATOR-READINESS] Bars available: {num_bars}")
+        logger.info(f"[INDICATOR-READINESS] EMA 20:  {'READY' if num_bars >= 20 else f'INSUFFICIENT (need 20, have {num_bars})'}")
+        logger.info(f"[INDICATOR-READINESS] EMA 50:  {'READY' if num_bars >= 50 else f'INSUFFICIENT (need 50, have {num_bars})'}")
+        logger.info(f"[INDICATOR-READINESS] EMA 200: {'READY' if num_bars >= 200 else f'INSUFFICIENT (need 200, have {num_bars})'}")
+        logger.info(f"[INDICATOR-READINESS] SMA 50:  {'READY' if num_bars >= 50 else f'INSUFFICIENT (need 50, have {num_bars})'}")
+        logger.info(f"[INDICATOR-READINESS] SMA 100: {'READY' if num_bars >= 100 else f'INSUFFICIENT (need 100, have {num_bars})'}")
+        logger.info(f"[INDICATOR-READINESS] ATR 100: {'READY' if num_bars >= 101 else f'INSUFFICIENT (need 101, have {num_bars})'}")
+        logger.info(f"[INDICATOR-READINESS] RSI 20:  {'READY' if num_bars >= 21 else f'INSUFFICIENT (need 21, have {num_bars})'}")
 
         return {
             "ema_20": cls.ema(closes, 20),

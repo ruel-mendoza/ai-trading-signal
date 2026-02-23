@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -11,6 +12,8 @@ from trading_engine.database import (
     update_signal_tracking,
     close_signal,
 )
+
+logger = logging.getLogger("trading_engine.strategy")
 
 STRATEGY_MTF_EMA = "mtf_ema"
 STRATEGY_TREND_FOLLOWING = "trend_following"
@@ -26,6 +29,7 @@ class StrategyEngine:
         results = []
 
         forex_symbols = symbols or ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "NZD/USD", "USD/CAD", "USD/CHF", "EUR/GBP"]
+        logger.info(f"[STRATEGY-ENGINE] evaluate_all called | symbols={forex_symbols}")
 
         for symbol in forex_symbols:
             mtf_result = self.evaluate_mtf_ema(symbol)
@@ -47,14 +51,18 @@ class StrategyEngine:
         return results
 
     def evaluate_mtf_ema(self, symbol: str) -> Optional[dict]:
+        logger.info(f"[MTF-EMA] ====== Evaluating {symbol} ======")
         try:
             d1_candles = self.cache.get_candles(symbol, "D", 300)
             h4_candles = self.cache.get_candles(symbol, "4H", 300)
             h1_candles = self.cache.get_candles(symbol, "1H", 300)
-        except Exception:
+        except Exception as e:
+            logger.error(f"[MTF-EMA] {symbol} | Exception fetching candles: {e}")
             return None
 
+        logger.info(f"[MTF-EMA] {symbol} | Candle counts: D1={len(d1_candles)} (need 200), H4={len(h4_candles)} (need 200), H1={len(h1_candles)} (need 20)")
         if len(d1_candles) < 200 or len(h4_candles) < 200 or len(h1_candles) < 20:
+            logger.warning(f"[MTF-EMA] {symbol} | INSUFFICIENT DATA - D1: {'OK' if len(d1_candles) >= 200 else 'FAIL'}, H4: {'OK' if len(h4_candles) >= 200 else 'FAIL'}, H1: {'OK' if len(h1_candles) >= 20 else 'FAIL'}")
             return None
 
         d1_closes = [c["close"] for c in d1_candles]
@@ -81,6 +89,15 @@ class StrategyEngine:
         h1_ema20_val = h1_ema20[-1]
 
         if any(v is None for v in [d1_ema200_val, d1_ema50_val, h4_ema200_val, h4_ema200_prev, h4_ema50_val, h4_atr_val, h1_ema20_val]):
+            none_indicators = []
+            if d1_ema200_val is None: none_indicators.append("D1_EMA200")
+            if d1_ema50_val is None: none_indicators.append("D1_EMA50")
+            if h4_ema200_val is None: none_indicators.append("H4_EMA200")
+            if h4_ema200_prev is None: none_indicators.append("H4_EMA200_prev")
+            if h4_ema50_val is None: none_indicators.append("H4_EMA50")
+            if h4_atr_val is None: none_indicators.append("H4_ATR100")
+            if h1_ema20_val is None: none_indicators.append("H1_EMA20")
+            logger.warning(f"[MTF-EMA] {symbol} | Indicators returned None: {none_indicators}")
             return None
 
         price_above_d1_emas = current_price > d1_ema200_val and current_price > d1_ema50_val
@@ -88,6 +105,14 @@ class StrategyEngine:
         dip_below_h4_50 = current_price < h4_ema50_val
         dip_within_1_atr = (h4_ema50_val - current_price) < h4_atr_val
         h1_closes_above_20_ema = current_price > h1_ema20_val
+
+        logger.info(f"[MTF-EMA] {symbol} | price={current_price:.5f}")
+        logger.info(f"[MTF-EMA] {symbol} | Condition 1 - Price > D1 EMA200 ({d1_ema200_val:.5f}) AND D1 EMA50 ({d1_ema50_val:.5f}): {price_above_d1_emas}")
+        logger.info(f"[MTF-EMA] {symbol} | Condition 2 - H4 EMA200 rising ({h4_ema200_val:.5f} > {h4_ema200_prev:.5f}): {h4_ema200_rising}")
+        logger.info(f"[MTF-EMA] {symbol} | Condition 3 - Price dips below H4 EMA50 ({h4_ema50_val:.5f}): {dip_below_h4_50}")
+        logger.info(f"[MTF-EMA] {symbol} | Condition 4 - Dip within 1 ATR ({h4_atr_val:.5f}): {dip_within_1_atr}")
+        logger.info(f"[MTF-EMA] {symbol} | Condition 5 - H1 closes above EMA20 ({h1_ema20_val:.5f}): {h1_closes_above_20_ema}")
+        logger.info(f"[MTF-EMA] {symbol} | ALL CONDITIONS MET: {price_above_d1_emas and h4_ema200_rising and dip_below_h4_50 and dip_within_1_atr and h1_closes_above_20_ema}")
 
         if price_above_d1_emas and h4_ema200_rising and dip_below_h4_50 and dip_within_1_atr and h1_closes_above_20_ema:
             trigger_candle_time = h1_candles[-1]["open_time"]
@@ -122,12 +147,16 @@ class StrategyEngine:
         return None
 
     def evaluate_trend_following(self, symbol: str) -> Optional[dict]:
+        logger.info(f"[TREND-FOLLOW] ====== Evaluating {symbol} ======")
         try:
             d_candles = self.cache.get_candles(symbol, "D", 300)
-        except Exception:
+        except Exception as e:
+            logger.error(f"[TREND-FOLLOW] {symbol} | Exception fetching candles: {e}")
             return None
 
+        logger.info(f"[TREND-FOLLOW] {symbol} | Daily candles: {len(d_candles)} (need 100)")
         if len(d_candles) < 100:
+            logger.warning(f"[TREND-FOLLOW] {symbol} | INSUFFICIENT DATA - have {len(d_candles)}, need 100")
             return None
 
         closes = [c["close"] for c in d_candles]
@@ -144,15 +173,26 @@ class StrategyEngine:
         atr_val = atr100[-1]
 
         if any(v is None for v in [sma50_val, sma100_val, atr_val]):
+            none_list = []
+            if sma50_val is None: none_list.append("SMA50")
+            if sma100_val is None: none_list.append("SMA100")
+            if atr_val is None: none_list.append("ATR100")
+            logger.warning(f"[TREND-FOLLOW] {symbol} | Indicators returned None: {none_list}")
             return None
 
         if len(closes) >= 50:
             highest_50 = max(closes[-50:])
         else:
+            logger.warning(f"[TREND-FOLLOW] {symbol} | Not enough closes for 50-day high (have {len(closes)})")
             return None
 
         price_at_50d_high = current_price >= highest_50
         sma50_above_sma100 = sma50_val > sma100_val
+
+        logger.info(f"[TREND-FOLLOW] {symbol} | price={current_price:.5f}")
+        logger.info(f"[TREND-FOLLOW] {symbol} | Condition 1 - Price >= 50-day high ({highest_50:.5f}): {price_at_50d_high}")
+        logger.info(f"[TREND-FOLLOW] {symbol} | Condition 2 - SMA50 ({sma50_val:.5f}) > SMA100 ({sma100_val:.5f}): {sma50_above_sma100}")
+        logger.info(f"[TREND-FOLLOW] {symbol} | ALL CONDITIONS MET: {price_at_50d_high and sma50_above_sma100}")
 
         if price_at_50d_high and sma50_above_sma100:
             trigger_candle_time = d_candles[-1]["open_time"]
@@ -189,13 +229,26 @@ class StrategyEngine:
 
         return None
 
+    @staticmethod
+    def _is_us_dst(dt: datetime) -> bool:
+        year = dt.year
+        march_second_sunday = 8 + (6 - datetime(year, 3, 8).weekday()) % 7
+        nov_first_sunday = 1 + (6 - datetime(year, 11, 1).weekday()) % 7
+        dst_start = datetime(year, 3, march_second_sunday, 7)
+        dst_end = datetime(year, 11, nov_first_sunday, 6)
+        return dst_start <= dt < dst_end
+
     def evaluate_sp500_momentum(self, symbol: str = "SPX") -> Optional[dict]:
+        logger.info(f"[SP500-MOM] ====== Evaluating {symbol} ======")
         try:
             candles_30m = self.cache.get_candles(symbol, "30m", 300)
-        except Exception:
+        except Exception as e:
+            logger.error(f"[SP500-MOM] {symbol} | Exception fetching candles: {e}")
             return None
 
+        logger.info(f"[SP500-MOM] {symbol} | 30m candles: {len(candles_30m)} (need 21)")
         if len(candles_30m) < 21:
+            logger.warning(f"[SP500-MOM] {symbol} | INSUFFICIENT DATA - have {len(candles_30m)}, need 21")
             return None
 
         closes = [c["close"] for c in candles_30m]
@@ -250,13 +303,17 @@ class StrategyEngine:
         return None
 
     def evaluate_highest_lowest_fx(self, symbol: str = "EUR/USD") -> Optional[dict]:
+        logger.info(f"[HLC-FX] ====== Evaluating {symbol} ======")
         try:
             h1_candles = self.cache.get_candles(symbol, "1H", 300)
             d_candles = self.cache.get_candles(symbol, "D", 60)
-        except Exception:
+        except Exception as e:
+            logger.error(f"[HLC-FX] {symbol} | Exception fetching candles: {e}")
             return None
 
+        logger.info(f"[HLC-FX] {symbol} | Candle counts: H1={len(h1_candles)} (need 50), D={len(d_candles)} (need 50)")
         if len(h1_candles) < 50 or len(d_candles) < 50:
+            logger.warning(f"[HLC-FX] {symbol} | INSUFFICIENT DATA")
             return None
 
         now = datetime.utcnow()
@@ -264,10 +321,19 @@ class StrategyEngine:
         ny_8am_utc = 13
 
         current_hour = now.hour
-        in_tokyo_window = (tokyo_8am_utc <= current_hour or current_hour < tokyo_8am_utc + 2) if tokyo_8am_utc < 24 else (current_hour >= tokyo_8am_utc % 24 or current_hour < (tokyo_8am_utc % 24) + 2)
+        in_tokyo_window = (current_hour >= tokyo_8am_utc or current_hour < (tokyo_8am_utc + 2) % 24)
         in_ny_window = ny_8am_utc <= current_hour < ny_8am_utc + 2
 
+        is_dst = self._is_us_dst(now)
+        forex_close_5pm_et_utc = 21 if is_dst else 22
+        logger.info(f"[TIMEZONE] UTC now: {now.strftime('%Y-%m-%d %H:%M:%S')} | hour={current_hour}")
+        logger.info(f"[TIMEZONE] Tokyo 8am = UTC {tokyo_8am_utc}:00 (JST=UTC+9) | window: UTC {tokyo_8am_utc}:00-{(tokyo_8am_utc+2)%24}:00")
+        logger.info(f"[TIMEZONE] NY 8am = UTC {ny_8am_utc}:00 (ET=UTC-5) | window: UTC {ny_8am_utc}:00-{ny_8am_utc+2}:00")
+        logger.info(f"[TIMEZONE] US DST active: {is_dst} | Forex daily close (5pm ET) = UTC {forex_close_5pm_et_utc}:00")
+        logger.info(f"[TIMEZONE] In Tokyo window: {in_tokyo_window} | In NY window: {in_ny_window}")
+
         if not (in_tokyo_window or in_ny_window):
+            logger.info(f"[HLC-FX] {symbol} | Outside both Tokyo and NY windows - skipping")
             return None
 
         d_closes = [c["close"] for c in d_candles]

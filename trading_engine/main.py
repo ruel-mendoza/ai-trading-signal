@@ -1,8 +1,17 @@
 import os
+import logging
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logger = logging.getLogger("trading_engine")
 
 from trading_engine.database import init_db, get_candles, get_candle_count, get_all_signals, get_active_signals, VALID_TIMEFRAMES
 from trading_engine.fcsapi_client import FCSAPIClient
