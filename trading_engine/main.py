@@ -4,10 +4,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 
-from trading_engine.database import init_db, get_candles, get_candle_count, VALID_TIMEFRAMES
+from trading_engine.database import init_db, get_candles, get_candle_count, get_all_signals, get_active_signals, VALID_TIMEFRAMES
 from trading_engine.fcsapi_client import FCSAPIClient
 from trading_engine.cache_layer import CacheLayer
 from trading_engine.indicators import IndicatorEngine
+from trading_engine.strategy_engine import StrategyEngine
 
 app = FastAPI(
     title="Trading Signal Engine",
@@ -27,6 +28,7 @@ init_db()
 
 api_client = FCSAPIClient()
 cache = CacheLayer(api_client)
+strategy_engine = StrategyEngine(cache)
 
 
 class CandleResponse(BaseModel):
@@ -178,6 +180,82 @@ def cache_status(
         "candles_stored": count,
         "cache_metadata": meta,
         "should_fetch": cache._should_fetch(symbol, timeframe),
+    }
+
+
+@app.post("/api/strategies/evaluate")
+def evaluate_strategies(
+    symbols: Optional[str] = Query(None, description="Comma-separated list of symbols to evaluate"),
+):
+    symbol_list = [s.strip() for s in symbols.split(",")] if symbols else None
+    new_signals = strategy_engine.evaluate_all(symbols=symbol_list)
+    return {
+        "new_signals": new_signals,
+        "count": len(new_signals),
+        "message": f"Evaluated all strategies, generated {len(new_signals)} new signal(s)",
+    }
+
+
+@app.post("/api/strategies/evaluate/{strategy_name}")
+def evaluate_single_strategy(
+    strategy_name: str,
+    symbol: str = Query(..., description="Symbol to evaluate"),
+):
+    result = None
+    if strategy_name == "mtf_ema":
+        result = strategy_engine.evaluate_mtf_ema(symbol)
+    elif strategy_name == "trend_following":
+        result = strategy_engine.evaluate_trend_following(symbol)
+    elif strategy_name == "sp500_momentum":
+        result = strategy_engine.evaluate_sp500_momentum(symbol)
+    elif strategy_name == "highest_lowest_fx":
+        result = strategy_engine.evaluate_highest_lowest_fx(symbol)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown strategy '{strategy_name}'. Available: mtf_ema, trend_following, sp500_momentum, highest_lowest_fx",
+        )
+
+    return {
+        "strategy": strategy_name,
+        "symbol": symbol,
+        "signal": result,
+        "triggered": result is not None,
+    }
+
+
+@app.post("/api/strategies/check-exits")
+def check_exit_conditions():
+    closed = strategy_engine.check_exit_conditions()
+    return {
+        "closed_signals": closed,
+        "count": len(closed),
+    }
+
+
+@app.get("/api/strategy-signals")
+def list_strategy_signals(
+    strategy: Optional[str] = Query(None, description="Filter by strategy name"),
+    symbol: Optional[str] = Query(None, description="Filter by symbol"),
+    status: Optional[str] = Query(None, description="Filter by status: active, closed, expired"),
+    limit: int = Query(100, ge=1, le=500),
+):
+    signals = get_all_signals(strategy=strategy, symbol=symbol, status=status, limit=limit)
+    return {
+        "signals": signals,
+        "count": len(signals),
+    }
+
+
+@app.get("/api/strategy-signals/active")
+def list_active_signals(
+    strategy: Optional[str] = Query(None, description="Filter by strategy name"),
+    symbol: Optional[str] = Query(None, description="Filter by symbol"),
+):
+    signals = get_active_signals(strategy=strategy, symbol=symbol)
+    return {
+        "signals": signals,
+        "count": len(signals),
     }
 
 

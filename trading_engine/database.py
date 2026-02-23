@@ -47,6 +47,36 @@ def init_db():
             UNIQUE(symbol, timeframe)
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS strategy_signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            strategy TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            direction TEXT NOT NULL CHECK(direction IN ('long', 'short')),
+            entry_price REAL NOT NULL,
+            stop_loss REAL,
+            take_profit REAL,
+            trailing_stop_atr_mult REAL,
+            trigger_candle_time TEXT NOT NULL,
+            trigger_timeframe TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'closed', 'expired')),
+            highest_price REAL,
+            lowest_price REAL,
+            exit_price REAL,
+            exit_reason TEXT,
+            metadata TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(strategy, symbol, trigger_candle_time, trigger_timeframe)
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_strategy_signals_lookup
+        ON strategy_signals(strategy, symbol, trigger_candle_time, trigger_timeframe)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_strategy_signals_active
+        ON strategy_signals(strategy, symbol, status)
+    """)
     conn.commit()
     conn.close()
 
@@ -113,6 +143,102 @@ def get_cache_metadata(symbol: str, timeframe: str) -> Optional[dict]:
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
+
+def signal_exists(strategy: str, symbol: str, trigger_candle_time: str, trigger_timeframe: str) -> bool:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 1 FROM strategy_signals
+        WHERE strategy = ? AND symbol = ? AND trigger_candle_time = ? AND trigger_timeframe = ?
+    """, (strategy, symbol, trigger_candle_time, trigger_timeframe))
+    row = cursor.fetchone()
+    conn.close()
+    return row is not None
+
+def insert_signal(signal: dict) -> Optional[int]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO strategy_signals
+                (strategy, symbol, direction, entry_price, stop_loss, take_profit,
+                 trailing_stop_atr_mult, trigger_candle_time, trigger_timeframe,
+                 status, highest_price, lowest_price, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+        """, (
+            signal["strategy"], signal["symbol"], signal["direction"],
+            signal["entry_price"], signal.get("stop_loss"),
+            signal.get("take_profit"), signal.get("trailing_stop_atr_mult"),
+            signal["trigger_candle_time"], signal["trigger_timeframe"],
+            signal["entry_price"] if signal["direction"] == "long" else None,
+            signal["entry_price"] if signal["direction"] == "short" else None,
+            signal.get("metadata"),
+        ))
+        conn.commit()
+        signal_id = cursor.lastrowid
+    except sqlite3.IntegrityError:
+        signal_id = None
+    conn.close()
+    return signal_id
+
+def get_active_signals(strategy: Optional[str] = None, symbol: Optional[str] = None) -> list[dict]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = "SELECT * FROM strategy_signals WHERE status = 'active'"
+    params: list = []
+    if strategy:
+        query += " AND strategy = ?"
+        params.append(strategy)
+    if symbol:
+        query += " AND symbol = ?"
+        params.append(symbol)
+    query += " ORDER BY created_at DESC"
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def update_signal_tracking(signal_id: int, highest_price: Optional[float] = None, lowest_price: Optional[float] = None):
+    conn = get_connection()
+    cursor = conn.cursor()
+    if highest_price is not None:
+        cursor.execute("UPDATE strategy_signals SET highest_price = MAX(COALESCE(highest_price, 0), ?) WHERE id = ?", (highest_price, signal_id))
+    if lowest_price is not None:
+        cursor.execute("UPDATE strategy_signals SET lowest_price = MIN(COALESCE(lowest_price, 999999), ?) WHERE id = ?", (lowest_price, signal_id))
+    conn.commit()
+    conn.close()
+
+def close_signal(signal_id: int, exit_price: float, exit_reason: str):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE strategy_signals
+        SET status = 'closed', exit_price = ?, exit_reason = ?
+        WHERE id = ?
+    """, (exit_price, exit_reason, signal_id))
+    conn.commit()
+    conn.close()
+
+def get_all_signals(strategy: Optional[str] = None, symbol: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> list[dict]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = "SELECT * FROM strategy_signals WHERE 1=1"
+    params: list = []
+    if strategy:
+        query += " AND strategy = ?"
+        params.append(strategy)
+    if symbol:
+        query += " AND symbol = ?"
+        params.append(symbol)
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    query += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 def get_candle_count(symbol: str, timeframe: str) -> int:
     conn = get_connection()
