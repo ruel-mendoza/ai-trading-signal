@@ -164,6 +164,10 @@ app.use("/api/engine", async (req: Request, res: Response) => {
 
     if (response.status >= 300 && response.status < 400) {
       let location = response.headers.get("location") || "/api/engine/admin/";
+      try {
+        const parsed = new URL(location);
+        location = parsed.pathname + parsed.search;
+      } catch {}
       if (location.startsWith("/admin")) {
         location = "/api/engine" + location;
       }
