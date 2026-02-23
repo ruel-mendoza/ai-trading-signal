@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import OpenAI from "openai";
 import { insertSignalSchema } from "@shared/schema";
+import { fetchFCSCandles, analyzeCandles } from "./fcs";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -160,6 +161,22 @@ JSON structure:
 
   app.get("/api/pairs", (_req, res) => {
     res.json(TRADING_PAIRS);
+  });
+
+  app.get("/api/analysis", async (_req, res) => {
+    try {
+      const candles = await fetchFCSCandles(6);
+      const analysis = analyzeCandles(candles);
+      res.json({
+        ...analysis,
+        candles: analysis.candles.slice(-50),
+        tokyoSessionCandles: analysis.tokyoSessionCandles,
+        nySessionCandles: analysis.nySessionCandles,
+      });
+    } catch (error) {
+      console.error("Error fetching analysis:", error);
+      res.status(500).json({ error: "Failed to fetch analysis data" });
+    }
   });
 
   return httpServer;
