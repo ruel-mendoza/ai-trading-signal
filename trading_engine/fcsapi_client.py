@@ -20,6 +20,41 @@ TIMEFRAME_DURATION_MINUTES = {
 }
 
 
+def _parse_response_items(response) -> list[dict]:
+    items = []
+    if isinstance(response, dict):
+        items = list(response.values())
+    elif isinstance(response, list):
+        items = response
+    else:
+        return []
+
+    candles = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        vol_str = item.get("v", "")
+        volume = 0.0
+        if vol_str and vol_str.strip():
+            try:
+                volume = float(vol_str)
+            except (ValueError, TypeError):
+                volume = 0.0
+
+        candles.append({
+            "open_time": item.get("tm", item.get("o_time", "")),
+            "open": float(item.get("o", 0)),
+            "high": float(item.get("h", 0)),
+            "low": float(item.get("l", 0)),
+            "close": float(item.get("c", 0)),
+            "volume": volume,
+            "is_closed": 1,
+        })
+
+    candles.sort(key=lambda x: x["open_time"])
+    return candles
+
+
 class FCSAPIClient:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.environ.get("FCSAPI_KEY", "")
@@ -44,18 +79,7 @@ class FCSAPIClient:
         if data.get("status") is False or not data.get("response"):
             return []
 
-        candles = []
-        for item in data["response"]:
-            candles.append({
-                "open_time": item.get("tm", item.get("o_time", "")),
-                "open": float(item.get("o", 0)),
-                "high": float(item.get("h", 0)),
-                "low": float(item.get("l", 0)),
-                "close": float(item.get("c", 0)),
-                "volume": float(item.get("v", 0)) if item.get("v") else 0,
-                "is_closed": 1,
-            })
-        return candles
+        return _parse_response_items(data["response"])
 
     def fetch_latest(self, symbol: str, timeframe: str) -> list[dict]:
         tf = TIMEFRAME_MAP.get(timeframe, "1h")
@@ -69,18 +93,7 @@ class FCSAPIClient:
         if data.get("status") is False or not data.get("response"):
             return []
 
-        candles = []
-        for item in data["response"]:
-            candles.append({
-                "open_time": item.get("tm", item.get("o_time", "")),
-                "open": float(item.get("o", 0)),
-                "high": float(item.get("h", 0)),
-                "low": float(item.get("l", 0)),
-                "close": float(item.get("c", 0)),
-                "volume": float(item.get("v", 0)) if item.get("v") else 0,
-                "is_closed": 1,
-            })
-        return candles
+        return _parse_response_items(data["response"])
 
     def get_available_symbols(self) -> list[str]:
         params = {"type": "forex"}
@@ -88,8 +101,16 @@ class FCSAPIClient:
         if data.get("status") is False or not data.get("response"):
             return []
         symbols = []
-        for item in data["response"]:
-            symbols.append(item.get("symbol", ""))
+        response = data["response"]
+        if isinstance(response, dict):
+            items = list(response.values())
+        elif isinstance(response, list):
+            items = response
+        else:
+            return []
+        for item in items:
+            if isinstance(item, dict):
+                symbols.append(item.get("symbol", ""))
         return [s for s in symbols if s]
 
     def close(self):
