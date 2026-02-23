@@ -32,12 +32,13 @@ server/
 shared/
   schema.ts   - Drizzle schema (users, signals tables)
 trading_engine/          - Python FastAPI trading engine
-  main.py               - FastAPI app with routes (candles, indicators, strategies)
-  database.py           - SQLite database layer for OHLC candles + strategy signals
-  fcsapi_client.py      - FCSAPI client for fetching OHLC data
+  main.py               - FastAPI app with routes (candles, indicators, strategies, admin)
+  database.py           - SQLite database layer for OHLC candles + strategy signals + API usage
+  fcsapi_client.py      - FCSAPI client for fetching OHLC data (with usage tracking)
   cache_layer.py        - Caching layer (calls API only on candle closes)
   indicators.py         - IndicatorEngine class (EMA, SMA, ATR, RSI)
   strategy_engine.py    - StrategyEngine with 4 strategies + trailing stop management
+  admin.py              - Admin dashboard (HTML), export endpoints, credit monitor, timezone logic
 ```
 
 ## Trading Engine API (via /api/engine/)
@@ -68,6 +69,26 @@ Calculates locally: EMA(20,50,200), SMA(50,100), ATR(100), RSI(20)
 ## Environment Variables
 - `FCSAPI_KEY` - FCSAPI API key for fetching OHLC data (required for live data)
 
+## Admin Interface (via /api/engine/admin/)
+- `GET /api/engine/admin/` - Admin dashboard HTML (signals table, credit monitor, market hours)
+- `GET /api/engine/admin/export?format=csv` - Export signals as CSV
+- `GET /api/engine/admin/export?format=json` - Export signals as JSON
+- `GET /api/engine/admin/api/usage` - FCSAPI usage stats JSON
+- `GET /api/engine/admin/api/market-times` - Current market times JSON
+- Supports query params: ?strategy=, ?status=, ?symbol=, ?tab= for filtering
+
+## Credit Monitor
+- Tracks FCSAPI API calls in SQLite (api_usage table)
+- Monthly limit: 500,000 credits
+- Alert levels: caution (60%), warning (75%), critical (90%)
+- Shows daily history, per-endpoint breakdown
+
+## Timezone Logic
+- Tokyo (JST, UTC+9): Session 09:00-15:00
+- New York (EST/EDT): Session 09:30-16:00, DST auto-detected
+- London (GMT): Session 08:00-16:00
+- Strategy windows: Tokyo 8am (23:00 UTC), NY 8am (13:00 UTC)
+
 ## Key Features
 - AI-generated trading signals with entry/SL/TP levels
 - Signal categories: Forex, Crypto, Commodities
@@ -79,6 +100,7 @@ Calculates locally: EMA(20,50,200), SMA(50,100), ATR(100), RSI(20)
 - Local technical indicator calculations
 - Idempotent strategy evaluation (no duplicate signals per candle)
 - Trailing stop management with automatic exit tracking
+- Admin dashboard with signal table, CSV/JSON export, credit monitor, timezone display
 
 ## API Endpoints (Express)
 - `GET /api/signals?category=` - List signals (filter by category)

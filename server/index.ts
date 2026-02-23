@@ -132,8 +132,20 @@ app.use("/api/engine", async (req: Request, res: Response) => {
     }
 
     const response = await fetch(url, fetchOptions);
-    const data = await response.json();
-    res.status(response.status).json(data);
+    const contentType = response.headers.get("content-type") || "";
+
+    if (contentType.includes("text/html")) {
+      const html = await response.text();
+      res.status(response.status).type("html").send(html);
+    } else if (contentType.includes("text/csv") || contentType.includes("application/json" ) && response.headers.get("content-disposition")) {
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const disposition = response.headers.get("content-disposition");
+      if (disposition) res.setHeader("Content-Disposition", disposition);
+      res.status(response.status).type(contentType).send(buffer);
+    } else {
+      const data = await response.json();
+      res.status(response.status).json(data);
+    }
   } catch (error: any) {
     res.status(502).json({
       error: "Python trading engine unavailable",

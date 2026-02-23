@@ -61,10 +61,16 @@ class FCSAPIClient:
         self.client = httpx.Client(timeout=30)
 
     def _get(self, endpoint: str, params: dict) -> dict:
+        from trading_engine.database import log_api_usage
         params["access_key"] = self.api_key
         url = f"{BASE_URL}/{endpoint}"
         response = self.client.get(url, params=params)
         response.raise_for_status()
+        log_api_usage(
+            endpoint=endpoint,
+            symbol=params.get("symbol"),
+            timeframe=params.get("time"),
+        )
         return response.json()
 
     def fetch_history(self, symbol: str, timeframe: str, period: int = 300) -> list[dict]:

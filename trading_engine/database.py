@@ -77,6 +77,20 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_strategy_signals_active
         ON strategy_signals(strategy, symbol, status)
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS api_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            endpoint TEXT NOT NULL,
+            symbol TEXT,
+            timeframe TEXT,
+            credits_used INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_api_usage_created
+        ON api_usage(created_at)
+    """)
     conn.commit()
     conn.close()
 
@@ -239,6 +253,67 @@ def get_all_signals(strategy: Optional[str] = None, symbol: Optional[str] = None
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+def log_api_usage(endpoint: str, symbol: Optional[str] = None, timeframe: Optional[str] = None, credits_used: int = 1):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO api_usage (endpoint, symbol, timeframe, credits_used)
+        VALUES (?, ?, ?, ?)
+    """, (endpoint, symbol, timeframe, credits_used))
+    conn.commit()
+    conn.close()
+
+def get_api_usage_stats() -> dict:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT COALESCE(SUM(credits_used), 0) as total
+        FROM api_usage
+        WHERE created_at >= datetime('now', 'start of month')
+    """)
+    monthly_total = cursor.fetchone()["total"]
+    cursor.execute("""
+        SELECT COALESCE(SUM(credits_used), 0) as total
+        FROM api_usage
+        WHERE created_at >= datetime('now', '-1 day')
+    """)
+    daily_total = cursor.fetchone()["total"]
+    cursor.execute("""
+        SELECT endpoint, COUNT(*) as count, SUM(credits_used) as credits
+        FROM api_usage
+        WHERE created_at >= datetime('now', 'start of month')
+        GROUP BY endpoint ORDER BY credits DESC
+    """)
+    by_endpoint = [dict(row) for row in cursor.fetchall()]
+    cursor.execute("""
+        SELECT date(created_at) as day, SUM(credits_used) as credits
+        FROM api_usage
+        WHERE created_at >= datetime('now', '-30 days')
+        GROUP BY date(created_at) ORDER BY day DESC LIMIT 30
+    """)
+    daily_history = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    monthly_limit = 500000
+    usage_pct = (monthly_total / monthly_limit) * 100 if monthly_limit > 0 else 0
+    alert_level = None
+    if usage_pct >= 90:
+        alert_level = "critical"
+    elif usage_pct >= 75:
+        alert_level = "warning"
+    elif usage_pct >= 60:
+        alert_level = "caution"
+
+    return {
+        "monthly_total": monthly_total,
+        "monthly_limit": monthly_limit,
+        "usage_percentage": round(usage_pct, 2),
+        "daily_total": daily_total,
+        "alert_level": alert_level,
+        "by_endpoint": by_endpoint,
+        "daily_history": daily_history,
+    }
 
 def get_candle_count(symbol: str, timeframe: str) -> int:
     conn = get_connection()

@@ -9,6 +9,7 @@ from trading_engine.fcsapi_client import FCSAPIClient
 from trading_engine.cache_layer import CacheLayer
 from trading_engine.indicators import IndicatorEngine
 from trading_engine.strategy_engine import StrategyEngine
+from trading_engine.admin import router as admin_router
 
 app = FastAPI(
     title="Trading Signal Engine",
@@ -29,6 +30,8 @@ init_db()
 api_client = FCSAPIClient()
 cache = CacheLayer(api_client)
 strategy_engine = StrategyEngine(cache)
+
+app.include_router(admin_router)
 
 
 class CandleResponse(BaseModel):
