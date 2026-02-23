@@ -75,7 +75,11 @@ Calculates locally: EMA(20,50,200), SMA(50,100), ATR(100), RSI(20)
 - `GET /api/engine/admin/export?format=json` - Export signals as JSON
 - `GET /api/engine/admin/api/usage` - FCSAPI usage stats JSON
 - `GET /api/engine/admin/api/market-times` - Current market times JSON
+- `POST /api/engine/admin/api/settings/key` - Save FCSAPI API key to database
+- `POST /api/engine/admin/api/settings/test-connection` - Test FCSAPI connection, returns plan/credits
+- `GET /api/engine/admin/api/settings` - Get current key source status
 - Supports query params: ?strategy=, ?status=, ?symbol=, ?tab= for filtering
+- Settings tab: API key management, test connection, credit meter
 
 ## Credit Monitor
 - Tracks FCSAPI API calls in SQLite (api_usage table)

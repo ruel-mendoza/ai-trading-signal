@@ -1,12 +1,13 @@
 import csv
 import io
 import json
+import os
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Body
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from typing import Optional
 
-from trading_engine.database import get_all_signals, get_active_signals, get_api_usage_stats
+from trading_engine.database import get_all_signals, get_active_signals, get_api_usage_stats, get_setting, set_setting
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -219,6 +220,71 @@ def _build_timezone_html(times: dict) -> str:
     """
 
 
+def _build_settings_html() -> str:
+    current_key = get_setting("fcsapi_key")
+    env_key = os.environ.get("FCSAPI_KEY", "")
+    has_db_key = bool(current_key)
+    has_env_key = bool(env_key)
+    masked_key = ""
+    if current_key:
+        masked_key = current_key[:4] + "•" * (len(current_key) - 8) + current_key[-4:] if len(current_key) > 8 else "•" * len(current_key)
+    elif env_key:
+        masked_key = env_key[:4] + "•" * (len(env_key) - 8) + env_key[-4:] if len(env_key) > 8 else "•" * len(env_key)
+
+    source_badge = ""
+    if has_db_key:
+        source_badge = '<span class="badge status-active">DATABASE</span>'
+    elif has_env_key:
+        source_badge = '<span class="badge status-expired">ENV VARIABLE</span>'
+    else:
+        source_badge = '<span class="badge status-closed">NOT SET</span>'
+
+    return f"""
+    <div class="settings-section">
+        <h3>FCSAPI Access Key</h3>
+        <p class="settings-desc">Configure your FCSAPI API key for live market data. The key is stored securely in the application database and persists across restarts.</p>
+        <div class="key-status">
+            <span class="stat-label">Current Key Source:</span> {source_badge}
+            <span style="margin-left:12px;color:#94a3b8;font-size:0.85rem;">{masked_key if masked_key else 'No key configured'}</span>
+        </div>
+        <div class="key-form" style="margin-top:16px;">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <input type="password" id="api-key-input" placeholder="Enter FCSAPI Access Key" data-testid="input-api-key"
+                    style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:10px 14px;border-radius:6px;font-size:0.9rem;width:360px;">
+                <button class="btn btn-primary" onclick="saveApiKey()" data-testid="button-save-key">Save Key</button>
+                <button class="btn btn-secondary" onclick="testConnection()" data-testid="button-test-connection">Test Connection</button>
+            </div>
+            <div id="save-result" style="margin-top:12px;"></div>
+        </div>
+    </div>
+
+    <div id="connection-result" class="settings-section" style="margin-top:20px;display:none;">
+        <h3>Connection Test Result</h3>
+        <div id="connection-details"></div>
+    </div>
+
+    <div class="settings-section" style="margin-top:20px;">
+        <h3>API Credit Meter</h3>
+        <p class="settings-desc">Visual overview of your FCSAPI monthly credit usage against the 500,000 limit.</p>
+        <div id="credit-meter-container">
+            <div class="stat-label" style="margin-bottom:4px;">Loading credit data...</div>
+        </div>
+    </div>
+
+    <div class="settings-section" style="margin-top:20px;">
+        <h3>Key Priority</h3>
+        <div class="timezone-note" style="margin-top:0;">
+            <ul>
+                <li><strong>1st priority:</strong> Key saved in database (via this form)</li>
+                <li><strong>2nd priority:</strong> Static key passed at startup</li>
+                <li><strong>3rd priority:</strong> FCSAPI_KEY environment variable</li>
+            </ul>
+            <p style="margin-top:8px;">Saving a key here overrides the environment variable and takes effect immediately for all market data requests.</p>
+        </div>
+    </div>
+    """
+
+
 ADMIN_CSS = """
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; }
@@ -266,6 +332,15 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 .timezone-note { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 16px; margin-top: 16px; font-size: 0.85rem; color: #94a3b8; }
 .timezone-note ul { margin-top: 8px; padding-left: 20px; }
 .timezone-note li { margin-bottom: 4px; }
+.settings-section { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 20px; }
+.settings-desc { font-size: 0.85rem; color: #94a3b8; margin-bottom: 12px; }
+.key-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.result-success { background: #064e3b; border: 1px solid #065f46; border-radius: 8px; padding: 16px; color: #6ee7b7; }
+.result-error { background: #450a0a; border: 1px solid #991b1b; border-radius: 8px; padding: 16px; color: #fca5a5; }
+.credit-meter { margin-top: 12px; }
+.credit-meter .meter-label { display: flex; justify-content: space-between; font-size: 0.85rem; color: #94a3b8; margin-bottom: 4px; }
+.credit-meter .meter-bar { background: #334155; border-radius: 6px; height: 24px; overflow: hidden; position: relative; }
+.credit-meter .meter-fill { height: 100%; border-radius: 6px; transition: width 0.5s ease; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 600; color: white; min-width: 40px; }
 .hidden { display: none; }
 @media (max-width: 768px) {
     .tables-row { grid-template-columns: 1fr; }
@@ -274,21 +349,127 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 """
 
 ADMIN_JS = """
+const BASE = window.location.pathname.replace(/\\/admin\\/?$/, '');
+
 function showTab(tabName) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
     document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
     document.getElementById('tab-' + tabName).classList.remove('hidden');
     document.querySelector('[data-tab="' + tabName + '"]').classList.add('active');
+    if (tabName === 'settings') loadCreditMeter();
 }
 
 function exportSignals(format) {
-    const baseUrl = window.location.pathname.replace(/\\/admin\\/?$/, '');
-    window.location.href = baseUrl + '/admin/export?format=' + format;
+    window.location.href = BASE + '/admin/export?format=' + format;
 }
 
 function refreshPage() {
     window.location.reload();
 }
+
+async function saveApiKey() {
+    const input = document.getElementById('api-key-input');
+    const key = input.value.trim();
+    if (!key) {
+        document.getElementById('save-result').innerHTML = '<div class="result-error">Please enter an API key.</div>';
+        return;
+    }
+    try {
+        const res = await fetch(BASE + '/admin/api/settings/key', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({api_key: key})
+        });
+        const data = await res.json();
+        if (data.success) {
+            document.getElementById('save-result').innerHTML = '<div class="result-success">API key saved successfully. It will be used for all future market data requests.</div>';
+            input.value = '';
+            setTimeout(() => window.location.reload(), 1500);
+        } else {
+            document.getElementById('save-result').innerHTML = '<div class="result-error">Failed to save: ' + (data.error || 'Unknown error') + '</div>';
+        }
+    } catch (e) {
+        document.getElementById('save-result').innerHTML = '<div class="result-error">Error: ' + e.message + '</div>';
+    }
+}
+
+async function testConnection() {
+    const resultDiv = document.getElementById('connection-result');
+    const detailsDiv = document.getElementById('connection-details');
+    resultDiv.style.display = 'block';
+    detailsDiv.innerHTML = '<div class="stat-label">Testing connection...</div>';
+
+    try {
+        const res = await fetch(BASE + '/admin/api/settings/test-connection', {method: 'POST'});
+        const data = await res.json();
+        if (data.success) {
+            const total = data.total_credits || 500000;
+            const used = data.used_credits || 0;
+            const remaining = data.remaining_credits || (total - used);
+            const pct = ((used / total) * 100).toFixed(1);
+            let barColor = '#22c55e';
+            if (pct >= 90) barColor = '#ef4444';
+            else if (pct >= 75) barColor = '#f97316';
+            else if (pct >= 60) barColor = '#eab308';
+
+            detailsDiv.innerHTML = `
+                <div class="result-success">
+                    <strong>Connection Successful</strong>
+                    <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                        <div><span class="stat-label">Plan Type:</span><br><strong>${data.plan_type}</strong></div>
+                        <div><span class="stat-label">Remaining Credits:</span><br><strong>${Number(remaining).toLocaleString()}</strong></div>
+                    </div>
+                    <div class="credit-meter" style="margin-top:16px;">
+                        <div class="meter-label"><span>Used: ${Number(used).toLocaleString()}</span><span>Total: ${Number(total).toLocaleString()}</span></div>
+                        <div class="meter-bar"><div class="meter-fill" style="width:${Math.min(pct,100)}%;background:${barColor};">${pct}%</div></div>
+                    </div>
+                </div>`;
+        } else {
+            detailsDiv.innerHTML = '<div class="result-error"><strong>Connection Failed</strong><br>' + (data.error || 'Unknown error') + '</div>';
+        }
+    } catch (e) {
+        detailsDiv.innerHTML = '<div class="result-error"><strong>Error</strong><br>' + e.message + '</div>';
+    }
+}
+
+async function loadCreditMeter() {
+    const container = document.getElementById('credit-meter-container');
+    if (!container) return;
+    try {
+        const res = await fetch(BASE + '/admin/api/usage');
+        const data = await res.json();
+        const used = data.monthly_total || 0;
+        const total = data.monthly_limit || 500000;
+        const pct = data.usage_percentage || 0;
+        const daily = data.daily_total || 0;
+        let barColor = '#22c55e';
+        let alertText = '';
+        if (pct >= 90) { barColor = '#ef4444'; alertText = 'CRITICAL'; }
+        else if (pct >= 75) { barColor = '#f97316'; alertText = 'WARNING'; }
+        else if (pct >= 60) { barColor = '#eab308'; alertText = 'CAUTION'; }
+
+        container.innerHTML = `
+            <div class="credit-meter">
+                <div class="meter-label">
+                    <span>Used: ${Number(used).toLocaleString()} credits</span>
+                    <span>Limit: ${Number(total).toLocaleString()} credits</span>
+                </div>
+                <div class="meter-bar"><div class="meter-fill" style="width:${Math.min(pct,100)}%;background:${barColor};">${pct.toFixed(1)}%</div></div>
+                <div style="display:flex;justify-content:space-between;margin-top:8px;">
+                    <span class="stat-label">Remaining: ${Number(total - used).toLocaleString()}</span>
+                    <span class="stat-label">Today: ${Number(daily).toLocaleString()}</span>
+                    ${alertText ? '<span class="badge status-' + (pct >= 90 ? 'closed' : 'expired') + '">' + alertText + '</span>' : ''}
+                </div>
+            </div>`;
+    } catch (e) {
+        container.innerHTML = '<div class="result-error">Failed to load credit data.</div>';
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const activeTab = document.querySelector('.tab.active');
+    if (activeTab && activeTab.getAttribute('data-tab') === 'settings') loadCreditMeter();
+});
 """
 
 
@@ -310,6 +491,7 @@ def admin_dashboard(
     signal_rows = _signals_to_table_rows(signals)
     credit_html = _build_credit_html(usage_stats)
     timezone_html = _build_timezone_html(market_times)
+    settings_html = _build_settings_html()
 
     strategy_options = ""
     for s in ["", "mtf_ema", "trend_following", "sp500_momentum", "highest_lowest_fx"]:
@@ -339,13 +521,14 @@ def admin_dashboard(
 <body>
     <header>
         <h1>Trading Engine Admin</h1>
-        <p>Signal Management | Credit Monitor | Market Hours</p>
+        <p>Signal Management | Credit Monitor | Market Hours | Settings</p>
     </header>
     <div class="container">
         <div class="tabs">
             <a class="tab {'active' if tab == 'signals' else ''}" data-tab="signals" onclick="showTab('signals')">Signals ({total_count})</a>
             <a class="tab {'active' if tab == 'credits' else ''}" data-tab="credits" onclick="showTab('credits')">Credit Monitor{alert_badge}</a>
             <a class="tab {'active' if tab == 'timezone' else ''}" data-tab="timezone" onclick="showTab('timezone')">Market Hours</a>
+            <a class="tab {'active' if tab == 'settings' else ''}" data-tab="settings" onclick="showTab('settings')">Settings</a>
         </div>
 
         <div id="tab-signals" class="tab-content {'hidden' if tab != 'signals' else ''}">
@@ -401,6 +584,13 @@ def admin_dashboard(
                 {timezone_html}
             </div>
         </div>
+
+        <div id="tab-settings" class="tab-content {'hidden' if tab != 'settings' else ''}">
+            <div class="section">
+                <h2>Settings</h2>
+                {settings_html}
+            </div>
+        </div>
     </div>
     <script>{ADMIN_JS}</script>
 </body>
@@ -453,3 +643,33 @@ def api_usage_stats():
 def market_times():
     times = _get_market_times()
     return JSONResponse(content=times)
+
+
+@router.post("/api/settings/key")
+def save_api_key(body: dict = Body(...)):
+    api_key = body.get("api_key", "").strip()
+    if not api_key:
+        return JSONResponse(content={"success": False, "error": "API key cannot be empty"})
+    set_setting("fcsapi_key", api_key)
+    return JSONResponse(content={"success": True, "message": "API key saved successfully"})
+
+
+@router.post("/api/settings/test-connection")
+def test_api_connection():
+    from trading_engine.fcsapi_client import FCSAPIClient
+    client = FCSAPIClient()
+    result = client.test_connection()
+    return JSONResponse(content=result)
+
+
+@router.get("/api/settings")
+def get_settings():
+    db_key = get_setting("fcsapi_key")
+    env_key = os.environ.get("FCSAPI_KEY", "")
+    has_db_key = bool(db_key)
+    has_env_key = bool(env_key)
+    source = "database" if has_db_key else ("environment" if has_env_key else "none")
+    return JSONResponse(content={
+        "api_key_configured": has_db_key or has_env_key,
+        "key_source": source,
+    })

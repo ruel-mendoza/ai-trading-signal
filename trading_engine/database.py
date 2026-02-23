@@ -91,6 +91,13 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_api_usage_created
         ON api_usage(created_at)
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -253,6 +260,25 @@ def get_all_signals(strategy: Optional[str] = None, symbol: Optional[str] = None
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+def get_setting(key: str) -> Optional[str]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM app_settings WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    conn.close()
+    return row["value"] if row else None
+
+def set_setting(key: str, value: str):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO app_settings (key, value, updated_at)
+        VALUES (?, ?, datetime('now'))
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+    """, (key, value))
+    conn.commit()
+    conn.close()
 
 def log_api_usage(endpoint: str, symbol: Optional[str] = None, timeframe: Optional[str] = None, credits_used: int = 1):
     conn = get_connection()
