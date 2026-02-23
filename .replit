@@ -40,9 +40,3 @@ waitForPort = 5000
 
 [agent]
 integrations = ["javascript_openai_ai_integrations:2.0.0"]
-
-[userenv]
-
-[userenv.shared]
-FCS_API_KEY = "KMgEWswiXRL2MBBG2VzeM"
-FCS_SYMBOL = "EURUSD"

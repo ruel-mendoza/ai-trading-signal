@@ -63,51 +63,43 @@ export function GenerateSignalDialog({
       const decoder = new TextDecoder();
       let buffer = "";
 
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
 
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            try {
-              const event = JSON.parse(line.slice(6));
-              if (event.type === "status") {
-                setStatusMessage(event.message);
-              } else if (event.type === "complete") {
-                setState("success");
-                setStatusMessage("Signal generated successfully!");
-                queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
-                toast({ title: `New signal generated for ${selectedPair}` });
-                setTimeout(() => {
-                  onOpenChange(false);
-                  setState("idle");
-                  setSelectedPair("");
-                  setStatusMessage("");
-                }, 1500);
-              } else if (event.type === "error") {
-                throw new Error(event.message);
-              }
-            } catch (e) {
-              if (!(e instanceof SyntaxError)) throw e;
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === "status") {
+              setStatusMessage(event.message);
+            } else if (event.type === "complete") {
+              setState("success");
+              setStatusMessage("Signal generated successfully!");
+              queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
+              toast({ title: `Signal generated for ${selectedPair}` });
+              setTimeout(() => {
+                onOpenChange(false);
+                setState("idle");
+                setSelectedPair("");
+              }, 1500);
+            } else if (event.type === "error") {
+              throw new Error(event.message);
             }
+          } catch (e) {
+            if (!(e instanceof SyntaxError)) throw e;
           }
         }
-      } finally {
-        reader.releaseLock();
       }
-    } catch {
+    } catch (error) {
       setState("error");
       setStatusMessage("Failed to generate signal. Please try again.");
-      toast({ title: "Generation failed", variant: "destructive" });
-      setTimeout(() => {
-        setState("idle");
-        setStatusMessage("");
-      }, 3000);
+      toast({ title: "Failed to generate signal", variant: "destructive" });
+      setTimeout(() => setState("idle"), 3000);
     }
   };
 
@@ -117,13 +109,12 @@ export function GenerateSignalDialog({
     if (!open) {
       setState("idle");
       setSelectedPair("");
-      setStatusMessage("");
     }
   };
 
-  const forexPairs = pairs?.filter((p) => p.category === "forex") || [];
-  const cryptoPairs = pairs?.filter((p) => p.category === "crypto") || [];
-  const commodityPairs = pairs?.filter((p) => p.category === "commodities") || [];
+  const forexPairs = pairs?.filter(p => p.category === "forex") || [];
+  const cryptoPairs = pairs?.filter(p => p.category === "crypto") || [];
+  const commodityPairs = pairs?.filter(p => p.category === "commodities") || [];
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -134,7 +125,8 @@ export function GenerateSignalDialog({
             Generate AI Signal
           </DialogTitle>
           <DialogDescription>
-            Select a trading pair and our AI will analyze market conditions to generate a signal with entry, stop loss, and take profit levels.
+            Select a trading pair and our AI will analyze market conditions to generate
+            a trading signal with entry, stop loss, and take profit levels.
           </DialogDescription>
         </DialogHeader>
 
@@ -147,15 +139,13 @@ export function GenerateSignalDialog({
               disabled={state === "generating"}
             >
               <SelectTrigger data-testid="select-pair">
-                <SelectValue placeholder="Choose a pair..." />
+                <SelectValue placeholder="Select a pair..." />
               </SelectTrigger>
               <SelectContent>
                 {forexPairs.length > 0 && (
                   <>
-                    <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      Forex
-                    </div>
-                    {forexPairs.map((p) => (
+                    <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">Forex</div>
+                    {forexPairs.map(p => (
                       <SelectItem key={p.pair} value={p.pair} data-testid={`option-${p.pair}`}>
                         {p.pair}
                       </SelectItem>
@@ -164,10 +154,8 @@ export function GenerateSignalDialog({
                 )}
                 {cryptoPairs.length > 0 && (
                   <>
-                    <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      Crypto
-                    </div>
-                    {cryptoPairs.map((p) => (
+                    <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">Crypto</div>
+                    {cryptoPairs.map(p => (
                       <SelectItem key={p.pair} value={p.pair} data-testid={`option-${p.pair}`}>
                         {p.pair}
                       </SelectItem>
@@ -176,10 +164,8 @@ export function GenerateSignalDialog({
                 )}
                 {commodityPairs.length > 0 && (
                   <>
-                    <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      Commodities
-                    </div>
-                    {commodityPairs.map((p) => (
+                    <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">Commodities</div>
+                    {commodityPairs.map(p => (
                       <SelectItem key={p.pair} value={p.pair} data-testid={`option-${p.pair}`}>
                         {p.pair}
                       </SelectItem>
@@ -191,37 +177,32 @@ export function GenerateSignalDialog({
           </div>
 
           {state !== "idle" && (
-            <div
-              className={`flex items-center gap-3 p-3 rounded-lg text-sm ${
-                state === "generating"
-                  ? "bg-primary/5 border border-primary/20 text-primary"
-                  : state === "success"
-                    ? "bg-emerald-500/5 border border-emerald-500/20 text-emerald-500"
-                    : "bg-red-500/5 border border-red-500/20 text-red-500"
-              }`}
-              data-testid="generate-status"
-            >
-              {state === "generating" && <Loader2 className="w-4 h-4 animate-spin" />}
-              {state === "success" && <CheckCircle className="w-4 h-4" />}
-              {state === "error" && <AlertCircle className="w-4 h-4" />}
-              <span>{statusMessage}</span>
+            <div className={`flex items-center gap-3 p-3 rounded-md ${
+              state === "generating" ? "bg-primary/5 border border-primary/20" :
+              state === "success" ? "bg-green-500/5 border border-green-500/20" :
+              "bg-red-500/5 border border-red-500/20"
+            }`}>
+              {state === "generating" && <Loader2 className="w-4 h-4 text-primary animate-spin" />}
+              {state === "success" && <CheckCircle className="w-4 h-4 text-green-500" />}
+              {state === "error" && <AlertCircle className="w-4 h-4 text-red-500" />}
+              <span className="text-sm">{statusMessage}</span>
             </div>
           )}
 
           <Button
-            className="w-full gap-2"
+            className="w-full"
             onClick={handleGenerate}
             disabled={!selectedPair || state === "generating" || state === "success"}
             data-testid="button-generate-confirm"
           >
             {state === "generating" ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 Analyzing...
               </>
             ) : (
               <>
-                <Zap className="w-4 h-4" />
+                <Zap className="w-4 h-4 mr-2" />
                 Generate Signal
               </>
             )}

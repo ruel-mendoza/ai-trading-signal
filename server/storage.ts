@@ -21,11 +21,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getSignalsByCategory(category: string): Promise<Signal[]> {
-    return db
-      .select()
-      .from(signals)
-      .where(eq(signals.category, category))
-      .orderBy(desc(signals.createdAt));
+    return db.select().from(signals).where(eq(signals.category, category)).orderBy(desc(signals.createdAt));
   }
 
   async createSignal(signal: InsertSignal): Promise<Signal> {
@@ -34,11 +30,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateSignalStatus(id: number, status: string): Promise<Signal | undefined> {
-    const [updated] = await db
-      .update(signals)
-      .set({ status, updatedAt: new Date() })
-      .where(eq(signals.id, id))
-      .returning();
+    const [updated] = await db.update(signals).set({ status }).where(eq(signals.id, id)).returning();
     return updated;
   }
 }
