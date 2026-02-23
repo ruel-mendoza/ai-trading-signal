@@ -3,13 +3,32 @@ import io
 import json
 import os
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, Query, Body
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi import APIRouter, Query, Body, Request, Response, Cookie, Depends
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from typing import Optional
 
-from trading_engine.database import get_all_signals, get_active_signals, get_api_usage_stats, get_setting, set_setting
+from trading_engine.database import (
+    get_all_signals, get_active_signals, get_api_usage_stats, get_setting, set_setting,
+    authenticate_admin, create_session, validate_session, delete_session,
+    get_all_admins, create_admin, update_admin, delete_admin, get_admin_by_id,
+    cleanup_expired_sessions,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def _get_session_user(request: Request) -> Optional[dict]:
+    token = request.cookies.get("admin_session")
+    if not token:
+        return None
+    return validate_session(token)
+
+
+def _require_auth(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        return None
+    return user
 
 TOKYO_TZ = timezone(timedelta(hours=9))
 NY_TZ = timezone(timedelta(hours=-5))
@@ -285,6 +304,123 @@ def _build_settings_html() -> str:
     """
 
 
+LOGIN_CSS = """
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+.login-card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 40px; width: 100%; max-width: 400px; }
+.login-card h1 { font-size: 1.5rem; color: #f8fafc; margin-bottom: 8px; text-align: center; }
+.login-card p { font-size: 0.875rem; color: #94a3b8; margin-bottom: 24px; text-align: center; }
+.form-group { margin-bottom: 16px; }
+.form-group label { display: block; font-size: 0.85rem; color: #94a3b8; margin-bottom: 6px; }
+.form-group input { width: 100%; background: #0f172a; border: 1px solid #334155; color: #e2e8f0; padding: 10px 14px; border-radius: 6px; font-size: 0.9rem; }
+.form-group input:focus { outline: none; border-color: #3b82f6; }
+.login-btn { width: 100%; background: #3b82f6; color: white; padding: 12px; border: none; border-radius: 6px; font-size: 0.95rem; font-weight: 600; cursor: pointer; margin-top: 8px; }
+.login-btn:hover { background: #2563eb; }
+.error-msg { background: #450a0a; border: 1px solid #991b1b; color: #fca5a5; padding: 10px 14px; border-radius: 6px; font-size: 0.85rem; margin-bottom: 16px; text-align: center; }
+"""
+
+
+def _build_login_page(error: str = "") -> str:
+    error_html = f'<div class="error-msg">{error}</div>' if error else ""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Engine Admin - Login</title>
+    <style>{LOGIN_CSS}</style>
+</head>
+<body>
+    <div class="login-card">
+        <h1>Trading Engine Admin</h1>
+        <p>Sign in to access the dashboard</p>
+        {error_html}
+        <form method="POST" action="login">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" data-testid="input-username" required autofocus>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" data-testid="input-password" required>
+            </div>
+            <button type="submit" class="login-btn" data-testid="button-login">Sign In</button>
+        </form>
+    </div>
+</body>
+</html>"""
+
+
+def _build_users_html(current_user_id: int) -> str:
+    admins = get_all_admins()
+    rows = ""
+    for a in admins:
+        is_self = a["id"] == current_user_id
+        self_badge = ' <span class="badge status-active">YOU</span>' if is_self else ""
+        rows += f"""
+        <tr data-testid="row-admin-{a['id']}">
+            <td>{a['id']}</td>
+            <td>{a['username']}{self_badge}</td>
+            <td>{a['created_at']}</td>
+            <td>
+                <button class="btn btn-secondary btn-sm" onclick="editAdmin({a['id']}, '{a['username']}')" data-testid="button-edit-admin-{a['id']}">Edit</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteAdmin({a['id']}, '{a['username']}')" data-testid="button-delete-admin-{a['id']}" {'disabled style="opacity:0.5;cursor:not-allowed;"' if len(admins) <= 1 else ''}>Delete</button>
+            </td>
+        </tr>"""
+
+    return f"""
+    <div class="settings-section">
+        <h3>Admin Users</h3>
+        <p class="settings-desc">Manage admin accounts that can access this dashboard.</p>
+        <table class="data-table" data-testid="admin-users-table" style="margin-top:12px;">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Username</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>{rows}</tbody>
+        </table>
+    </div>
+
+    <div class="settings-section" style="margin-top:20px;">
+        <h3>Add New Admin</h3>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;">
+            <input type="text" id="new-admin-username" placeholder="Username" data-testid="input-new-admin-username"
+                style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:10px 14px;border-radius:6px;font-size:0.9rem;width:200px;">
+            <input type="password" id="new-admin-password" placeholder="Password" data-testid="input-new-admin-password"
+                style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:10px 14px;border-radius:6px;font-size:0.9rem;width:200px;">
+            <button class="btn btn-primary" onclick="addAdmin()" data-testid="button-add-admin">Add Admin</button>
+        </div>
+        <div id="add-admin-result" style="margin-top:12px;"></div>
+    </div>
+
+    <div id="edit-modal" class="modal-overlay hidden">
+        <div class="modal-card">
+            <h3>Edit Admin</h3>
+            <input type="hidden" id="edit-admin-id">
+            <div class="form-group" style="margin-top:12px;">
+                <label style="font-size:0.85rem;color:#94a3b8;margin-bottom:4px;display:block;">Username</label>
+                <input type="text" id="edit-admin-username" data-testid="input-edit-admin-username"
+                    style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:10px 14px;border-radius:6px;font-size:0.9rem;width:100%;">
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label style="font-size:0.85rem;color:#94a3b8;margin-bottom:4px;display:block;">New Password (leave blank to keep current)</label>
+                <input type="password" id="edit-admin-password" data-testid="input-edit-admin-password"
+                    style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:10px 14px;border-radius:6px;font-size:0.9rem;width:100%;">
+            </div>
+            <div id="edit-admin-result" style="margin-top:12px;"></div>
+            <div style="display:flex;gap:8px;margin-top:16px;">
+                <button class="btn btn-primary" onclick="saveEditAdmin()" data-testid="button-save-edit-admin">Save Changes</button>
+                <button class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+    """
+
+
 ADMIN_CSS = """
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; }
@@ -341,6 +477,14 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 .credit-meter .meter-label { display: flex; justify-content: space-between; font-size: 0.85rem; color: #94a3b8; margin-bottom: 4px; }
 .credit-meter .meter-bar { background: #334155; border-radius: 6px; height: 24px; overflow: hidden; position: relative; }
 .credit-meter .meter-fill { height: 100%; border-radius: 6px; transition: width 0.5s ease; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 600; color: white; min-width: 40px; }
+.btn-sm { padding: 4px 10px; font-size: 0.8rem; }
+.btn-danger { background: #991b1b; color: #fca5a5; }
+.btn-danger:hover { background: #b91c1c; }
+.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal-card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; width: 100%; max-width: 440px; }
+.user-bar { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.user-bar span { font-size: 0.85rem; color: #94a3b8; }
+.user-bar .btn { margin: 0; }
 .hidden { display: none; }
 @media (max-width: 768px) {
     .tables-row { grid-template-columns: 1fr; }
@@ -466,6 +610,98 @@ async function loadCreditMeter() {
     }
 }
 
+async function addAdmin() {
+    const username = document.getElementById('new-admin-username').value.trim();
+    const password = document.getElementById('new-admin-password').value;
+    const resultDiv = document.getElementById('add-admin-result');
+    if (!username || !password) {
+        resultDiv.innerHTML = '<div class="result-error">Both username and password are required.</div>';
+        return;
+    }
+    if (password.length < 4) {
+        resultDiv.innerHTML = '<div class="result-error">Password must be at least 4 characters.</div>';
+        return;
+    }
+    try {
+        const res = await fetch(BASE + '/admin/api/users', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({username, password})
+        });
+        const data = await res.json();
+        if (data.success) {
+            resultDiv.innerHTML = '<div class="result-success">Admin "' + username + '" created successfully.</div>';
+            document.getElementById('new-admin-username').value = '';
+            document.getElementById('new-admin-password').value = '';
+            setTimeout(() => window.location.reload(), 1000);
+        } else {
+            resultDiv.innerHTML = '<div class="result-error">' + (data.error || 'Failed to create admin.') + '</div>';
+        }
+    } catch (e) {
+        resultDiv.innerHTML = '<div class="result-error">Error: ' + e.message + '</div>';
+    }
+}
+
+function editAdmin(id, username) {
+    document.getElementById('edit-admin-id').value = id;
+    document.getElementById('edit-admin-username').value = username;
+    document.getElementById('edit-admin-password').value = '';
+    document.getElementById('edit-admin-result').innerHTML = '';
+    document.getElementById('edit-modal').classList.remove('hidden');
+}
+
+function closeEditModal() {
+    document.getElementById('edit-modal').classList.add('hidden');
+}
+
+async function saveEditAdmin() {
+    const id = document.getElementById('edit-admin-id').value;
+    const username = document.getElementById('edit-admin-username').value.trim();
+    const password = document.getElementById('edit-admin-password').value;
+    const resultDiv = document.getElementById('edit-admin-result');
+    if (!username) {
+        resultDiv.innerHTML = '<div class="result-error">Username cannot be empty.</div>';
+        return;
+    }
+    if (password && password.length < 4) {
+        resultDiv.innerHTML = '<div class="result-error">Password must be at least 4 characters.</div>';
+        return;
+    }
+    try {
+        const body = {username};
+        if (password) body.password = password;
+        const res = await fetch(BASE + '/admin/api/users/' + id, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (data.success) {
+            resultDiv.innerHTML = '<div class="result-success">Admin updated successfully.</div>';
+            setTimeout(() => { closeEditModal(); window.location.reload(); }, 1000);
+        } else {
+            resultDiv.innerHTML = '<div class="result-error">' + (data.error || 'Failed to update admin.') + '</div>';
+        }
+    } catch (e) {
+        resultDiv.innerHTML = '<div class="result-error">Error: ' + e.message + '</div>';
+    }
+}
+
+async function deleteAdmin(id, username) {
+    if (!confirm('Are you sure you want to delete admin "' + username + '"?')) return;
+    try {
+        const res = await fetch(BASE + '/admin/api/users/' + id, {method: 'DELETE'});
+        const data = await res.json();
+        if (data.success) {
+            window.location.reload();
+        } else {
+            alert(data.error || 'Failed to delete admin.');
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     const activeTab = document.querySelector('.tab.active');
     if (activeTab && activeTab.getAttribute('data-tab') === 'settings') loadCreditMeter();
@@ -473,13 +709,56 @@ document.addEventListener('DOMContentLoaded', function() {
 """
 
 
+@router.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, error: str = Query("")):
+    user = _get_session_user(request)
+    if user:
+        return RedirectResponse(url=request.scope.get("root_path", "") + "/admin/", status_code=302)
+    return HTMLResponse(content=_build_login_page(error))
+
+
+@router.post("/login")
+async def login_submit(request: Request):
+    form = await request.form()
+    username = form.get("username", "").strip()
+    password = form.get("password", "")
+    base_path = request.scope.get("root_path", "")
+
+    user = authenticate_admin(username, password)
+    if not user:
+        return HTMLResponse(content=_build_login_page("Invalid username or password."))
+
+    cleanup_expired_sessions()
+    token = create_session(user["id"])
+    response = RedirectResponse(url=base_path + "/admin/", status_code=302)
+    response.set_cookie(key="admin_session", value=token, httponly=True, samesite="lax", max_age=86400, path="/")
+    return response
+
+
+@router.get("/logout")
+def logout(request: Request):
+    token = request.cookies.get("admin_session")
+    if token:
+        delete_session(token)
+    base_path = request.scope.get("root_path", "")
+    response = RedirectResponse(url=base_path + "/admin/login", status_code=302)
+    response.delete_cookie(key="admin_session", path="/")
+    return response
+
+
 @router.get("/", response_class=HTMLResponse)
 def admin_dashboard(
+    request: Request,
     strategy: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     symbol: Optional[str] = Query(None),
     tab: str = Query("signals"),
 ):
+    user = _get_session_user(request)
+    if not user:
+        base_path = request.scope.get("root_path", "")
+        return RedirectResponse(url=base_path + "/admin/login", status_code=302)
+
     signals = get_all_signals(strategy=strategy, symbol=symbol, status=status, limit=200)
     active_signals = get_active_signals()
     usage_stats = get_api_usage_stats()
@@ -492,6 +771,7 @@ def admin_dashboard(
     credit_html = _build_credit_html(usage_stats)
     timezone_html = _build_timezone_html(market_times)
     settings_html = _build_settings_html()
+    users_html = _build_users_html(user["user_id"])
 
     strategy_options = ""
     for s in ["", "mtf_ema", "trend_following", "sp500_momentum", "highest_lowest_fx"]:
@@ -510,6 +790,8 @@ def admin_dashboard(
         level = usage_stats["alert_level"].upper()
         alert_badge = f' <span class="badge status-{"closed" if usage_stats["alert_level"] == "critical" else "expired"}">{level}</span>'
 
+    logged_in_username = user["username"]
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -520,8 +802,16 @@ def admin_dashboard(
 </head>
 <body>
     <header>
-        <h1>Trading Engine Admin</h1>
-        <p>Signal Management | Credit Monitor | Market Hours | Settings</p>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+            <div>
+                <h1>Trading Engine Admin</h1>
+                <p>Signal Management | Credit Monitor | Market Hours | Settings</p>
+            </div>
+            <div class="user-bar">
+                <span data-testid="text-logged-in-user">Signed in as <strong>{logged_in_username}</strong></span>
+                <a href="logout" class="btn btn-secondary" data-testid="button-logout" style="margin:0;">Logout</a>
+            </div>
+        </div>
     </header>
     <div class="container">
         <div class="tabs">
@@ -529,6 +819,7 @@ def admin_dashboard(
             <a class="tab {'active' if tab == 'credits' else ''}" data-tab="credits" onclick="showTab('credits')">Credit Monitor{alert_badge}</a>
             <a class="tab {'active' if tab == 'timezone' else ''}" data-tab="timezone" onclick="showTab('timezone')">Market Hours</a>
             <a class="tab {'active' if tab == 'settings' else ''}" data-tab="settings" onclick="showTab('settings')">Settings</a>
+            <a class="tab {'active' if tab == 'users' else ''}" data-tab="users" onclick="showTab('users')">User Settings</a>
         </div>
 
         <div id="tab-signals" class="tab-content {'hidden' if tab != 'signals' else ''}">
@@ -591,6 +882,13 @@ def admin_dashboard(
                 {settings_html}
             </div>
         </div>
+
+        <div id="tab-users" class="tab-content {'hidden' if tab != 'users' else ''}">
+            <div class="section">
+                <h2>User Settings</h2>
+                {users_html}
+            </div>
+        </div>
     </div>
     <script>{ADMIN_JS}</script>
 </body>
@@ -598,13 +896,25 @@ def admin_dashboard(
     return HTMLResponse(content=html)
 
 
+def _auth_guard(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
+    return None
+
+
 @router.get("/export")
 def export_signals(
+    request: Request,
     format: str = Query("csv", description="Export format: csv or json"),
     strategy: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     symbol: Optional[str] = Query(None),
 ):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+
     signals = get_all_signals(strategy=strategy, symbol=symbol, status=status, limit=500)
 
     if format == "json":
@@ -634,19 +944,28 @@ def export_signals(
 
 
 @router.get("/api/usage")
-def api_usage_stats():
+def api_usage_stats(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
     stats = get_api_usage_stats()
     return JSONResponse(content=stats)
 
 
 @router.get("/api/market-times")
-def market_times():
+def market_times(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
     times = _get_market_times()
     return JSONResponse(content=times)
 
 
 @router.post("/api/settings/key")
-def save_api_key(body: dict = Body(...)):
+def save_api_key(request: Request, body: dict = Body(...)):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
     api_key = body.get("api_key", "").strip()
     if not api_key:
         return JSONResponse(content={"success": False, "error": "API key cannot be empty"})
@@ -655,7 +974,10 @@ def save_api_key(body: dict = Body(...)):
 
 
 @router.post("/api/settings/test-connection")
-def test_api_connection():
+def test_api_connection(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
     from trading_engine.fcsapi_client import FCSAPIClient
     client = FCSAPIClient()
     result = client.test_connection()
@@ -663,7 +985,10 @@ def test_api_connection():
 
 
 @router.get("/api/settings")
-def get_settings():
+def get_settings(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
     db_key = get_setting("fcsapi_key")
     env_key = os.environ.get("FCSAPI_KEY", "")
     has_db_key = bool(db_key)
@@ -673,3 +998,63 @@ def get_settings():
         "api_key_configured": has_db_key or has_env_key,
         "key_source": source,
     })
+
+
+@router.post("/api/users")
+def api_create_admin(request: Request, body: dict = Body(...)):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    username = body.get("username", "").strip()
+    password = body.get("password", "")
+    if not username or not password:
+        return JSONResponse(content={"success": False, "error": "Username and password are required."})
+    if len(password) < 4:
+        return JSONResponse(content={"success": False, "error": "Password must be at least 4 characters."})
+    admin_id = create_admin(username, password)
+    if admin_id is None:
+        return JSONResponse(content={"success": False, "error": f'Username "{username}" already exists.'})
+    return JSONResponse(content={"success": True, "id": admin_id})
+
+
+@router.put("/api/users/{admin_id}")
+def api_update_admin(request: Request, admin_id: int, body: dict = Body(...)):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    username = body.get("username", "").strip()
+    password = body.get("password", "")
+    if not username:
+        return JSONResponse(content={"success": False, "error": "Username cannot be empty."})
+    if password and len(password) < 4:
+        return JSONResponse(content={"success": False, "error": "Password must be at least 4 characters."})
+    existing = get_admin_by_id(admin_id)
+    if not existing:
+        return JSONResponse(content={"success": False, "error": "Admin not found."})
+    success = update_admin(admin_id, username=username, password=password if password else None)
+    if not success:
+        return JSONResponse(content={"success": False, "error": f'Username "{username}" already exists.'})
+    return JSONResponse(content={"success": True})
+
+
+@router.delete("/api/users/{admin_id}")
+def api_delete_admin(request: Request, admin_id: int):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    existing = get_admin_by_id(admin_id)
+    if not existing:
+        return JSONResponse(content={"success": False, "error": "Admin not found."})
+    success = delete_admin(admin_id)
+    if not success:
+        return JSONResponse(content={"success": False, "error": "Cannot delete the last admin user."})
+    return JSONResponse(content={"success": True})
+
+
+@router.get("/api/users")
+def api_list_admins(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    admins = get_all_admins()
+    return JSONResponse(content={"admins": admins})

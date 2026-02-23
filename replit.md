@@ -78,8 +78,18 @@ Calculates locally: EMA(20,50,200), SMA(50,100), ATR(100), RSI(20)
 - `POST /api/engine/admin/api/settings/key` - Save FCSAPI API key to database
 - `POST /api/engine/admin/api/settings/test-connection` - Test FCSAPI connection, returns plan/credits
 - `GET /api/engine/admin/api/settings` - Get current key source status
+- `GET /api/engine/admin/login` - Login page (HTML form)
+- `POST /api/engine/admin/login` - Login submission (form POST)
+- `GET /api/engine/admin/logout` - Logout and clear session
+- `POST /api/engine/admin/api/users` - Create new admin user
+- `PUT /api/engine/admin/api/users/:id` - Update admin user (re-hashes password)
+- `DELETE /api/engine/admin/api/users/:id` - Delete admin user (prevents deleting last admin)
+- `GET /api/engine/admin/api/users` - List all admin users
 - Supports query params: ?strategy=, ?status=, ?symbol=, ?tab= for filtering
 - Settings tab: API key management, test connection, credit meter
+- User Settings tab: Admin user list, add/edit/delete admin accounts
+- All routes protected behind session-based cookie authentication
+- Default admin credentials: username=admin, password=pass123 (auto-seeded on first run)
 
 ## Credit Monitor
 - Tracks FCSAPI API calls in SQLite (api_usage table)

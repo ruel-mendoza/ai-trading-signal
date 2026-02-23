@@ -1,6 +1,8 @@
 import sqlite3
 import os
-from datetime import datetime
+import hashlib
+import secrets
+from datetime import datetime, timedelta
 from typing import Optional
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "trading_data.db")
@@ -98,7 +100,30 @@ def init_db():
             updated_at TEXT DEFAULT (datetime('now'))
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS admin_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS admin_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL,
+            expires_at TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES admin_users(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_admin_sessions_token
+        ON admin_sessions(token)
+    """)
     conn.commit()
+    _seed_default_admin(conn)
     conn.close()
 
 def upsert_candles(symbol: str, timeframe: str, candles: list[dict]):
@@ -351,3 +376,154 @@ def get_candle_count(symbol: str, timeframe: str) -> int:
     row = cursor.fetchone()
     conn.close()
     return row["cnt"]
+
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100000).hex()
+    return f"{salt}:{h}"
+
+
+def _verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt, h = stored_hash.split(":")
+        computed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100000).hex()
+        return secrets.compare_digest(computed, h)
+    except (ValueError, AttributeError):
+        return False
+
+
+def _seed_default_admin(conn: sqlite3.Connection):
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as cnt FROM admin_users")
+    if cursor.fetchone()["cnt"] == 0:
+        pw_hash = _hash_password("pass123")
+        cursor.execute(
+            "INSERT INTO admin_users (username, password_hash) VALUES (?, ?)",
+            ("admin", pw_hash),
+        )
+        conn.commit()
+
+
+def authenticate_admin(username: str, password: str) -> Optional[dict]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM admin_users WHERE username = ?", (username,))
+    user = cursor.fetchone()
+    conn.close()
+    if user and _verify_password(password, user["password_hash"]):
+        return dict(user)
+    return None
+
+
+def create_session(user_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.utcnow() + timedelta(hours=24)).isoformat()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO admin_sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
+        (token, user_id, expires),
+    )
+    conn.commit()
+    conn.close()
+    return token
+
+
+def validate_session(token: str) -> Optional[dict]:
+    if not token:
+        return None
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT s.*, u.username FROM admin_sessions s
+        JOIN admin_users u ON s.user_id = u.id
+        WHERE s.token = ? AND s.expires_at > datetime('now')
+    """, (token,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def delete_session(token: str):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM admin_sessions WHERE token = ?", (token,))
+    conn.commit()
+    conn.close()
+
+
+def cleanup_expired_sessions():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM admin_sessions WHERE expires_at <= datetime('now')")
+    conn.commit()
+    conn.close()
+
+
+def get_all_admins() -> list[dict]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, username, created_at FROM admin_users ORDER BY id")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def create_admin(username: str, password: str) -> Optional[int]:
+    pw_hash = _hash_password(password)
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO admin_users (username, password_hash) VALUES (?, ?)",
+            (username, pw_hash),
+        )
+        conn.commit()
+        admin_id = cursor.lastrowid
+    except sqlite3.IntegrityError:
+        admin_id = None
+    conn.close()
+    return admin_id
+
+
+def update_admin(admin_id: int, username: Optional[str] = None, password: Optional[str] = None) -> bool:
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        if username:
+            cursor.execute("UPDATE admin_users SET username = ? WHERE id = ?", (username, admin_id))
+        if password:
+            pw_hash = _hash_password(password)
+            cursor.execute("UPDATE admin_users SET password_hash = ? WHERE id = ?", (pw_hash, admin_id))
+        conn.commit()
+        return cursor.rowcount > 0
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+
+def delete_admin(admin_id: int) -> bool:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as cnt FROM admin_users")
+    count = cursor.fetchone()["cnt"]
+    if count <= 1:
+        conn.close()
+        return False
+    cursor.execute("DELETE FROM admin_sessions WHERE user_id = ?", (admin_id,))
+    cursor.execute("DELETE FROM admin_users WHERE id = ?", (admin_id,))
+    conn.commit()
+    deleted = cursor.rowcount > 0
+    conn.close()
+    return deleted
+
+
+def get_admin_by_id(admin_id: int) -> Optional[dict]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, username, created_at FROM admin_users WHERE id = ?", (admin_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None

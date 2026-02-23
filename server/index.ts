@@ -122,17 +122,53 @@ app.use("/api/engine", async (req: Request, res: Response) => {
     const queryString = new URLSearchParams(req.query as Record<string, string>).toString();
     const url = `${PYTHON_ENGINE_URL}${targetPath}${queryString ? "?" + queryString : ""}`;
 
+    const headers: Record<string, string> = {};
+
+    if (req.headers.cookie) {
+      headers["cookie"] = req.headers.cookie;
+    }
+
+    const isFormPost = (req.headers["content-type"] || "").includes("application/x-www-form-urlencoded");
+
+    if (isFormPost) {
+      headers["content-type"] = "application/x-www-form-urlencoded";
+    } else {
+      headers["content-type"] = "application/json";
+    }
+
     const fetchOptions: RequestInit = {
       method: req.method,
-      headers: { "Content-Type": "application/json" },
+      headers,
+      redirect: "manual",
     };
 
     if (req.method !== "GET" && req.method !== "HEAD") {
-      fetchOptions.body = JSON.stringify(req.body);
+      if (isFormPost) {
+        const params = new URLSearchParams();
+        for (const [key, val] of Object.entries(req.body)) {
+          params.append(key, String(val));
+        }
+        fetchOptions.body = params.toString();
+      } else {
+        fetchOptions.body = JSON.stringify(req.body);
+      }
     }
 
     const response = await fetch(url, fetchOptions);
     const contentType = response.headers.get("content-type") || "";
+
+    const setCookies = response.headers.getSetCookie?.() || [];
+    for (const cookie of setCookies) {
+      res.appendHeader("set-cookie", cookie);
+    }
+
+    if (response.status >= 300 && response.status < 400) {
+      let location = response.headers.get("location") || "/api/engine/admin/";
+      if (location.startsWith("/admin")) {
+        location = "/api/engine" + location;
+      }
+      return res.redirect(response.status, location);
+    }
 
     if (contentType.includes("text/html")) {
       const html = await response.text();
