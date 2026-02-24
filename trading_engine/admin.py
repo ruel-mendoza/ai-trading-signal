@@ -11,8 +11,9 @@ from trading_engine.database import (
     get_all_signals, get_active_signals, get_api_usage_stats, get_setting, set_setting,
     authenticate_admin, create_session, validate_session, delete_session,
     get_all_admins, create_admin, update_admin, delete_admin, get_admin_by_id,
-    cleanup_expired_sessions,
+    cleanup_expired_sessions, get_candles,
 )
+from trading_engine.indicators import IndicatorEngine
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -349,6 +350,217 @@ def _build_login_page(error: str = "") -> str:
     </div>
 </body>
 </html>"""
+
+
+def _get_spx_momentum_data() -> dict:
+    now_utc = datetime.now(timezone.utc)
+    ny_dst = _is_dst_us(now_utc)
+    et_offset = -4 if ny_dst else -5
+    et_tz = timezone(timedelta(hours=et_offset))
+    et_now = now_utc.astimezone(et_tz)
+    et_minutes = et_now.hour * 60 + et_now.minute
+    session_start = 9 * 60 + 30
+    session_end = 15 * 60 + 30
+    in_session = session_start <= et_minutes <= session_end
+
+    candles = get_candles("SPX", "30m", 300)
+    current_rsi = None
+    prev_rsi = None
+    current_atr = None
+    current_close = None
+    candle_count = len(candles)
+
+    if candles:
+        closes = [c["close"] for c in candles]
+        highs = [c["high"] for c in candles]
+        lows = [c["low"] for c in candles]
+        current_close = closes[-1]
+
+        rsi_values = IndicatorEngine.rsi(closes, 20)
+        if rsi_values:
+            current_rsi = rsi_values[-1]
+            if len(rsi_values) >= 2:
+                prev_rsi = rsi_values[-2]
+
+        atr_values = IndicatorEngine.atr(highs, lows, closes, 100)
+        if atr_values and atr_values[-1] is not None:
+            current_atr = atr_values[-1]
+
+    active = get_active_signals(strategy="sp500_momentum", symbol="SPX")
+    active_signal = None
+    if active:
+        sig = active[0]
+        metadata = {}
+        if sig.get("metadata"):
+            try:
+                metadata = json.loads(sig["metadata"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        atr_at_entry = metadata.get("atr100_at_entry")
+        stored_highest = sig.get("highest_price") or sig["entry_price"]
+        highest_close = max(stored_highest, current_close) if current_close else stored_highest
+        trailing_stop = None
+        if atr_at_entry is not None:
+            trailing_stop = highest_close - (atr_at_entry * 2.0)
+        active_signal = {
+            "id": sig["id"],
+            "entry_price": sig["entry_price"],
+            "atr_at_entry": atr_at_entry,
+            "highest_close": highest_close,
+            "trailing_stop": trailing_stop,
+            "direction": sig["direction"],
+            "created_at": sig.get("created_at"),
+            "current_close": current_close,
+        }
+
+    return {
+        "et_time": et_now.strftime(f"%Y-%m-%d %H:%M:%S {'EDT' if ny_dst else 'EST'}"),
+        "in_session": in_session,
+        "dst_active": ny_dst,
+        "current_rsi": round(current_rsi, 4) if current_rsi is not None else None,
+        "prev_rsi": round(prev_rsi, 4) if prev_rsi is not None else None,
+        "current_atr": round(current_atr, 6) if current_atr is not None else None,
+        "current_close": round(current_close, 2) if current_close is not None else None,
+        "candle_count": candle_count,
+        "active_signal": active_signal,
+    }
+
+
+def _build_spx_momentum_html(spx_data: dict, spx_signal_rows: str, spx_signal_count: int) -> str:
+    in_session = spx_data["in_session"]
+    session_badge = '<span class="badge status-active">IN SESSION</span>' if in_session else '<span class="badge status-closed">OUTSIDE SESSION</span>'
+
+    rsi_val = spx_data["current_rsi"]
+    rsi_display = f"{rsi_val:.4f}" if rsi_val is not None else "N/A"
+    rsi_class = ""
+    if rsi_val is not None:
+        if rsi_val >= 70:
+            rsi_class = "color:#6ee7b7;"
+        elif rsi_val <= 30:
+            rsi_class = "color:#fca5a5;"
+
+    atr_val = spx_data["current_atr"]
+    atr_display = f"{atr_val:.6f}" if atr_val is not None else "N/A"
+
+    close_val = spx_data["current_close"]
+    close_display = f"{close_val:.2f}" if close_val is not None else "N/A"
+
+    active_html = ""
+    sig = spx_data["active_signal"]
+    if sig:
+        entry = sig["entry_price"]
+        atr_entry = sig["atr_at_entry"]
+        trail = sig["trailing_stop"]
+        highest = sig["highest_close"]
+        cur = sig.get("current_close")
+
+        entry_display = f"{entry:.2f}"
+        atr_entry_display = f"{atr_entry:.6f}" if atr_entry is not None else "N/A"
+        trail_display = f"{trail:.2f}" if trail is not None else "N/A"
+        highest_display = f"{highest:.2f}"
+        cur_display = f"{cur:.2f}" if cur is not None else "N/A"
+        pnl = ""
+        if cur is not None and entry:
+            diff = cur - entry
+            pnl_pct = (diff / entry) * 100
+            pnl_color = "#6ee7b7" if diff >= 0 else "#fca5a5"
+            pnl = f'<span style="color:{pnl_color};font-weight:600;">{diff:+.2f} ({pnl_pct:+.2f}%)</span>'
+
+        active_html = f"""
+        <div class="settings-section" style="margin-top:20px;border-left:3px solid #3b82f6;">
+            <h3>Active Trade</h3>
+            <div class="stats-grid" style="margin-top:12px;">
+                <div class="stat-card">
+                    <div class="stat-label">Entry Price</div>
+                    <div class="stat-value" style="font-size:1.3rem;">{entry_display}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Fixed ATR (at entry)</div>
+                    <div class="stat-value" style="font-size:1.3rem;">{atr_entry_display}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Trailing Stop Level</div>
+                    <div class="stat-value" style="font-size:1.3rem;color:#fbbf24;">{trail_display}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Highest Close</div>
+                    <div class="stat-value" style="font-size:1.3rem;">{highest_display}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Current Close</div>
+                    <div class="stat-value" style="font-size:1.3rem;">{cur_display}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">P&L</div>
+                    <div class="stat-value" style="font-size:1.3rem;">{pnl}</div>
+                </div>
+            </div>
+            <div class="stat-label" style="margin-top:8px;">Opened: {sig.get('created_at', 'N/A')} | Direction: {sig['direction'].upper()}</div>
+        </div>"""
+    else:
+        active_html = """
+        <div class="settings-section" style="margin-top:20px;">
+            <h3>Active Trade</h3>
+            <p style="color:#94a3b8;padding:16px 0;">No active SPX momentum trade.</p>
+        </div>"""
+
+    return f"""
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">ARCA Session (9:30-15:30 ET)</div>
+            <div style="margin-top:8px;">{session_badge}</div>
+            <div class="stat-label" style="margin-top:8px;">{spx_data['et_time']}</div>
+            <div class="stat-label">DST: {'Active' if spx_data['dst_active'] else 'Inactive'}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Current Close (30m)</div>
+            <div class="stat-value" style="font-size:1.3rem;">{close_display}</div>
+            <div class="stat-label" style="margin-top:4px;">{spx_data['candle_count']} candles loaded</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">RSI(20)</div>
+            <div class="stat-value" style="font-size:1.3rem;{rsi_class}">{rsi_display}</div>
+            <div class="stat-label" style="margin-top:4px;">Threshold: 70</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">ATR(100)</div>
+            <div class="stat-value" style="font-size:1.3rem;">{atr_display}</div>
+        </div>
+    </div>
+    {active_html}
+    <div class="settings-section" style="margin-top:20px;">
+        <h3>Signal History ({spx_signal_count})</h3>
+        <div style="overflow-x:auto;margin-top:12px;">
+            <table class="data-table" data-testid="spx-signals-table">
+                <thead>
+                    <tr>
+                        <th>Asset</th>
+                        <th>Direction</th>
+                        <th>Entry Price</th>
+                        <th>Stop Loss</th>
+                        <th>Take Profit</th>
+                        <th>Exit Price</th>
+                        <th>Strategy</th>
+                        <th>Status</th>
+                        <th>Timeframe</th>
+                        <th>Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody>{spx_signal_rows}</tbody>
+            </table>
+        </div>
+    </div>
+    <div class="timezone-note" style="margin-top:16px;">
+        <strong>Strategy Rules:</strong>
+        <ul>
+            <li><strong>Entry:</strong> LONG when prev RSI(20) &lt; 70 AND current RSI(20) &ge; 70 (during ARCA session)</li>
+            <li><strong>Exit (RSI):</strong> Close when prev RSI(20) &ge; 70 AND current RSI(20) &lt; 70</li>
+            <li><strong>Exit (Trailing Stop):</strong> Close when price &lt; highest_close - (ATR_at_entry &times; 2)</li>
+            <li><strong>ATR:</strong> Fixed at entry value for the duration of the trade</li>
+            <li><strong>Session:</strong> Only evaluates during ARCA hours (9:30 AM - 3:30 PM ET, last valid candle)</li>
+        </ul>
+    </div>
+    """
 
 
 def _build_users_html(current_user_id: int) -> str:
@@ -773,6 +985,12 @@ def admin_dashboard(
     settings_html = _build_settings_html()
     users_html = _build_users_html(user["user_id"])
 
+    spx_data = _get_spx_momentum_data()
+    spx_signals = get_all_signals(strategy="sp500_momentum", limit=200)
+    spx_signal_rows = _signals_to_table_rows(spx_signals)
+    spx_signal_count = len(spx_signals)
+    spx_html = _build_spx_momentum_html(spx_data, spx_signal_rows, spx_signal_count)
+
     strategy_options = ""
     for s in ["", "mtf_ema", "trend_following", "sp500_momentum", "highest_lowest_fx"]:
         label = s.replace("_", " ").title() if s else "All Strategies"
@@ -816,6 +1034,7 @@ def admin_dashboard(
     <div class="container">
         <div class="tabs">
             <a class="tab {'active' if tab == 'signals' else ''}" data-tab="signals" onclick="showTab('signals')">Signals ({total_count})</a>
+            <a class="tab {'active' if tab == 'spx' else ''}" data-tab="spx" onclick="showTab('spx')" data-testid="tab-spx">SPX 500 Momentum</a>
             <a class="tab {'active' if tab == 'credits' else ''}" data-tab="credits" onclick="showTab('credits')">Credit Monitor{alert_badge}</a>
             <a class="tab {'active' if tab == 'timezone' else ''}" data-tab="timezone" onclick="showTab('timezone')">Market Hours</a>
             <a class="tab {'active' if tab == 'settings' else ''}" data-tab="settings" onclick="showTab('settings')">Settings</a>
@@ -859,6 +1078,13 @@ def admin_dashboard(
                         <tbody>{signal_rows}</tbody>
                     </table>
                 </div>
+            </div>
+        </div>
+
+        <div id="tab-spx" class="tab-content {'hidden' if tab != 'spx' else ''}">
+            <div class="section">
+                <h2>SPX 500 Momentum Strategy</h2>
+                {spx_html}
             </div>
         </div>
 
@@ -1049,6 +1275,15 @@ def api_delete_admin(request: Request, admin_id: int):
     if not success:
         return JSONResponse(content={"success": False, "error": "Cannot delete the last admin user."})
     return JSONResponse(content={"success": True})
+
+
+@router.get("/api/spx-momentum")
+def api_spx_momentum(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    data = _get_spx_momentum_data()
+    return JSONResponse(content=data)
 
 
 @router.get("/api/users")
