@@ -1,7 +1,7 @@
 import json
 import logging
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+import pytz
 from typing import Optional
 
 from trading_engine.indicators import IndicatorEngine
@@ -30,7 +30,7 @@ FOREX_CLOSE_HOUR = 17
 FOREX_CLOSE_MINUTE = 0
 EVAL_WINDOW_MINUTES = 30
 
-ET_ZONE = ZoneInfo("America/New_York")
+ET_ZONE = pytz.timezone("America/New_York")
 
 
 class ForexTrendFollowingStrategy:
@@ -38,7 +38,8 @@ class ForexTrendFollowingStrategy:
         self.cache = cache
 
     def _is_forex_close_window(self) -> bool:
-        now_et = datetime.now(ET_ZONE)
+        now_utc = datetime.now(pytz.utc)
+        now_et = now_utc.astimezone(ET_ZONE)
         is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
         tz_abbr = "EDT" if is_dst else "EST"
 
@@ -49,8 +50,9 @@ class ForexTrendFollowingStrategy:
         in_window = close_minutes <= et_minutes <= window_end
 
         logger.info(
-            f"[TREND-FOREX] Timing check | now_ET={now_et.strftime('%H:%M')} {tz_abbr} | "
-            f"forex_close=17:00 ET | window=17:00-17:30 ET | in_window={in_window}"
+            f"[TREND-FOREX] Timing check (pytz) | now_ET={now_et.strftime('%H:%M')} {tz_abbr} | "
+            f"forex_close=17:00 ET | window=17:00-17:30 ET | in_window={in_window} | "
+            f"DST={'active' if is_dst else 'inactive'}"
         )
         return in_window
 
@@ -117,7 +119,8 @@ class ForexTrendFollowingStrategy:
         close_above_highest = current_close > highest_50d
         close_below_lowest = current_close < lowest_50d
 
-        now_et = datetime.now(ET_ZONE)
+        now_utc = datetime.now(pytz.utc)
+        now_et = now_utc.astimezone(ET_ZONE)
         is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
 
         logger.info(f"[TREND-FOREX] {symbol} | close={current_close:.5f}")
@@ -134,11 +137,14 @@ class ForexTrendFollowingStrategy:
 
         if close_above_highest and sma50_above_sma100:
             if self._has_open_trade(symbol, "long"):
-                logger.info(f"[TREND-FOREX] {symbol} | Existing open LONG - skipping new entry")
+                logger.info(f"[TREND-FOREX] {symbol} | IDEMPOTENCY: Existing open LONG trade - skipping duplicate entry")
                 return None
 
             if signal_exists(STRATEGY_NAME, symbol, trigger_candle_time, TIMEFRAME):
-                logger.info(f"[TREND-FOREX] {symbol} | Signal already exists for candle {trigger_candle_time} - skipping")
+                logger.info(
+                    f"[TREND-FOREX] {symbol} | IDEMPOTENCY: Signal already exists for candle {trigger_candle_time} "
+                    f"(timeframe={TIMEFRAME}) - re-run blocked, no duplicate generated"
+                )
                 return None
 
             stop_loss_distance = TRAILING_STOP_ATR_MULT * atr_val
@@ -187,11 +193,14 @@ class ForexTrendFollowingStrategy:
 
         elif close_below_lowest and not sma50_above_sma100:
             if self._has_open_trade(symbol, "short"):
-                logger.info(f"[TREND-FOREX] {symbol} | Existing open SHORT - skipping new entry")
+                logger.info(f"[TREND-FOREX] {symbol} | IDEMPOTENCY: Existing open SHORT trade - skipping duplicate entry")
                 return None
 
             if signal_exists(STRATEGY_NAME, symbol, trigger_candle_time, TIMEFRAME):
-                logger.info(f"[TREND-FOREX] {symbol} | Signal already exists for candle {trigger_candle_time} - skipping")
+                logger.info(
+                    f"[TREND-FOREX] {symbol} | IDEMPOTENCY: Signal already exists for candle {trigger_candle_time} "
+                    f"(timeframe={TIMEFRAME}) - re-run blocked, no duplicate generated"
+                )
                 return None
 
             stop_loss_distance = TRAILING_STOP_ATR_MULT * atr_val
