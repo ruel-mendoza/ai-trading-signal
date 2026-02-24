@@ -635,14 +635,26 @@ def _build_users_html(current_user_id: int) -> str:
 ADMIN_CSS = """
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; }
-.container { max-width: 1400px; margin: 0 auto; padding: 20px; }
-header { background: #1e293b; border-bottom: 1px solid #334155; padding: 16px 20px; margin-bottom: 20px; }
+header { background: #1e293b; border-bottom: 1px solid #334155; padding: 16px 20px; }
 header h1 { font-size: 1.5rem; color: #f8fafc; }
 header p { font-size: 0.875rem; color: #94a3b8; margin-top: 4px; }
-.tabs { display: flex; gap: 4px; margin-bottom: 20px; background: #1e293b; padding: 4px; border-radius: 8px; }
-.tab { padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 0.875rem; font-weight: 500; color: #94a3b8; text-decoration: none; transition: all 0.2s; }
-.tab:hover { color: #e2e8f0; background: #334155; }
-.tab.active { color: #f8fafc; background: #3b82f6; }
+.layout { display: flex; min-height: calc(100vh - 73px); }
+.sidebar { width: 240px; background: #1e293b; border-right: 1px solid #334155; display: flex; flex-direction: column; position: sticky; top: 73px; height: calc(100vh - 73px); overflow-y: auto; flex-shrink: 0; }
+.sidebar-nav { flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 2px; }
+.sidebar-group { margin-bottom: 16px; }
+.sidebar-group-label { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; padding: 8px 12px 4px; }
+.sidebar-link { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; color: #94a3b8; text-decoration: none; cursor: pointer; transition: all 0.15s; border: 1px solid transparent; }
+.sidebar-link:hover { color: #e2e8f0; background: #334155; }
+.sidebar-link.active { color: #f8fafc; background: #3b82f6; border-color: #60a5fa; }
+.sidebar-link svg { width: 18px; height: 18px; flex-shrink: 0; }
+.sidebar-footer { padding: 12px; border-top: 1px solid #334155; }
+.sidebar-footer .sidebar-link { color: #94a3b8; }
+.sidebar-footer .sidebar-link:hover { color: #e2e8f0; }
+.main-content { flex: 1; padding: 24px; min-width: 0; max-width: 1200px; }
+.mobile-tab-bar { display: none; background: #1e293b; padding: 4px; border-radius: 8px; margin-bottom: 20px; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
+.mobile-tab-bar .tab { display: inline-block; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; font-weight: 500; color: #94a3b8; text-decoration: none; transition: all 0.2s; }
+.mobile-tab-bar .tab:hover { color: #e2e8f0; background: #334155; }
+.mobile-tab-bar .tab.active { color: #f8fafc; background: #3b82f6; }
 .section { background: #1e293b; border-radius: 12px; border: 1px solid #334155; padding: 24px; margin-bottom: 20px; }
 .section h2 { font-size: 1.25rem; margin-bottom: 16px; color: #f8fafc; }
 h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
@@ -698,6 +710,10 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 .user-bar .btn { margin: 0; }
 .hidden { display: none; }
 @media (max-width: 768px) {
+    .layout { flex-direction: column; }
+    .sidebar { display: none; }
+    .mobile-tab-bar { display: block; }
+    .main-content { padding: 16px; }
     .tables-row { grid-template-columns: 1fr; }
     .stats-grid { grid-template-columns: 1fr 1fr; }
 }
@@ -708,10 +724,26 @@ const BASE = window.location.pathname.replace(/\\/admin\\/?$/, '');
 
 function showTab(tabName) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
-    document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.sidebar-link[data-tab]').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.mobile-tab-bar .tab').forEach(el => el.classList.remove('active'));
     document.getElementById('tab-' + tabName).classList.remove('hidden');
-    document.querySelector('[data-tab="' + tabName + '"]').classList.add('active');
+    var sidebarEl = document.querySelector('.sidebar-link[data-tab="' + tabName + '"]:not([data-strategy])');
+    if (sidebarEl) sidebarEl.classList.add('active');
+    var mobileEl = document.querySelector('.mobile-tab-bar .tab[data-tab="' + tabName + '"]');
+    if (mobileEl) mobileEl.classList.add('active');
     if (tabName === 'settings') loadCreditMeter();
+}
+
+function showStrategyTab(strategyName) {
+    showTab('signals');
+    document.querySelectorAll('.sidebar-link[data-tab]').forEach(el => el.classList.remove('active'));
+    var el = document.querySelector('.sidebar-link[data-strategy="' + strategyName + '"]');
+    if (el) el.classList.add('active');
+    var strategySelect = document.querySelector('.filter-bar select[name="strategy"]');
+    if (strategySelect) {
+        strategySelect.value = strategyName;
+        strategySelect.form.submit();
+    }
 }
 
 function exportSignals(format) {
@@ -1029,8 +1061,8 @@ def admin_dashboard(
     <header>
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
             <div>
-                <h1>Trading Engine Admin</h1>
-                <p>Signal Management | Credit Monitor | Market Hours | Settings</p>
+                <h1>DailyForex Premium Admin</h1>
+                <p>Signal Management &amp; Strategy Monitor</p>
             </div>
             <div class="user-bar">
                 <span data-testid="text-logged-in-user">Signed in as <strong>{logged_in_username}</strong></span>
@@ -1038,17 +1070,69 @@ def admin_dashboard(
             </div>
         </div>
     </header>
-    <div class="container">
-        <div class="tabs">
-            <a class="tab {'active' if tab == 'signals' else ''}" data-tab="signals" onclick="showTab('signals')">Signals ({total_count})</a>
-            <a class="tab {'active' if tab == 'spx' else ''}" data-tab="spx" onclick="showTab('spx')" data-testid="tab-spx">SPX 500 Momentum</a>
-            <a class="tab {'active' if tab == 'credits' else ''}" data-tab="credits" onclick="showTab('credits')">Credit Monitor{alert_badge}</a>
-            <a class="tab {'active' if tab == 'timezone' else ''}" data-tab="timezone" onclick="showTab('timezone')">Market Hours</a>
-            <a class="tab {'active' if tab == 'settings' else ''}" data-tab="settings" onclick="showTab('settings')">Settings</a>
-            <a class="tab {'active' if tab == 'users' else ''}" data-tab="users" onclick="showTab('users')">User Settings</a>
-        </div>
+    <div class="layout">
+        <aside class="sidebar">
+            <nav class="sidebar-nav">
+                <div class="sidebar-group">
+                    <div class="sidebar-group-label">Overview</div>
+                    <a class="sidebar-link {'active' if tab == 'signals' else ''}" data-tab="signals" onclick="showTab('signals')" data-testid="sidebar-signals">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                        Global Overview
+                    </a>
+                </div>
+                <div class="sidebar-group">
+                    <div class="sidebar-group-label">Strategies</div>
+                    <a class="sidebar-link {'active' if tab == 'signals' and strategy == 'mtf_ema' else ''}" data-tab="signals" data-strategy="mtf_ema" onclick="showStrategyTab('mtf_ema')" data-testid="sidebar-mtf">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/><path d="M22 4v16"/></svg>
+                        MTF Algo
+                    </a>
+                    <a class="sidebar-link {'active' if tab == 'signals' and strategy == 'trend_following' else ''}" data-tab="signals" data-strategy="trend_following" onclick="showStrategyTab('trend_following')" data-testid="sidebar-trend">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+                        Trend Following
+                    </a>
+                    <a class="sidebar-link {'active' if tab == 'spx' else ''}" data-tab="spx" onclick="showTab('spx')" data-testid="sidebar-spx">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+                        SPX 500 Momentum
+                    </a>
+                </div>
+                <div class="sidebar-group">
+                    <div class="sidebar-group-label">System</div>
+                    <a class="sidebar-link {'active' if tab == 'credits' else ''}" data-tab="credits" onclick="showTab('credits')" data-testid="sidebar-credits">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/></svg>
+                        Credit Monitor{alert_badge}
+                    </a>
+                    <a class="sidebar-link {'active' if tab == 'timezone' else ''}" data-tab="timezone" onclick="showTab('timezone')" data-testid="sidebar-timezone">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        Market Hours
+                    </a>
+                    <a class="sidebar-link {'active' if tab == 'settings' else ''}" data-tab="settings" onclick="showTab('settings')" data-testid="sidebar-settings">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                        Settings
+                    </a>
+                    <a class="sidebar-link {'active' if tab == 'users' else ''}" data-tab="users" onclick="showTab('users')" data-testid="sidebar-users">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        User Settings
+                    </a>
+                </div>
+            </nav>
+            <div class="sidebar-footer">
+                <a class="sidebar-link" href="/" data-testid="sidebar-back-frontend">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+                    Back to Frontend
+                </a>
+            </div>
+        </aside>
+        <main class="main-content">
+            <div class="mobile-tab-bar">
+                <a class="tab {'active' if tab == 'signals' else ''}" data-tab="signals" onclick="showTab('signals')">Overview</a>
+                <a class="tab {'active' if tab == 'spx' else ''}" data-tab="spx" onclick="showTab('spx')">SPX 500</a>
+                <a class="tab {'active' if tab == 'credits' else ''}" data-tab="credits" onclick="showTab('credits')">Credits</a>
+                <a class="tab {'active' if tab == 'timezone' else ''}" data-tab="timezone" onclick="showTab('timezone')">Hours</a>
+                <a class="tab {'active' if tab == 'settings' else ''}" data-tab="settings" onclick="showTab('settings')">Settings</a>
+                <a class="tab {'active' if tab == 'users' else ''}" data-tab="users" onclick="showTab('users')">Users</a>
+            </div>
 
-        <div id="tab-signals" class="tab-content {'hidden' if tab != 'signals' else ''}">
+            <div id="tab-signals" class="tab-content {'hidden' if tab != 'signals' else ''}">
             <div class="section">
                 <h2>Trading Signals</h2>
                 <div class="filter-bar">
@@ -1122,6 +1206,7 @@ def admin_dashboard(
                 {users_html}
             </div>
         </div>
+        </main>
     </div>
     <script>{ADMIN_JS}</script>
 </body>
