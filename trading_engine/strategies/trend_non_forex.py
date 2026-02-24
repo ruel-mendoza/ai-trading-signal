@@ -84,6 +84,11 @@ class NonForexTrendFollowingStrategy:
             logger.info(f"[TREND-NONFX] {asset} | Not a target asset - skipping")
             return None
 
+        from trading_engine.fcsapi_client import is_symbol_supported
+        if not is_symbol_supported(asset):
+            logger.warning(f"[TREND-NONFX] {asset} | Symbol not supported by current data provider plan - skipping")
+            return None
+
         if not self._is_eval_window():
             logger.info(f"[TREND-NONFX] {asset} | Outside 4:00 PM ET window - skipping")
             return None

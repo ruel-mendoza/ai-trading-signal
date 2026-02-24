@@ -133,6 +133,28 @@ def _migrate_schema():
                 conn.commit()
 
 
+def _purge_unsupported_symbols():
+    from trading_engine.fcsapi_client import UNSUPPORTED_SYMBOLS
+    if not UNSUPPORTED_SYMBOLS:
+        return
+    with _get_session() as session:
+        try:
+            for sym in UNSUPPORTED_SYMBOLS:
+                c_del = session.query(Candle).filter_by(asset=sym).delete()
+                s_del = session.query(Signal).filter(Signal.asset == sym).delete()
+                p_del = session.query(OpenPosition).filter(OpenPosition.asset == sym).delete()
+                m_del = session.query(CacheMetadata).filter_by(asset=sym).delete()
+                if c_del or s_del or p_del or m_del:
+                    logger.info(
+                        f"[DB] Purged unsupported symbol {sym}: "
+                        f"candles={c_del}, signals={s_del}, positions={p_del}, cache={m_del}"
+                    )
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.warning(f"[DB] Error purging unsupported symbols: {e}")
+
+
 def init_db():
     logger.info("[DB] Initializing database tables via SQLAlchemy...")
     Base.metadata.create_all(engine)
@@ -142,6 +164,8 @@ def init_db():
 
     with _get_session() as session:
         _seed_default_admin(session)
+
+    _purge_unsupported_symbols()
 
     health = check_db_health()
     logger.info(f"[DB] Startup health check: {health['status']}")

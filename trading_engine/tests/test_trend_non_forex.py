@@ -4,6 +4,11 @@ from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock, call
 import pytz
 
+@pytest.fixture(autouse=True)
+def _allow_all_symbols():
+    with patch("trading_engine.fcsapi_client.is_symbol_supported", return_value=True):
+        yield
+
 from trading_engine.strategies.trend_non_forex import (
     NonForexTrendFollowingStrategy,
     STRATEGY_NAME,

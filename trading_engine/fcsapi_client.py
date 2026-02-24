@@ -15,7 +15,11 @@ from requests.exceptions import ConnectionError, Timeout
 
 logger = logging.getLogger("trading_engine.fcsapi")
 
-BASE_URL = "https://fcsapi.com/api-v3/forex"
+BASE_URL_FOREX = "https://fcsapi.com/api-v3/forex"
+BASE_URL_CRYPTO = "https://fcsapi.com/api-v3/crypto"
+BASE_URL_STOCK = "https://fcsapi.com/api-v3/stock"
+
+BASE_URL = BASE_URL_FOREX
 
 TIMEFRAME_MAP = {
     "30m": "30m",
@@ -30,6 +34,62 @@ TIMEFRAME_DURATION_MINUTES = {
     "4H": 240,
     "D1": 1440,
 }
+
+CRYPTO_SYMBOLS = {"BTC/USD", "ETH/USD", "LTC/USD", "XRP/USD", "BNB/USD"}
+
+STOCK_INDEX_SYMBOLS = {"SPX", "NDX", "DJI"}
+
+STOCK_SYMBOL_MAP = {
+    "SPX": ".SPX",
+    "NDX": ".IXIC",
+    "DJI": ".DJI",
+}
+
+COMMODITY_SYMBOLS = {"XAU/USD", "XAG/USD", "WTI/USD", "BRENT/USD"}
+
+UNSUPPORTED_SYMBOLS = {"SPX", "NDX", "DJI"}
+
+
+def get_asset_class(symbol: str) -> str:
+    if symbol in CRYPTO_SYMBOLS:
+        return "crypto"
+    if symbol in STOCK_INDEX_SYMBOLS:
+        return "stock"
+    return "forex"
+
+
+def get_base_url(symbol: str) -> str:
+    asset_class = get_asset_class(symbol)
+    if asset_class == "crypto":
+        return BASE_URL_CRYPTO
+    if asset_class == "stock":
+        return BASE_URL_STOCK
+    return BASE_URL_FOREX
+
+
+def get_api_symbol(symbol: str) -> str:
+    return STOCK_SYMBOL_MAP.get(symbol, symbol)
+
+
+def is_symbol_supported(symbol: str) -> bool:
+    if symbol in UNSUPPORTED_SYMBOLS:
+        return False
+    return True
+
+
+def _validate_candle_prices(candles: list[dict], symbol: str) -> list[dict]:
+    valid = []
+    for c in candles:
+        o, h, l, cl = c["open"], c["high"], c["low"], c["close"]
+        if o <= 0 or h <= 0 or l <= 0 or cl <= 0:
+            logger.warning(f"[VALIDATE] {symbol} | Dropping candle {c['timestamp']} with non-positive price")
+            continue
+        if h < max(o, cl) or l > min(o, cl):
+            logger.warning(f"[VALIDATE] {symbol} | Candle {c['timestamp']} has invalid OHLC (h={h}, l={l}, o={o}, c={cl})")
+        valid.append(c)
+    if len(valid) < len(candles):
+        logger.warning(f"[VALIDATE] {symbol} | Dropped {len(candles) - len(valid)}/{len(candles)} invalid candles")
+    return valid
 
 
 def _is_server_error(exc: BaseException) -> bool:
@@ -97,14 +157,15 @@ class FCSAPIClient:
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
-    def _get(self, endpoint: str, params: dict) -> dict:
+    def _get(self, endpoint: str, params: dict, base_url: str = None) -> dict:
         from trading_engine.database import log_api_usage
         from trading_engine.credit_control import pre_request_check, check_credit_thresholds
 
         pre_request_check()
 
         params["access_key"] = self.api_key
-        url = f"{BASE_URL}/{endpoint}"
+        effective_base = base_url or BASE_URL
+        url = f"{effective_base}/{endpoint}"
         logger.info(f"[FCSAPI-REQUEST] {endpoint} | symbol={params.get('symbol')} | timeframe={params.get('time')} | period={params.get('period')}")
         try:
             response = self.session.get(url, params=params, timeout=self._timeout)
@@ -180,16 +241,23 @@ class FCSAPIClient:
             return {"success": False, "error": str(e)}
 
     def get_candles(self, symbol: str, period: str = "1h", from_timestamp: Optional[str] = None, limit: int = 300) -> list[dict]:
+        if not is_symbol_supported(symbol):
+            logger.warning(f"[GET-CANDLES] {symbol} | Symbol is marked as unsupported, skipping API call")
+            return []
+
         tf_api = TIMEFRAME_MAP.get(period, period)
+        api_symbol = get_api_symbol(symbol)
+        base_url = get_base_url(symbol)
+        asset_class = get_asset_class(symbol)
         params = {
-            "symbol": symbol,
+            "symbol": api_symbol,
             "period": str(limit),
             "time": tf_api,
         }
         if from_timestamp:
             params["from"] = from_timestamp
-        logger.info(f"[GET-CANDLES] {symbol} | period={period}({tf_api}) | limit={limit} | from={from_timestamp or 'latest'}")
-        data = self._get("history", params)
+        logger.info(f"[GET-CANDLES] {symbol} (api={api_symbol}, class={asset_class}, url={base_url}) | period={period}({tf_api}) | limit={limit} | from={from_timestamp or 'latest'}")
+        data = self._get("history", params, base_url=base_url)
 
         if data.get("status") is False or not data.get("response"):
             msg = data.get("msg", "")
@@ -199,6 +267,7 @@ class FCSAPIClient:
             return []
 
         candles = _parse_response_items(data["response"])
+        candles = _validate_candle_prices(candles, symbol)
         logger.info(f"[GET-CANDLES] {symbol} | Parsed {len(candles)} candles | first={candles[0]['timestamp'] if candles else 'N/A'} | last={candles[-1]['timestamp'] if candles else 'N/A'}")
         return candles
 
