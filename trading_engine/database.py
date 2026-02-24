@@ -230,6 +230,19 @@ def signal_exists(strategy_name: str, asset: str, signal_timestamp: str) -> bool
 def insert_signal(signal: dict) -> Optional[int]:
     with _get_session() as session:
         try:
+            existing = session.query(Signal.id).filter_by(
+                strategy_name=signal["strategy_name"],
+                asset=signal["asset"],
+                signal_timestamp=signal["signal_timestamp"],
+            ).first()
+            if existing:
+                logger.warning(
+                    f"[DB] IDEMPOTENCY | Signal already exists for "
+                    f"{signal['strategy_name']}/{signal['asset']}/{signal['signal_timestamp']} "
+                    f"(id={existing[0]}) — insert blocked"
+                )
+                return None
+
             obj = Signal(
                 strategy_name=signal["strategy_name"],
                 asset=signal["asset"],
