@@ -140,7 +140,7 @@ class TestEvaluateEntry:
 class TestIdempotency:
     @patch("trading_engine.strategies.trend_non_forex.get_open_position")
     def test_existing_long_blocks_entry(self, mock_pos):
-        mock_pos.return_value = {"id": 99, "direction": "BUY"}
+        mock_pos.return_value = {"id": 99, "direction": "BUY", "entry_price": 100.0, "atr_at_entry": 2.0, "highest_price_since_entry": 105.0}
         cache = MagicMock()
         candles = _make_candles(150, base_close=100.0, increment=0.5)
         cache.get_candles.return_value = candles

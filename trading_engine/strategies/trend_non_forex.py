@@ -129,12 +129,31 @@ class NonForexTrendFollowingStrategy:
         close_above_highest = current_close > highest_50d
 
         logger.info(f"[TREND-NONFX] {asset} | close={current_close:.5f}")
-        logger.info(f"[TREND-NONFX] {asset} | SMA50={sma50_val:.5f} | SMA100={sma100_val:.5f} | ATR100={atr_val:.5f}")
-        logger.info(f"[TREND-NONFX] {asset} | 50-day highest close={highest_50d:.5f}")
+        logger.info(f"[TREND-NONFX] {asset} | SMA(50)={sma50_val:.5f} | SMA(100)={sma100_val:.5f} | ATR(100)={atr_val:.5f}")
+        logger.info(f"[TREND-NONFX] {asset} | 50-day highest close={highest_50d:.5f} (prior {LOOKBACK_DAYS} bars)")
         logger.info(
-            f"[TREND-NONFX] {asset} | LONG check: close > highest_50d={close_above_highest} "
-            f"AND SMA50 > SMA100={sma50_above_sma100}"
+            f"[TREND-NONFX] {asset} | LONG check: close ({current_close:.5f}) > highest_50d ({highest_50d:.5f}) = {close_above_highest} "
+            f"AND SMA50 ({sma50_val:.5f}) > SMA100 ({sma100_val:.5f}) = {sma50_above_sma100}"
         )
+
+        existing_pos = get_open_position(STRATEGY_NAME, asset)
+        if existing_pos:
+            pos_atr = existing_pos.get("atr_at_entry")
+            pos_highest = existing_pos.get("highest_price_since_entry") or existing_pos["entry_price"]
+            pos_highest = max(pos_highest, current_close)
+            if pos_atr is not None:
+                trailing_stop = pos_highest - (pos_atr * TRAILING_STOP_ATR_MULT)
+                logger.info(
+                    f"[TREND-NONFX] {asset} | ACTIVE TRADE #{existing_pos['id']} | "
+                    f"direction={existing_pos['direction']} | entry={existing_pos['entry_price']:.5f} | "
+                    f"ATR_at_entry={pos_atr:.6f} (FIXED) | highest_since_entry={pos_highest:.5f} | "
+                    f"current_trailing_stop={trailing_stop:.5f}"
+                )
+            else:
+                logger.warning(
+                    f"[TREND-NONFX] {asset} | ACTIVE TRADE #{existing_pos['id']} | "
+                    f"ATR_at_entry=MISSING — trailing stop cannot be calculated"
+                )
 
         signal_timestamp = candles[-1]["timestamp"]
 
@@ -145,8 +164,9 @@ class NonForexTrendFollowingStrategy:
 
             if signal_exists(STRATEGY_NAME, asset, signal_timestamp):
                 logger.info(
-                    f"[TREND-NONFX] {asset} | IDEMPOTENCY: Signal already exists for candle "
-                    f"{signal_timestamp} - re-run blocked"
+                    f"[TREND-NONFX] {asset} | IDEMPOTENCY: Signal already exists for "
+                    f"signal_timestamp={signal_timestamp} (unique constraint: strategy+asset+timestamp) "
+                    f"- duplicate blocked on re-run"
                 )
                 return None
 

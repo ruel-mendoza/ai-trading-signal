@@ -1,6 +1,7 @@
 from trading_engine.strategies.base import BaseStrategy
 from trading_engine.strategies.sp500_momentum import SP500MomentumStrategy
 from trading_engine.strategies.trend_forex import ForexTrendFollowingStrategy
+from trading_engine.strategies.trend_non_forex import NonForexTrendFollowingStrategy
 from trading_engine.strategy_engine import StrategyEngine
 
 STRATEGY_REGISTRY: dict[str, type] = {
@@ -9,6 +10,7 @@ STRATEGY_REGISTRY: dict[str, type] = {
     "sp500_momentum": SP500MomentumStrategy,
     "highest_lowest_fx": StrategyEngine,
     "trend_forex": ForexTrendFollowingStrategy,
+    "trend_non_forex": NonForexTrendFollowingStrategy,
 }
 
 
