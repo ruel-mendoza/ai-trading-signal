@@ -88,11 +88,14 @@ trading_engine/          - Python FastAPI trading engine
 - All functions accept pd.Series or pd.DataFrame and return pd.Series with preserved indices (timezone-aware)
 - Performance: all indicators run under 3ms for 10,000 data points
 
-## FCSAPI Asset Class Routing
-- **Forex & Commodities** (EUR/USD, XAU/USD, etc.): v3 API `https://fcsapi.com/api-v3/forex/history` — params: `symbol`, `time` (timeframe), `period` (count)
-- **Crypto** (BTC/USD, ETH/USD): v3 API `https://fcsapi.com/api-v3/crypto/history` — params: `symbol`, `time` (timeframe), `period` (count)
-- **Stock Indices** (SPX, NDX, DJI): v4 API `https://api-v4.fcsapi.com/stock/history` — params: `symbol` (e.g. `CBOE:SPX`), `period` (timeframe), `length` (count)
-- Symbol mapping: SPX→CBOE:SPX, NDX→CBOE:NDX, DJI→CBOE:DJI
+## FCSAPI v4 API (All Asset Classes)
+- **All endpoints use FCSAPI v4** at `api-v4.fcsapi.com` with unified parameter format
+- **Forex & Commodities**: `api-v4.fcsapi.com/forex/history` — params: `symbol` (EURUSD, XAUUSD), `period` (timeframe), `length` (count)
+- **Crypto**: `api-v4.fcsapi.com/crypto/history` — params: `symbol` (BTCUSD, ETHUSD), `period` (timeframe), `length` (count)
+- **Stock Indices**: `api-v4.fcsapi.com/stock/history` — params: `symbol` (CBOE:SPX), `period` (timeframe), `length` (count), `type=index`
+- **Advance (all)**: `api-v4.fcsapi.com/{forex|crypto|stock}/advance` — real-time quotes with exchange-prefixed symbols
+- History symbol format: slash removed for forex/crypto (EUR/USD→EURUSD), exchange-prefixed for stocks (SPX→CBOE:SPX)
+- Advance symbol format: FX:EURUSD (forex), COINBASE:BTCUSD (crypto), CBOE:SPX (stocks)
 
 ## Environment Variables
 - `FCSAPI_KEY` - FCSAPI API key for fetching OHLC data (required for live data)

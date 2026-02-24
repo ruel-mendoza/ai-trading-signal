@@ -15,11 +15,9 @@ from requests.exceptions import ConnectionError, Timeout
 
 logger = logging.getLogger("trading_engine.fcsapi")
 
-BASE_URL_FOREX = "https://fcsapi.com/api-v3/forex"
-BASE_URL_CRYPTO = "https://fcsapi.com/api-v3/crypto"
-BASE_URL_STOCK = "https://api-v4.fcsapi.com/stock"
-
-BASE_URL = BASE_URL_FOREX
+BASE_URL_V4_FOREX = "https://api-v4.fcsapi.com/forex"
+BASE_URL_V4_CRYPTO = "https://api-v4.fcsapi.com/crypto"
+BASE_URL_V4_STOCK = "https://api-v4.fcsapi.com/stock"
 
 TIMEFRAME_MAP = {
     "30m": "30m",
@@ -48,9 +46,6 @@ STOCK_SYMBOL_MAP = {
 COMMODITY_SYMBOLS = {"XAU/USD", "XAG/USD", "WTI/USD", "BRENT/USD"}
 
 UNSUPPORTED_SYMBOLS: set[str] = set()
-
-BASE_URL_V4_FOREX = "https://api-v4.fcsapi.com/forex"
-BASE_URL_V4_CRYPTO = "https://api-v4.fcsapi.com/crypto"
 
 ADVANCE_SYMBOL_MAP = {
     "EUR/USD": "FX:EURUSD",
@@ -84,15 +79,6 @@ def get_advance_symbol(symbol: str) -> str:
     return mapped
 
 
-def get_advance_base_url(symbol: str) -> str:
-    asset_class = get_asset_class(symbol)
-    if asset_class == "crypto":
-        return BASE_URL_V4_CRYPTO
-    if asset_class == "stock":
-        return BASE_URL_STOCK
-    return BASE_URL_V4_FOREX
-
-
 def get_asset_class(symbol: str) -> str:
     if symbol in CRYPTO_SYMBOLS:
         return "crypto"
@@ -101,17 +87,19 @@ def get_asset_class(symbol: str) -> str:
     return "forex"
 
 
-def get_base_url(symbol: str) -> str:
+def get_v4_base_url(symbol: str) -> str:
     asset_class = get_asset_class(symbol)
     if asset_class == "crypto":
-        return BASE_URL_CRYPTO
+        return BASE_URL_V4_CRYPTO
     if asset_class == "stock":
-        return BASE_URL_STOCK
-    return BASE_URL_FOREX
+        return BASE_URL_V4_STOCK
+    return BASE_URL_V4_FOREX
 
 
-def get_api_symbol(symbol: str) -> str:
-    return STOCK_SYMBOL_MAP.get(symbol, symbol)
+def get_v4_history_symbol(symbol: str) -> str:
+    if symbol in STOCK_SYMBOL_MAP:
+        return STOCK_SYMBOL_MAP[symbol]
+    return symbol.replace("/", "")
 
 
 def is_symbol_supported(symbol: str) -> bool:
@@ -216,9 +204,9 @@ class FCSAPIClient:
         pre_request_check()
 
         params["access_key"] = self.api_key
-        effective_base = base_url or BASE_URL
+        effective_base = base_url or BASE_URL_V4_FOREX
         url = f"{effective_base}/{endpoint}"
-        logger.info(f"[FCSAPI-REQUEST] {endpoint} | symbol={params.get('symbol')} | timeframe={params.get('time')} | period={params.get('period')}")
+        logger.info(f"[FCSAPI-REQUEST] {url} | params={{{', '.join(f'{k}={v}' for k, v in params.items() if k != 'access_key')}}}")
         try:
             response = self.session.get(url, params=params, timeout=self._timeout)
             response.raise_for_status()
@@ -266,13 +254,13 @@ class FCSAPIClient:
         if not key:
             return {"success": False, "error": "No API key configured"}
         try:
-            url = f"{BASE_URL}/profile"
-            response = self.session.get(url, params={"access_key": key, "symbol": "EUR"}, timeout=self._timeout)
+            url = f"{BASE_URL_V4_FOREX}/list"
+            response = self.session.get(url, params={"access_key": key, "type": "forex", "per_page": "1"}, timeout=self._timeout)
             response.raise_for_status()
             data = response.json()
             if data.get("status") is False or data.get("code") == 101:
                 return {"success": False, "error": data.get("msg", "Invalid API key")}
-            log_api_usage(endpoint="profile/test")
+            log_api_usage(endpoint="list/test")
             info = data.get("info", {})
             usage_stats = get_api_usage_stats()
             total_credits = 500000
@@ -298,24 +286,23 @@ class FCSAPIClient:
             return []
 
         tf_api = TIMEFRAME_MAP.get(period, period)
-        api_symbol = get_api_symbol(symbol)
-        base_url = get_base_url(symbol)
+        api_symbol = get_v4_history_symbol(symbol)
+        base_url = get_v4_base_url(symbol)
         asset_class = get_asset_class(symbol)
+
+        params = {
+            "symbol": api_symbol,
+            "period": tf_api,
+            "length": str(limit),
+        }
+
         if asset_class == "stock":
-            params = {
-                "symbol": api_symbol,
-                "period": tf_api,
-                "length": str(limit),
-            }
-        else:
-            params = {
-                "symbol": api_symbol,
-                "period": str(limit),
-                "time": tf_api,
-            }
+            params["type"] = "index"
+
         if from_timestamp:
             params["from"] = from_timestamp
-        logger.info(f"[GET-CANDLES] {symbol} (api={api_symbol}, class={asset_class}, url={base_url}) | period={period}({tf_api}) | limit={limit} | from={from_timestamp or 'latest'}")
+
+        logger.info(f"[GET-CANDLES] {symbol} (api={api_symbol}, class={asset_class}, url={base_url}) | period={period}({tf_api}) | length={limit} | from={from_timestamp or 'latest'}")
         data = self._get("history", params, base_url=base_url)
 
         if data.get("status") is False or not data.get("response"):
@@ -338,7 +325,7 @@ class FCSAPIClient:
 
     def get_available_symbols(self) -> list[str]:
         params = {"type": "forex"}
-        data = self._get("list", params)
+        data = self._get("list", params, base_url=BASE_URL_V4_FOREX)
         if data.get("status") is False or not data.get("response"):
             return []
         symbols = []
@@ -368,7 +355,7 @@ class FCSAPIClient:
             api_symbols = ",".join(adv_sym for _, adv_sym in sym_pairs)
             original_map = {adv_sym: orig for orig, adv_sym in sym_pairs}
 
-            base_url = get_advance_base_url(sym_pairs[0][0])
+            base_url = get_v4_base_url(sym_pairs[0][0])
 
             tf_api = TIMEFRAME_MAP.get(period, period)
             params = {
