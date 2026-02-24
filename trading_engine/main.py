@@ -26,6 +26,7 @@ from trading_engine.indicators import IndicatorEngine
 from trading_engine.strategy_engine import StrategyEngine
 from trading_engine.admin import router as admin_router
 from trading_engine.strategies.trend_forex import TARGET_SYMBOLS as TREND_FOREX_SYMBOLS
+from trading_engine.strategies.trend_non_forex import TARGET_SYMBOLS as TREND_NON_FOREX_SYMBOLS
 
 scheduler = BackgroundScheduler()
 
@@ -58,6 +59,28 @@ def _scheduled_trend_forex_evaluate():
     logger.info("[SCHEDULER] ====== trend_forex daily evaluation complete ======")
 
 
+def _scheduled_trend_non_forex_evaluate():
+    logger.info("[SCHEDULER] ====== Triggered trend_non_forex daily evaluation at 4:00 PM ET ======")
+    for asset in TREND_NON_FOREX_SYMBOLS:
+        try:
+            result = strategy_engine.trend_non_forex_strategy.evaluate(asset)
+            if result:
+                logger.info(f"[SCHEDULER] trend_non_forex | {asset} | NEW SIGNAL generated: {result.get('direction', '')} id={result.get('id')}")
+            else:
+                logger.info(f"[SCHEDULER] trend_non_forex | {asset} | No signal triggered")
+        except Exception as e:
+            logger.error(f"[SCHEDULER] trend_non_forex | {asset} | Exception: {e}")
+    try:
+        exits = strategy_engine.trend_non_forex_strategy.check_exits()
+        if exits:
+            logger.info(f"[SCHEDULER] trend_non_forex | {len(exits)} exit(s) triggered")
+        else:
+            logger.info("[SCHEDULER] trend_non_forex | No exits triggered")
+    except Exception as e:
+        logger.error(f"[SCHEDULER] trend_non_forex | Exit check exception: {e}")
+    logger.info("[SCHEDULER] ====== trend_non_forex daily evaluation complete ======")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler.add_job(
@@ -67,8 +90,17 @@ async def lifespan(app: FastAPI):
         name="Forex Trend Daily Evaluation (5:00 PM ET)",
         replace_existing=True,
     )
+    scheduler.add_job(
+        _scheduled_trend_non_forex_evaluate,
+        trigger=CronTrigger(hour=16, minute=0, timezone="US/Eastern"),
+        id="trend_non_forex_daily",
+        name="Non-Forex Trend Daily Evaluation (4:00 PM ET)",
+        replace_existing=True,
+    )
     scheduler.start()
-    logger.info("[SCHEDULER] APScheduler started | trend_forex scheduled at 17:00 US/Eastern daily")
+    logger.info(
+        "[SCHEDULER] APScheduler started | trend_forex at 17:00, trend_non_forex at 16:00 US/Eastern daily"
+    )
     yield
     scheduler.shutdown(wait=False)
     logger.info("[SCHEDULER] APScheduler shut down")

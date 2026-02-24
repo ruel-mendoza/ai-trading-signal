@@ -41,6 +41,10 @@ STRATEGY_ASSET_CONFIG: dict[str, dict] = {
         "assets": ["EUR/USD", "USD/JPY", "GBP/USD"],
         "timeframe": "D1",
     },
+    "trend_non_forex": {
+        "assets": ["SPX", "NDX", "XAU/USD", "XAG/USD", "WTI/USD", "BTC/USD", "ETH/USD"],
+        "timeframe": "D1",
+    },
 }
 
 

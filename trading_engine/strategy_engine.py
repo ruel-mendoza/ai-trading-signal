@@ -20,6 +20,7 @@ from trading_engine.database import (
 )
 from trading_engine.strategies.sp500_momentum import SP500MomentumStrategy
 from trading_engine.strategies.trend_forex import ForexTrendFollowingStrategy
+from trading_engine.strategies.trend_non_forex import NonForexTrendFollowingStrategy
 
 logger = logging.getLogger("trading_engine.strategy")
 
@@ -28,6 +29,7 @@ STRATEGY_TREND_FOLLOWING = "trend_following"
 STRATEGY_SP500_MOMENTUM = "sp500_momentum"
 STRATEGY_HIGHEST_LOWEST_FX = "highest_lowest_fx"
 STRATEGY_TREND_FOREX = "trend_forex"
+STRATEGY_TREND_NON_FOREX = "trend_non_forex"
 
 
 class StrategyEngine:
@@ -35,6 +37,7 @@ class StrategyEngine:
         self.cache = cache
         self.sp500_strategy = SP500MomentumStrategy(cache)
         self.trend_forex_strategy = ForexTrendFollowingStrategy(cache)
+        self.trend_non_forex_strategy = NonForexTrendFollowingStrategy(cache)
 
     def evaluate_all(self, symbols: Optional[list[str]] = None) -> list[dict]:
         results = []
@@ -64,6 +67,12 @@ class StrategyEngine:
             tf_forex_result = self.trend_forex_strategy.evaluate(asset)
             if tf_forex_result:
                 results.append(tf_forex_result)
+
+        from trading_engine.strategies.trend_non_forex import TARGET_SYMBOLS as TREND_NON_FOREX_SYMBOLS
+        for asset in TREND_NON_FOREX_SYMBOLS:
+            tnf_result = self.trend_non_forex_strategy.evaluate(asset)
+            if tnf_result:
+                results.append(tnf_result)
 
         return results
 
@@ -404,5 +413,8 @@ class StrategyEngine:
 
         trend_forex_exits = self.trend_forex_strategy.check_exits()
         closed_signals.extend(trend_forex_exits)
+
+        trend_non_forex_exits = self.trend_non_forex_strategy.check_exits()
+        closed_signals.extend(trend_non_forex_exits)
 
         return closed_signals
