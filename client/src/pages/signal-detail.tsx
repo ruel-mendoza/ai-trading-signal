@@ -15,7 +15,6 @@ import {
   ShieldAlert,
   Clock,
   BarChart3,
-  Zap,
   CheckCircle,
   XCircle,
 } from "lucide-react";
@@ -83,19 +82,17 @@ export default function SignalDetail() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <Skeleton className="h-8 w-32 mb-6" />
-          <Skeleton className="h-64 w-full rounded-md mb-4" />
-          <Skeleton className="h-48 w-full rounded-md" />
-        </div>
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <Skeleton className="h-8 w-32 mb-6" />
+        <Skeleton className="h-64 w-full rounded-md mb-4" />
+        <Skeleton className="h-48 w-full rounded-md" />
       </div>
     );
   }
 
   if (!signal) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="flex items-center justify-center py-24">
         <div className="text-center">
           <h2 className="text-xl font-semibold mb-2">Signal not found</h2>
           <Button variant="secondary" onClick={() => navigate("/")}>
@@ -111,29 +108,18 @@ export default function SignalDetail() {
   const riskReward = getRiskReward(signal);
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-4 h-16">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => navigate("/")}
-              data-testid="button-back"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </Button>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary text-primary-foreground">
-                <Zap className="w-5 h-5" />
-              </div>
-              <span className="font-semibold">Signal Details</span>
-            </div>
-          </div>
-        </div>
-      </header>
-
+    <div>
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => navigate("/")}
+          className="mb-4"
+          data-testid="button-back"
+        >
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          Back to Signals
+        </Button>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">
             <div className={`flex items-center justify-center w-12 h-12 rounded-md ${isBuy ? "bg-green-500/10" : "bg-red-500/10"}`}>

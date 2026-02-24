@@ -28,35 +28,21 @@ export default function Home() {
   const closedSignals = signals?.filter(s => s.status !== "active") || [];
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between gap-4 h-16">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary text-primary-foreground">
-                <Zap className="w-5 h-5" />
-              </div>
-              <div>
-                <h1 className="text-lg font-semibold leading-tight">AI Signals</h1>
-                <p className="text-xs text-muted-foreground leading-tight">AI-Powered Trading</p>
-              </div>
+    <div>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+            <div>
+              <h2 className="text-2xl font-bold" data-testid="text-page-title">Free AI Trading Signals</h2>
+              <p className="text-muted-foreground max-w-2xl">
+                Our AI analyzes market conditions, technical indicators, and price action to generate
+                actionable trading signals for forex, crypto, and commodities.
+              </p>
             </div>
-            <Button data-testid="button-generate-signal" onClick={() => setGenerateOpen(true)}>
+            <Button data-testid="button-generate-signal" onClick={() => setGenerateOpen(true)} className="shrink-0">
               <Zap className="w-4 h-4 mr-2" />
               Generate Signal
             </Button>
-          </div>
-        </div>
-      </header>
-
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <div className="flex flex-col gap-2 mb-6">
-            <h2 className="text-2xl font-bold" data-testid="text-page-title">Free AI Trading Signals</h2>
-            <p className="text-muted-foreground max-w-2xl">
-              Our AI analyzes market conditions, technical indicators, and price action to generate
-              actionable trading signals for forex, crypto, and commodities.
-            </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">

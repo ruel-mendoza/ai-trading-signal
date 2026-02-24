@@ -920,6 +920,14 @@ document.addEventListener('DOMContentLoaded', function() {
 """
 
 
+@router.get("/api/auth-status")
+def auth_status(request: Request):
+    user = _get_session_user(request)
+    if user:
+        return JSONResponse(content={"authenticated": True, "username": user.get("username", "")})
+    return JSONResponse(content={"authenticated": False})
+
+
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, error: str = Query("")):
     user = _get_session_user(request)
