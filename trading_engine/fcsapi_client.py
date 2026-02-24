@@ -17,7 +17,7 @@ logger = logging.getLogger("trading_engine.fcsapi")
 
 BASE_URL_FOREX = "https://fcsapi.com/api-v3/forex"
 BASE_URL_CRYPTO = "https://fcsapi.com/api-v3/crypto"
-BASE_URL_STOCK = "https://fcsapi.com/api-v3/stock"
+BASE_URL_STOCK = "https://api-v4.fcsapi.com/stock"
 
 BASE_URL = BASE_URL_FOREX
 
@@ -40,14 +40,14 @@ CRYPTO_SYMBOLS = {"BTC/USD", "ETH/USD", "LTC/USD", "XRP/USD", "BNB/USD"}
 STOCK_INDEX_SYMBOLS = {"SPX", "NDX", "DJI"}
 
 STOCK_SYMBOL_MAP = {
-    "SPX": "GSPC",
-    "NDX": ".IXIC",
-    "DJI": ".DJI",
+    "SPX": "CBOE:SPX",
+    "NDX": "CBOE:NDX",
+    "DJI": "CBOE:DJI",
 }
 
 COMMODITY_SYMBOLS = {"XAU/USD", "XAG/USD", "WTI/USD", "BRENT/USD"}
 
-UNSUPPORTED_SYMBOLS = {"SPX", "NDX", "DJI"}
+UNSUPPORTED_SYMBOLS: set[str] = set()
 
 
 def get_asset_class(symbol: str) -> str:
