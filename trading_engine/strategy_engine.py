@@ -14,6 +14,7 @@ from trading_engine.database import (
     close_signal,
 )
 from trading_engine.strategies.sp500_momentum import SP500MomentumStrategy
+from trading_engine.strategies.trend_forex import ForexTrendFollowingStrategy
 
 logger = logging.getLogger("trading_engine.strategy")
 
@@ -21,12 +22,14 @@ STRATEGY_MTF_EMA = "mtf_ema"
 STRATEGY_TREND_FOLLOWING = "trend_following"
 STRATEGY_SP500_MOMENTUM = "sp500_momentum"
 STRATEGY_HIGHEST_LOWEST_FX = "highest_lowest_fx"
+STRATEGY_TREND_FOREX = "trend_forex"
 
 
 class StrategyEngine:
     def __init__(self, cache: CacheLayer):
         self.cache = cache
         self.sp500_strategy = SP500MomentumStrategy(cache)
+        self.trend_forex_strategy = ForexTrendFollowingStrategy(cache)
 
     def evaluate_all(self, symbols: Optional[list[str]] = None) -> list[dict]:
         results = []
@@ -50,6 +53,12 @@ class StrategyEngine:
         hlc_result = self.evaluate_highest_lowest_fx("EUR/USD")
         if hlc_result:
             results.append(hlc_result)
+
+        from trading_engine.strategies.trend_forex import TARGET_SYMBOLS as TREND_FOREX_SYMBOLS
+        for symbol in TREND_FOREX_SYMBOLS:
+            tf_forex_result = self.trend_forex_strategy.evaluate(symbol)
+            if tf_forex_result:
+                results.append(tf_forex_result)
 
         return results
 
@@ -407,5 +416,8 @@ class StrategyEngine:
 
         sp500_exits = self.sp500_strategy.check_exits()
         closed_signals.extend(sp500_exits)
+
+        trend_forex_exits = self.trend_forex_strategy.check_exits()
+        closed_signals.extend(trend_forex_exits)
 
         return closed_signals

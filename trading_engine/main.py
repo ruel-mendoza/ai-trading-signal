@@ -222,10 +222,12 @@ def evaluate_single_strategy(
         result = strategy_engine.evaluate_sp500_momentum(symbol)
     elif strategy_name == "highest_lowest_fx":
         result = strategy_engine.evaluate_highest_lowest_fx(symbol)
+    elif strategy_name == "trend_forex":
+        result = strategy_engine.trend_forex_strategy.evaluate(symbol)
     else:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown strategy '{strategy_name}'. Available: mtf_ema, trend_following, sp500_momentum, highest_lowest_fx",
+            detail=f"Unknown strategy '{strategy_name}'. Available: mtf_ema, trend_following, sp500_momentum, highest_lowest_fx, trend_forex",
         )
 
     return {

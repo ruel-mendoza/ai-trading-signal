@@ -41,6 +41,7 @@ trading_engine/          - Python FastAPI trading engine
   admin.py              - Admin dashboard (HTML), export endpoints, credit monitor, timezone logic
   strategies/            - Individual strategy modules
     sp500_momentum.py   - S&P 500 Momentum Strategy (ARCA session filter, RSI crossover, ATR stops)
+    trend_forex.py      - Forex Trend Following Strategy (EUR/USD, USD/JPY, GBP/USD, 5PM ET eval)
 ```
 
 ## Trading Engine API (via /api/engine/)
@@ -64,6 +65,7 @@ trading_engine/          - Python FastAPI trading engine
 2. **Trend Following (trend_following)**: Entry when close > last 50 days AND SMA50 > SMA100. Exit via 3x ATR(100) trailing stop.
 3. **S&P 500 Momentum (sp500_momentum)**: SPX only, 30m candles. ARCA session filter (9:30 AM-4:00 PM ET, last valid candle at 3:30 PM). LONG when prev RSI(20) < 70 AND current RSI(20) >= 70, no existing open trade. Stores ATR(100) at entry (fixed for trade). Exit via 2x ATR trailing stop or RSI back below 70. Module: `trading_engine/strategies/sp500_momentum.py`.
 4. **Highest/Lowest Close FX (highest_lowest_fx)**: EUR/USD time-sensitive strategy monitoring Tokyo 8am and NY 8am windows for breakouts/reversals.
+5. **Forex Trend Following (trend_forex)**: EUR/USD, USD/JPY, GBP/USD only. D1 candles, evaluates at 5:00 PM ET (forex daily close). LONG when close > highest close of last 50 days AND SMA(50) > SMA(100). SHORT when close < lowest close of last 50 days AND SMA(50) < SMA(100). Exit via 3x ATR(100) trailing stop (ATR fixed at entry). Module: `trading_engine/strategies/trend_forex.py`.
 
 ## Indicator Engine
 Calculates locally: EMA(20,50,200), SMA(50,100), ATR(100), RSI(20)
