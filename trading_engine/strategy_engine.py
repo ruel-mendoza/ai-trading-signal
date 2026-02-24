@@ -361,7 +361,7 @@ class StrategyEngine:
     def check_exit_conditions(self) -> list[dict]:
         closed_signals = []
 
-        for strategy_name in [STRATEGY_TREND_FOLLOWING, STRATEGY_SP500_MOMENTUM]:
+        for strategy_name in [STRATEGY_TREND_FOLLOWING]:
             active = get_active_signals(strategy=strategy_name)
             for sig in active:
                 symbol = sig["symbol"]
@@ -387,7 +387,6 @@ class StrategyEngine:
                     continue
 
                 direction = sig["direction"]
-                was_closed = False
 
                 if direction == "long":
                     update_signal_tracking(sig["id"], highest_price=current_price)
@@ -395,7 +394,6 @@ class StrategyEngine:
                     trailing_stop = highest - (trailing_mult * atr_val)
                     if current_price <= trailing_stop:
                         close_signal(sig["id"], current_price, f"Trailing stop hit at {current_price:.5f} (highest: {highest:.5f}, stop: {trailing_stop:.5f})")
-                        was_closed = True
                         closed_signals.append({**sig, "exit_price": current_price, "exit_reason": "trailing_stop"})
                 elif direction == "short":
                     update_signal_tracking(sig["id"], lowest_price=current_price)
@@ -403,14 +401,9 @@ class StrategyEngine:
                     trailing_stop = lowest + (trailing_mult * atr_val)
                     if current_price >= trailing_stop:
                         close_signal(sig["id"], current_price, f"Trailing stop hit at {current_price:.5f} (lowest: {lowest:.5f}, stop: {trailing_stop:.5f})")
-                        was_closed = True
                         closed_signals.append({**sig, "exit_price": current_price, "exit_reason": "trailing_stop"})
 
-                if not was_closed and strategy_name == STRATEGY_SP500_MOMENTUM:
-                    rsi20 = IndicatorEngine.rsi(closes, 20)
-                    current_rsi = rsi20[-1] if rsi20 else None
-                    if current_rsi is not None and current_rsi < 70:
-                        close_signal(sig["id"], current_price, f"RSI below 70 ({current_rsi:.2f})")
-                        closed_signals.append({**sig, "exit_price": current_price, "exit_reason": "rsi_exit"})
+        sp500_exits = self.sp500_strategy.check_exits()
+        closed_signals.extend(sp500_exits)
 
         return closed_signals

@@ -9,6 +9,8 @@ from trading_engine.database import (
     signal_exists,
     insert_signal,
     get_active_signals,
+    update_signal_tracking,
+    close_signal,
 )
 
 logger = logging.getLogger("trading_engine.strategy.sp500_momentum")
@@ -195,3 +197,120 @@ class SP500MomentumStrategy:
             return signal
 
         return None
+
+    def check_exits(self) -> list[dict]:
+        closed_signals = []
+        active = get_active_signals(strategy=STRATEGY_NAME)
+        logger.info(f"[SP500-MOM-EXIT] ====== Checking exits | {len(active)} active signal(s) ======")
+
+        if not active:
+            return closed_signals
+
+        for sig in active:
+            symbol = sig["symbol"]
+            sig_id = sig["id"]
+            entry_price = sig["entry_price"]
+            logger.info(f"[SP500-MOM-EXIT] Signal #{sig_id} | {symbol} | entry={entry_price:.2f}")
+
+            metadata = {}
+            if sig.get("metadata"):
+                try:
+                    metadata = json.loads(sig["metadata"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            atr_at_entry = metadata.get("atr100_at_entry")
+            if atr_at_entry is None:
+                logger.warning(f"[SP500-MOM-EXIT] Signal #{sig_id} | No atr100_at_entry in metadata - skipping")
+                continue
+
+            try:
+                candles = self.cache.get_candles(symbol, TIMEFRAME, 300)
+            except Exception as e:
+                logger.error(f"[SP500-MOM-EXIT] Signal #{sig_id} | Exception fetching candles: {e}")
+                continue
+
+            if len(candles) < RSI_PERIOD + 1:
+                logger.warning(f"[SP500-MOM-EXIT] Signal #{sig_id} | Insufficient candles: {len(candles)} (need {RSI_PERIOD + 1})")
+                continue
+
+            utc_now = datetime.utcnow()
+            latest_candle = candles[-1]
+            candle_time_str = latest_candle["open_time"]
+
+            in_session = self._is_within_arca_session(candle_time_str, utc_now)
+            logger.info(f"[SP500-MOM-EXIT] Signal #{sig_id} | Session valid: {in_session}")
+
+            closes = [c["close"] for c in candles]
+            current_close = closes[-1]
+
+            stored_highest = sig.get("highest_price") or entry_price
+            highest_close = max(stored_highest, current_close)
+            update_signal_tracking(sig_id, highest_price=highest_close)
+
+            trailing_stop_level = highest_close - (atr_at_entry * TRAILING_STOP_ATR_MULT)
+
+            rsi_values = IndicatorEngine.rsi(closes, RSI_PERIOD)
+            current_rsi = rsi_values[-1] if rsi_values else None
+            prev_rsi = rsi_values[-2] if rsi_values and len(rsi_values) >= 2 else None
+
+            logger.info(
+                f"[SP500-MOM-EXIT] Signal #{sig_id} | close={current_close:.2f} | "
+                f"highest_close_since_entry={highest_close:.2f} | "
+                f"ATR_at_entry={atr_at_entry:.6f} | "
+                f"trailing_stop={trailing_stop_level:.2f}"
+            )
+            prev_rsi_str = f"{prev_rsi:.4f}" if prev_rsi is not None else "None"
+            curr_rsi_str = f"{current_rsi:.4f}" if current_rsi is not None else "None"
+            logger.info(
+                f"[SP500-MOM-EXIT] Signal #{sig_id} | RSI({RSI_PERIOD}): "
+                f"prev={prev_rsi_str}, current={curr_rsi_str}"
+            )
+
+            trailing_stop_hit = current_close < trailing_stop_level
+
+            rsi_cross_down = False
+            if current_rsi is not None and prev_rsi is not None:
+                rsi_cross_down = prev_rsi >= RSI_THRESHOLD and current_rsi < RSI_THRESHOLD
+
+            logger.info(
+                f"[SP500-MOM-EXIT] Signal #{sig_id} | "
+                f"trailing_stop_hit={trailing_stop_hit} (close {current_close:.2f} < stop {trailing_stop_level:.2f}) | "
+                f"rsi_cross_down={rsi_cross_down} (prev {prev_rsi_str} >= {RSI_THRESHOLD} AND curr {curr_rsi_str} < {RSI_THRESHOLD})"
+            )
+
+            if trailing_stop_hit and rsi_cross_down:
+                exit_reason = (
+                    f"Trailing stop AND RSI cross-down on same candle | "
+                    f"close={current_close:.2f}, stop={trailing_stop_level:.2f}, "
+                    f"highest={highest_close:.2f}, ATR_entry={atr_at_entry:.6f}, "
+                    f"RSI prev={prev_rsi:.4f} -> curr={current_rsi:.4f}"
+                )
+                logger.info(f"[SP500-MOM-EXIT] Signal #{sig_id} | BOTH triggers - producing single exit: trailing_stop+rsi")
+                close_signal(sig_id, current_close, exit_reason)
+                closed_signals.append({**sig, "exit_price": current_close, "exit_reason": "trailing_stop+rsi"})
+
+            elif trailing_stop_hit:
+                exit_reason = (
+                    f"Trailing stop hit | close={current_close:.2f}, "
+                    f"stop={trailing_stop_level:.2f}, highest={highest_close:.2f}, "
+                    f"ATR_entry={atr_at_entry:.6f}"
+                )
+                logger.info(f"[SP500-MOM-EXIT] Signal #{sig_id} | EXIT: trailing_stop")
+                close_signal(sig_id, current_close, exit_reason)
+                closed_signals.append({**sig, "exit_price": current_close, "exit_reason": "trailing_stop"})
+
+            elif rsi_cross_down:
+                exit_reason = (
+                    f"RSI cross below {RSI_THRESHOLD} | "
+                    f"prev={prev_rsi:.4f}, curr={current_rsi:.4f}, "
+                    f"close={current_close:.2f}"
+                )
+                logger.info(f"[SP500-MOM-EXIT] Signal #{sig_id} | EXIT: rsi_cross_down")
+                close_signal(sig_id, current_close, exit_reason)
+                closed_signals.append({**sig, "exit_price": current_close, "exit_reason": "rsi_cross_down"})
+
+            else:
+                logger.info(f"[SP500-MOM-EXIT] Signal #{sig_id} | No exit triggered - holding position")
+
+        return closed_signals
