@@ -40,7 +40,7 @@ CRYPTO_SYMBOLS = {"BTC/USD", "ETH/USD", "LTC/USD", "XRP/USD", "BNB/USD"}
 STOCK_INDEX_SYMBOLS = {"SPX", "NDX", "DJI"}
 
 STOCK_SYMBOL_MAP = {
-    "SPX": ".SPX",
+    "SPX": "GSPC",
     "NDX": ".IXIC",
     "DJI": ".DJI",
 }
@@ -249,11 +249,18 @@ class FCSAPIClient:
         api_symbol = get_api_symbol(symbol)
         base_url = get_base_url(symbol)
         asset_class = get_asset_class(symbol)
-        params = {
-            "symbol": api_symbol,
-            "period": str(limit),
-            "time": tf_api,
-        }
+        if asset_class == "stock":
+            params = {
+                "symbol": api_symbol,
+                "period": tf_api,
+                "length": str(limit),
+            }
+        else:
+            params = {
+                "symbol": api_symbol,
+                "period": str(limit),
+                "time": tf_api,
+            }
         if from_timestamp:
             params["from"] = from_timestamp
         logger.info(f"[GET-CANDLES] {symbol} (api={api_symbol}, class={asset_class}, url={base_url}) | period={period}({tf_api}) | limit={limit} | from={from_timestamp or 'latest'}")
