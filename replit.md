@@ -54,6 +54,13 @@ trading_engine/          - Python FastAPI trading engine
 - `GET /api/engine/api/cache/status?symbol=EUR/USD&timeframe=1H` - Cache status
 - `GET /api/engine-status` - Python engine process status
 
+## Advance/Quotes API (via /api/engine/)
+- `GET /api/engine/api/quotes?symbols=EUR/USD,SPX,BTC/USD&period=1h&merge=latest,profile` - Real-time quotes with profile data
+- All asset classes use FCSAPI v4 advance endpoint with exchange-prefixed symbols
+- Forex: `FX:EURUSD` format, Crypto: `COINBASE:BTCUSD` format, Indices: `CBOE:SPX` format
+- Symbol translation is automatic — pass friendly names (EUR/USD, BTC/USD, SPX)
+- Merge options: latest (OHLC+change), profile (name/exchange/type), tech (indicators), perf (performance)
+
 ## Strategy Engine API (via /api/engine/)
 - `POST /api/engine/api/strategies/evaluate?symbols=EUR/USD,GBP/USD` - Evaluate all strategies
 - `POST /api/engine/api/strategies/evaluate/{strategy_name}?symbol=EUR/USD` - Evaluate single strategy

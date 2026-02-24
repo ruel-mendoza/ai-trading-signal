@@ -49,6 +49,49 @@ COMMODITY_SYMBOLS = {"XAU/USD", "XAG/USD", "WTI/USD", "BRENT/USD"}
 
 UNSUPPORTED_SYMBOLS: set[str] = set()
 
+BASE_URL_V4_FOREX = "https://api-v4.fcsapi.com/forex"
+BASE_URL_V4_CRYPTO = "https://api-v4.fcsapi.com/crypto"
+
+ADVANCE_SYMBOL_MAP = {
+    "EUR/USD": "FX:EURUSD",
+    "GBP/USD": "FX:GBPUSD",
+    "USD/JPY": "FX:USDJPY",
+    "USD/CAD": "FX:USDCAD",
+    "AUD/USD": "FX:AUDUSD",
+    "NZD/USD": "FX:NZDUSD",
+    "USD/CHF": "FX:USDCHF",
+    "EUR/GBP": "FX:EURGBP",
+    "XAU/USD": "FX:XAUUSD",
+    "XAG/USD": "FX:XAGUSD",
+    "WTI/USD": "FX:WTIUSD",
+    "BRENT/USD": "FX:BRENTUSD",
+    "BTC/USD": "COINBASE:BTCUSD",
+    "ETH/USD": "COINBASE:ETHUSD",
+    "LTC/USD": "COINBASE:LTCUSD",
+    "XRP/USD": "COINBASE:XRPUSD",
+    "BNB/USD": "COINBASE:BNBUSD",
+    "SPX": "CBOE:SPX",
+    "NDX": "CBOE:NDX",
+    "DJI": "CBOE:DJI",
+}
+
+
+def get_advance_symbol(symbol: str) -> str:
+    mapped = ADVANCE_SYMBOL_MAP.get(symbol)
+    if mapped is None:
+        logger.warning(f"[ADVANCE] No v4 symbol mapping for '{symbol}', using as-is")
+        return symbol
+    return mapped
+
+
+def get_advance_base_url(symbol: str) -> str:
+    asset_class = get_asset_class(symbol)
+    if asset_class == "crypto":
+        return BASE_URL_V4_CRYPTO
+    if asset_class == "stock":
+        return BASE_URL_STOCK
+    return BASE_URL_V4_FOREX
+
 
 def get_asset_class(symbol: str) -> str:
     if symbol in CRYPTO_SYMBOLS:
@@ -75,6 +118,15 @@ def is_symbol_supported(symbol: str) -> bool:
     if symbol in UNSUPPORTED_SYMBOLS:
         return False
     return True
+
+
+def _safe_float(val) -> float | None:
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
 
 
 def _validate_candle_prices(candles: list[dict], symbol: str) -> list[dict]:
@@ -301,6 +353,84 @@ class FCSAPIClient:
             if isinstance(item, dict):
                 symbols.append(item.get("symbol", ""))
         return [s for s in symbols if s]
+
+    def get_advance_data(self, symbols: list[str], period: str = "1h", merge: str = "latest,profile") -> list[dict]:
+        grouped: dict[str, list[tuple[str, str]]] = {"forex": [], "crypto": [], "stock": []}
+        for sym in symbols:
+            asset_class = get_asset_class(sym)
+            adv_sym = get_advance_symbol(sym)
+            grouped[asset_class].append((sym, adv_sym))
+
+        results = []
+        for asset_class, sym_pairs in grouped.items():
+            if not sym_pairs:
+                continue
+            api_symbols = ",".join(adv_sym for _, adv_sym in sym_pairs)
+            original_map = {adv_sym: orig for orig, adv_sym in sym_pairs}
+
+            base_url = get_advance_base_url(sym_pairs[0][0])
+
+            tf_api = TIMEFRAME_MAP.get(period, period)
+            params = {
+                "symbol": api_symbols,
+                "merge": merge,
+                "period": tf_api,
+            }
+            if asset_class == "stock":
+                params["type"] = "index"
+
+            logger.info(f"[ADVANCE] Fetching {asset_class} quotes: {api_symbols} | period={tf_api} | merge={merge}")
+            try:
+                data = self._get("advance", params, base_url=base_url)
+            except Exception as e:
+                logger.error(f"[ADVANCE] {asset_class} request failed: {e}")
+                continue
+
+            if data.get("status") is False or not data.get("response"):
+                logger.warning(f"[ADVANCE] {asset_class} | No data returned: {data.get('msg', '')}")
+                continue
+
+            for item in data["response"]:
+                ticker = item.get("ticker", "")
+                original_symbol = original_map.get(ticker, ticker)
+                active = item.get("active", {})
+                previous = item.get("previous", {})
+                profile = item.get("profile", {})
+
+                quote = {
+                    "symbol": original_symbol,
+                    "ticker": ticker,
+                    "asset_class": asset_class,
+                    "current": {
+                        "open": _safe_float(active.get("o")),
+                        "high": _safe_float(active.get("h")),
+                        "low": _safe_float(active.get("l")),
+                        "close": _safe_float(active.get("c")),
+                        "volume": active.get("v"),
+                        "vwap": _safe_float(active.get("vw")),
+                        "change": _safe_float(active.get("ch")),
+                        "change_pct": _safe_float(active.get("chp")),
+                        "timestamp": active.get("tm", ""),
+                    },
+                    "previous": {
+                        "open": _safe_float(previous.get("o")),
+                        "high": _safe_float(previous.get("h")),
+                        "low": _safe_float(previous.get("l")),
+                        "close": _safe_float(previous.get("c")),
+                        "volume": previous.get("v"),
+                        "timestamp": previous.get("tm", ""),
+                    },
+                    "profile": {
+                        "name": profile.get("name", ""),
+                        "exchange": profile.get("exchange", ""),
+                        "type": profile.get("type", ""),
+                        "currency": profile.get("currency", ""),
+                    },
+                    "update_time": item.get("updateTime", ""),
+                }
+                results.append(quote)
+
+        return results
 
     def close(self):
         self.session.close()

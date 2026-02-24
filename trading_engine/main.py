@@ -291,6 +291,38 @@ def reset_credit_kill_switch():
     return {"success": True, "api_blocked": is_api_blocked()}
 
 
+VALID_QUOTE_PERIODS = {"30m", "1h", "4h", "1d", "1H", "4H", "D1"}
+
+
+@app.get("/api/quotes")
+def get_quotes(
+    symbols: str = Query(..., description="Comma-separated list of symbols, e.g. EUR/USD,SPX,BTC/USD"),
+    period: str = Query("1h", description="Timeframe period: 30m, 1h, 4h, 1d"),
+    merge: str = Query("latest,profile", description="Data to merge: latest, profile, tech, perf"),
+):
+    symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    if not symbol_list:
+        raise HTTPException(status_code=400, detail="At least one symbol is required")
+    if len(symbol_list) > 20:
+        raise HTTPException(status_code=400, detail="Maximum 20 symbols per request")
+    if period not in VALID_QUOTE_PERIODS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid period '{period}'. Must be one of: 30m, 1h, 4h, 1d",
+        )
+
+    try:
+        quotes = api_client.get_advance_data(symbol_list, period=period, merge=merge)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch quotes: {str(e)}")
+
+    return {
+        "quotes": quotes,
+        "count": len(quotes),
+        "requested": symbol_list,
+    }
+
+
 @app.post("/api/strategies/evaluate")
 def evaluate_strategies(
     symbols: Optional[str] = Query(None, description="Comma-separated list of symbols to evaluate"),
