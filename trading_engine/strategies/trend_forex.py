@@ -146,8 +146,12 @@ class ForexTrendFollowingStrategy:
 
             logger.info(f"[TREND-FOREX] {symbol} | ALL CONDITIONS MET: LONG")
             logger.info(
+                f"[TREND-FOREX] {symbol} | ATR({ATR_PERIOD}) at entry = {atr_val:.6f} "
+                f"(FIXED for trade lifetime, stored in metadata.atr100_at_entry)"
+            )
+            logger.info(
                 f"[TREND-FOREX] {symbol} | GENERATING SIGNAL: LONG @ {current_close:.5f} | "
-                f"SL={stop_loss:.5f} | ATR={atr_val:.5f}"
+                f"initial_trailing_stop={stop_loss:.5f} (entry - {TRAILING_STOP_ATR_MULT}x ATR)"
             )
 
             signal = {
@@ -175,6 +179,10 @@ class ForexTrendFollowingStrategy:
                 signal["id"] = signal_id
                 signal["status"] = "new"
                 logger.info(f"[TREND-FOREX] {symbol} | Signal stored with id={signal_id}")
+                logger.info(
+                    f"[TREND-FOREX] {symbol} | Reversal allowed: opposite direction (SHORT) "
+                    f"can open if this trade closes and SHORT conditions are met"
+                )
                 return signal
 
         elif close_below_lowest and not sma50_above_sma100:
@@ -191,8 +199,12 @@ class ForexTrendFollowingStrategy:
 
             logger.info(f"[TREND-FOREX] {symbol} | ALL CONDITIONS MET: SHORT")
             logger.info(
+                f"[TREND-FOREX] {symbol} | ATR({ATR_PERIOD}) at entry = {atr_val:.6f} "
+                f"(FIXED for trade lifetime, stored in metadata.atr100_at_entry)"
+            )
+            logger.info(
                 f"[TREND-FOREX] {symbol} | GENERATING SIGNAL: SHORT @ {current_close:.5f} | "
-                f"SL={stop_loss:.5f} | ATR={atr_val:.5f}"
+                f"initial_trailing_stop={stop_loss:.5f} (entry + {TRAILING_STOP_ATR_MULT}x ATR)"
             )
 
             signal = {
@@ -220,6 +232,10 @@ class ForexTrendFollowingStrategy:
                 signal["id"] = signal_id
                 signal["status"] = "new"
                 logger.info(f"[TREND-FOREX] {symbol} | Signal stored with id={signal_id}")
+                logger.info(
+                    f"[TREND-FOREX] {symbol} | Reversal allowed: opposite direction (LONG) "
+                    f"can open if this trade closes and LONG conditions are met"
+                )
                 return signal
 
         else:
@@ -254,6 +270,11 @@ class ForexTrendFollowingStrategy:
                 logger.warning(f"[TREND-FOREX-EXIT] Signal #{sig_id} | No atr100_at_entry in metadata - skipping")
                 continue
 
+            logger.info(
+                f"[TREND-FOREX-EXIT] Signal #{sig_id} | ATR loaded from DB metadata (FIXED at entry): {atr_at_entry:.6f} "
+                f"| NOT recalculated"
+            )
+
             try:
                 candles = self.cache.get_candles(symbol, TIMEFRAME, 300)
             except Exception as e:
@@ -274,18 +295,24 @@ class ForexTrendFollowingStrategy:
                 trailing_stop = highest_close - (atr_at_entry * TRAILING_STOP_ATR_MULT)
 
                 logger.info(
-                    f"[TREND-FOREX-EXIT] Signal #{sig_id} | LONG | close={current_close:.5f} | "
-                    f"highest={highest_close:.5f} | trailing_stop={trailing_stop:.5f} | "
-                    f"ATR_entry={atr_at_entry:.6f}"
+                    f"[TREND-FOREX-EXIT] Signal #{sig_id} | LONG tracking | "
+                    f"close={current_close:.5f} | prev_highest={stored_highest:.5f} | "
+                    f"new_highest={highest_close:.5f} | "
+                    f"trailing_stop = {highest_close:.5f} - ({atr_at_entry:.6f} x {TRAILING_STOP_ATR_MULT}) = {trailing_stop:.5f}"
+                )
+                logger.info(
+                    f"[TREND-FOREX-EXIT] Signal #{sig_id} | Exit check: "
+                    f"close ({current_close:.5f}) < trailing_stop ({trailing_stop:.5f}) = "
+                    f"{current_close < trailing_stop}"
                 )
 
                 if current_close < trailing_stop:
                     exit_reason = (
                         f"Trailing stop hit | close={current_close:.5f}, "
-                        f"stop={trailing_stop:.5f}, highest={highest_close:.5f}, "
-                        f"ATR_entry={atr_at_entry:.6f}"
+                        f"stop={trailing_stop:.5f}, highest_since_entry={highest_close:.5f}, "
+                        f"ATR_at_entry={atr_at_entry:.6f} (fixed)"
                     )
-                    logger.info(f"[TREND-FOREX-EXIT] Signal #{sig_id} | EXIT: trailing_stop")
+                    logger.info(f"[TREND-FOREX-EXIT] Signal #{sig_id} | EXIT: trailing_stop | Trade closed - reversal now permitted")
                     close_signal(sig_id, current_close, exit_reason)
                     closed_signals.append({**sig, "exit_price": current_close, "exit_reason": "trailing_stop"})
                 else:
@@ -299,18 +326,24 @@ class ForexTrendFollowingStrategy:
                 trailing_stop = lowest_close + (atr_at_entry * TRAILING_STOP_ATR_MULT)
 
                 logger.info(
-                    f"[TREND-FOREX-EXIT] Signal #{sig_id} | SHORT | close={current_close:.5f} | "
-                    f"lowest={lowest_close:.5f} | trailing_stop={trailing_stop:.5f} | "
-                    f"ATR_entry={atr_at_entry:.6f}"
+                    f"[TREND-FOREX-EXIT] Signal #{sig_id} | SHORT tracking | "
+                    f"close={current_close:.5f} | prev_lowest={stored_lowest:.5f} | "
+                    f"new_lowest={lowest_close:.5f} | "
+                    f"trailing_stop = {lowest_close:.5f} + ({atr_at_entry:.6f} x {TRAILING_STOP_ATR_MULT}) = {trailing_stop:.5f}"
+                )
+                logger.info(
+                    f"[TREND-FOREX-EXIT] Signal #{sig_id} | Exit check: "
+                    f"close ({current_close:.5f}) > trailing_stop ({trailing_stop:.5f}) = "
+                    f"{current_close > trailing_stop}"
                 )
 
                 if current_close > trailing_stop:
                     exit_reason = (
                         f"Trailing stop hit | close={current_close:.5f}, "
-                        f"stop={trailing_stop:.5f}, lowest={lowest_close:.5f}, "
-                        f"ATR_entry={atr_at_entry:.6f}"
+                        f"stop={trailing_stop:.5f}, lowest_since_entry={lowest_close:.5f}, "
+                        f"ATR_at_entry={atr_at_entry:.6f} (fixed)"
                     )
-                    logger.info(f"[TREND-FOREX-EXIT] Signal #{sig_id} | EXIT: trailing_stop")
+                    logger.info(f"[TREND-FOREX-EXIT] Signal #{sig_id} | EXIT: trailing_stop | Trade closed - reversal now permitted")
                     close_signal(sig_id, current_close, exit_reason)
                     closed_signals.append({**sig, "exit_price": current_close, "exit_reason": "trailing_stop"})
                 else:
