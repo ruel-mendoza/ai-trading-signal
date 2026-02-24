@@ -77,6 +77,40 @@ class NonForexTrendFollowingStrategy:
             return True
         return False
 
+    def _get_advance_price(self, asset: str) -> Optional[dict]:
+        try:
+            api_client = self.cache.api_client
+            quotes = api_client.get_advance_data([asset], period="1d", merge="latest,profile")
+            if quotes and len(quotes) > 0:
+                quote = quotes[0]
+                current = quote.get("current", {})
+                close_price = current.get("close")
+                timestamp = current.get("timestamp", "")
+                update_time = quote.get("update_time", "")
+                profile_name = quote.get("profile", {}).get("name", "")
+                if close_price is not None:
+                    logger.info(
+                        f"[TREND-NONFX] {asset} | v4 advance quote: close={close_price} | "
+                        f"timestamp={timestamp} | update_time={update_time} | name={profile_name}"
+                    )
+                    return {
+                        "close": close_price,
+                        "high": current.get("high"),
+                        "low": current.get("low"),
+                        "open": current.get("open"),
+                        "change": current.get("change"),
+                        "change_pct": current.get("change_pct"),
+                        "timestamp": timestamp,
+                        "update_time": update_time,
+                    }
+                else:
+                    logger.warning(f"[TREND-NONFX] {asset} | v4 advance returned null close price")
+            else:
+                logger.warning(f"[TREND-NONFX] {asset} | v4 advance returned no quotes")
+        except Exception as e:
+            logger.error(f"[TREND-NONFX] {asset} | v4 advance request failed: {e}")
+        return None
+
     def evaluate(self, asset: str) -> Optional[dict]:
         logger.info(f"[TREND-NONFX] ====== Evaluating {asset} ======")
 
@@ -91,6 +125,11 @@ class NonForexTrendFollowingStrategy:
 
         if not self._is_eval_window():
             logger.info(f"[TREND-NONFX] {asset} | Outside 4:00 PM ET window - skipping")
+            return None
+
+        advance_quote = self._get_advance_price(asset)
+        if advance_quote is None:
+            logger.warning(f"[TREND-NONFX] {asset} | Cannot get real-time price from v4 advance - skipping")
             return None
 
         try:
@@ -114,7 +153,7 @@ class NonForexTrendFollowingStrategy:
         sma100_values = IndicatorEngine.sma(closes, SMA_SLOW)
         atr_values = IndicatorEngine.atr(highs, lows, closes, ATR_PERIOD)
 
-        current_close = closes[-1]
+        current_close = advance_quote["close"]
         sma50_val = sma50_values[-1]
         sma100_val = sma100_values[-1]
         atr_val = atr_values[-1]
@@ -133,7 +172,7 @@ class NonForexTrendFollowingStrategy:
         sma50_above_sma100 = sma50_val > sma100_val
         close_above_highest = current_close > highest_50d
 
-        logger.info(f"[TREND-NONFX] {asset} | close={current_close:.5f}")
+        logger.info(f"[TREND-NONFX] {asset} | close={current_close:.5f} (v4 advance real-time)")
         logger.info(f"[TREND-NONFX] {asset} | SMA(50)={sma50_val:.5f} | SMA(100)={sma100_val:.5f} | ATR(100)={atr_val:.5f}")
         logger.info(f"[TREND-NONFX] {asset} | 50-day highest close={highest_50d:.5f} (prior {LOOKBACK_DAYS} bars)")
         logger.info(
@@ -160,7 +199,8 @@ class NonForexTrendFollowingStrategy:
                     f"ATR_at_entry=MISSING — trailing stop cannot be calculated"
                 )
 
-        signal_timestamp = candles[-1]["timestamp"]
+        now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
+        signal_timestamp = now_et.strftime("%Y-%m-%dT%H:%M:%S")
 
         if close_above_highest and sma50_above_sma100:
             if self._has_open_long(asset):
@@ -192,6 +232,7 @@ class NonForexTrendFollowingStrategy:
                 "strategy_name": STRATEGY_NAME,
                 "asset": asset,
                 "direction": "BUY",
+                "action": "ENTRY",
                 "entry_price": current_close,
                 "stop_loss": stop_loss,
                 "take_profit": None,
@@ -240,17 +281,26 @@ class NonForexTrendFollowingStrategy:
                 f"[TREND-NONFX-EXIT] Position #{pos_id} | ATR locked at entry: {atr_at_entry:.6f}"
             )
 
-            try:
-                candles = self.cache.get_candles(asset, TIMEFRAME, 300)
-            except Exception as e:
-                logger.error(f"[TREND-NONFX-EXIT] Position #{pos_id} | Exception fetching candles: {e}")
-                continue
+            advance_quote = self._get_advance_price(asset)
+            if advance_quote is not None:
+                current_close = advance_quote["close"]
+                logger.info(
+                    f"[TREND-NONFX-EXIT] Position #{pos_id} | Using v4 advance real-time price: {current_close:.5f}"
+                )
+            else:
+                logger.warning(
+                    f"[TREND-NONFX-EXIT] Position #{pos_id} | v4 advance unavailable, falling back to cached candles"
+                )
+                try:
+                    candles = self.cache.get_candles(asset, TIMEFRAME, 300)
+                except Exception as e:
+                    logger.error(f"[TREND-NONFX-EXIT] Position #{pos_id} | Exception fetching candles: {e}")
+                    continue
 
-            if len(candles) < 2:
-                logger.warning(f"[TREND-NONFX-EXIT] Position #{pos_id} | Insufficient candles: {len(candles)}")
-                continue
-
-            current_close = candles[-1]["close"]
+                if len(candles) < 2:
+                    logger.warning(f"[TREND-NONFX-EXIT] Position #{pos_id} | Insufficient candles: {len(candles)}")
+                    continue
+                current_close = candles[-1]["close"]
 
             stored_highest = pos.get("highest_price_since_entry") or entry_price
             highest_close = max(stored_highest, current_close)
