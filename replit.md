@@ -9,6 +9,7 @@ An AI-powered trading signals platform that generates forex, crypto, and commodi
 - **Trading Engine**: Python FastAPI (port 5001, proxied via Express at /api/engine/)
 - **Database**: PostgreSQL with Drizzle ORM (signals), SQLite (OHLC candle data + strategy signals)
 - **AI**: OpenAI via Replit AI Integrations (gpt-5-mini for signal generation)
+- **Scheduler**: APScheduler (BackgroundScheduler with CronTrigger)
 - **Routing**: Wouter
 - **State**: TanStack React Query
 

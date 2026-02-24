@@ -562,6 +562,288 @@ def _build_spx_momentum_html(spx_data: dict, spx_signal_rows: str, spx_signal_co
     """
 
 
+def _get_forex_trend_data() -> dict:
+    from zoneinfo import ZoneInfo
+    et_zone = ZoneInfo("America/New_York")
+    et_now = datetime.now(et_zone)
+    et_minutes = et_now.hour * 60 + et_now.minute
+    close_minutes = 17 * 60
+    window_end = close_minutes + 30
+    in_window = close_minutes <= et_minutes <= window_end
+    ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
+
+    symbols_data = []
+    for symbol in ["EUR/USD", "USD/JPY", "GBP/USD"]:
+        candles = get_candles(symbol, "D", 300)
+        sym_info = {
+            "symbol": symbol,
+            "current_close": None,
+            "sma50": None,
+            "sma100": None,
+            "atr100": None,
+            "highest_50d": None,
+            "lowest_50d": None,
+            "sma_status": "N/A",
+            "candle_count": len(candles),
+        }
+        if len(candles) >= 101:
+            closes = [c["close"] for c in candles]
+            highs = [c["high"] for c in candles]
+            lows = [c["low"] for c in candles]
+            sym_info["current_close"] = closes[-1]
+
+            sma50_vals = IndicatorEngine.sma(closes, 50)
+            sma100_vals = IndicatorEngine.sma(closes, 100)
+            atr_vals = IndicatorEngine.atr(highs, lows, closes, 100)
+
+            sym_info["sma50"] = sma50_vals[-1]
+            sym_info["sma100"] = sma100_vals[-1]
+            sym_info["atr100"] = atr_vals[-1]
+
+            if len(closes) > 50:
+                prior_closes = closes[-51:-1]
+                sym_info["highest_50d"] = max(prior_closes)
+                sym_info["lowest_50d"] = min(prior_closes)
+
+            if sym_info["sma50"] is not None and sym_info["sma100"] is not None:
+                sym_info["sma_status"] = "Bullish" if sym_info["sma50"] > sym_info["sma100"] else "Bearish"
+
+        symbols_data.append(sym_info)
+
+    active_trades = get_active_signals(strategy="trend_forex")
+    trade_details = []
+    for sig in active_trades:
+        metadata = {}
+        if sig.get("metadata"):
+            try:
+                metadata = json.loads(sig["metadata"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        atr_at_entry = metadata.get("atr100_at_entry")
+        direction = sig["direction"]
+        entry_price = sig["entry_price"]
+
+        if direction == "long":
+            stored_extreme = sig.get("highest_price") or entry_price
+            sym_candles = get_candles(sig["symbol"], "D", 5)
+            cur_close = sym_candles[-1]["close"] if sym_candles else None
+            if cur_close:
+                stored_extreme = max(stored_extreme, cur_close)
+            trailing_stop = None
+            if atr_at_entry is not None:
+                trailing_stop = stored_extreme - (atr_at_entry * 3.0)
+            trade_details.append({
+                "id": sig["id"],
+                "symbol": sig["symbol"],
+                "direction": direction,
+                "entry_price": entry_price,
+                "atr_at_entry": atr_at_entry,
+                "extreme_price": stored_extreme,
+                "trailing_stop": trailing_stop,
+                "current_close": cur_close,
+                "created_at": sig.get("created_at"),
+            })
+        elif direction == "short":
+            stored_extreme = sig.get("lowest_price") or entry_price
+            sym_candles = get_candles(sig["symbol"], "D", 5)
+            cur_close = sym_candles[-1]["close"] if sym_candles else None
+            if cur_close:
+                stored_extreme = min(stored_extreme, cur_close)
+            trailing_stop = None
+            if atr_at_entry is not None:
+                trailing_stop = stored_extreme + (atr_at_entry * 3.0)
+            trade_details.append({
+                "id": sig["id"],
+                "symbol": sig["symbol"],
+                "direction": direction,
+                "entry_price": entry_price,
+                "atr_at_entry": atr_at_entry,
+                "extreme_price": stored_extreme,
+                "trailing_stop": trailing_stop,
+                "current_close": cur_close,
+                "created_at": sig.get("created_at"),
+            })
+
+    return {
+        "et_time": et_now.strftime(f"%Y-%m-%d %H:%M:%S {'EDT' if ny_dst else 'EST'}"),
+        "in_window": in_window,
+        "dst_active": ny_dst,
+        "symbols": symbols_data,
+        "active_trades": trade_details,
+    }
+
+
+def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count: int) -> str:
+    in_window = fx_data["in_window"]
+    window_badge = '<span class="badge status-active">IN WINDOW</span>' if in_window else '<span class="badge status-closed">OUTSIDE WINDOW</span>'
+
+    symbols_html = ""
+    for sym in fx_data["symbols"]:
+        close_display = f"{sym['current_close']:.5f}" if sym["current_close"] is not None else "N/A"
+        sma50_display = f"{sym['sma50']:.5f}" if sym["sma50"] is not None else "N/A"
+        sma100_display = f"{sym['sma100']:.5f}" if sym["sma100"] is not None else "N/A"
+        atr_display = f"{sym['atr100']:.5f}" if sym["atr100"] is not None else "N/A"
+        high_display = f"{sym['highest_50d']:.5f}" if sym["highest_50d"] is not None else "N/A"
+        low_display = f"{sym['lowest_50d']:.5f}" if sym["lowest_50d"] is not None else "N/A"
+        sma_color = "#6ee7b7" if sym["sma_status"] == "Bullish" else "#fca5a5" if sym["sma_status"] == "Bearish" else "#94a3b8"
+        sma_badge = f'<span style="color:{sma_color};font-weight:600;">{sym["sma_status"]}</span>'
+
+        breakout_long = ""
+        breakout_short = ""
+        if sym["current_close"] is not None and sym["highest_50d"] is not None:
+            if sym["current_close"] > sym["highest_50d"]:
+                breakout_long = ' <span class="badge buy">BREAKOUT</span>'
+        if sym["current_close"] is not None and sym["lowest_50d"] is not None:
+            if sym["current_close"] < sym["lowest_50d"]:
+                breakout_short = ' <span class="badge sell">BREAKDOWN</span>'
+
+        symbols_html += f"""
+        <div class="settings-section" style="margin-bottom:16px;" data-testid="forex-trend-symbol-{sym['symbol'].replace('/','-')}">
+            <h3>{sym['symbol']} <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">{sym['candle_count']} D1 candles</span></h3>
+            <div class="stats-grid" style="margin-top:12px;">
+                <div class="stat-card">
+                    <div class="stat-label">Current Close</div>
+                    <div class="stat-value" style="font-size:1.2rem;">{close_display}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">50-Day High{breakout_long}</div>
+                    <div class="stat-value" style="font-size:1.2rem;">{high_display}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">50-Day Low{breakout_short}</div>
+                    <div class="stat-value" style="font-size:1.2rem;">{low_display}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">SMA(50) vs SMA(100)</div>
+                    <div class="stat-value" style="font-size:1.2rem;">{sma_badge}</div>
+                    <div class="stat-label" style="margin-top:4px;">{sma50_display} / {sma100_display}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">ATR(100)</div>
+                    <div class="stat-value" style="font-size:1.2rem;">{atr_display}</div>
+                </div>
+            </div>
+        </div>"""
+
+    active_html = ""
+    if fx_data["active_trades"]:
+        trade_rows = ""
+        for t in fx_data["active_trades"]:
+            dir_class = "buy" if t["direction"] == "long" else "sell"
+            entry_display = f"{t['entry_price']:.5f}"
+            atr_display = f"{t['atr_at_entry']:.6f}" if t["atr_at_entry"] is not None else "N/A"
+            extreme_label = "Highest Close" if t["direction"] == "long" else "Lowest Close"
+            extreme_display = f"{t['extreme_price']:.5f}"
+            trail_display = f"{t['trailing_stop']:.5f}" if t["trailing_stop"] is not None else "N/A"
+            cur_display = f"{t['current_close']:.5f}" if t["current_close"] is not None else "N/A"
+            pnl = ""
+            if t["current_close"] is not None:
+                if t["direction"] == "long":
+                    diff = t["current_close"] - t["entry_price"]
+                else:
+                    diff = t["entry_price"] - t["current_close"]
+                pnl_color = "#6ee7b7" if diff >= 0 else "#fca5a5"
+                pnl = f'<span style="color:{pnl_color};font-weight:600;">{diff:+.5f}</span>'
+
+            trade_rows += f"""
+            <tr data-testid="row-forex-trade-{t['id']}">
+                <td>{t['symbol']}</td>
+                <td><span class="badge {dir_class}">{t['direction'].upper()}</span></td>
+                <td>{entry_display}</td>
+                <td>{atr_display}</td>
+                <td>{extreme_display} <span style="color:#64748b;font-size:0.75rem;">({extreme_label})</span></td>
+                <td style="color:#fbbf24;font-weight:600;">{trail_display}</td>
+                <td>{cur_display}</td>
+                <td>{pnl}</td>
+                <td>{t.get('created_at', 'N/A')}</td>
+            </tr>"""
+
+        active_html = f"""
+        <div class="settings-section" style="margin-top:20px;border-left:3px solid #3b82f6;">
+            <h3>Active Trades ({len(fx_data['active_trades'])})</h3>
+            <div style="overflow-x:auto;margin-top:12px;">
+                <table class="data-table" data-testid="forex-trend-active-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Direction</th>
+                            <th>Entry Price</th>
+                            <th>Entry ATR(100)</th>
+                            <th>Tracked Extreme</th>
+                            <th>Trailing Stop</th>
+                            <th>Current Close</th>
+                            <th>P&amp;L</th>
+                            <th>Opened</th>
+                        </tr>
+                    </thead>
+                    <tbody>{trade_rows}</tbody>
+                </table>
+            </div>
+        </div>"""
+    else:
+        active_html = """
+        <div class="settings-section" style="margin-top:20px;">
+            <h3>Active Trades</h3>
+            <p style="color:#94a3b8;padding:16px 0;">No active Forex Trend trades.</p>
+        </div>"""
+
+    return f"""
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Eval Window (5:00 PM ET)</div>
+            <div style="margin-top:8px;">{window_badge}</div>
+            <div class="stat-label" style="margin-top:8px;">{fx_data['et_time']}</div>
+            <div class="stat-label">DST: {'Active' if fx_data['dst_active'] else 'Inactive'}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Target Assets</div>
+            <div class="stat-value" style="font-size:1.2rem;">EUR/USD, USD/JPY, GBP/USD</div>
+            <div class="stat-label" style="margin-top:4px;">Daily (D1) candles</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Scheduler</div>
+            <div class="stat-value" style="font-size:1.2rem;color:#6ee7b7;">Active</div>
+            <div class="stat-label" style="margin-top:4px;">APScheduler @ 17:00 ET</div>
+        </div>
+    </div>
+    {symbols_html}
+    {active_html}
+    <div class="settings-section" style="margin-top:20px;">
+        <h3>Signal History ({fx_signal_count})</h3>
+        <div style="overflow-x:auto;margin-top:12px;">
+            <table class="data-table" data-testid="forex-trend-signals-table">
+                <thead>
+                    <tr>
+                        <th>Asset</th>
+                        <th>Direction</th>
+                        <th>Entry Price</th>
+                        <th>Stop Loss</th>
+                        <th>Take Profit</th>
+                        <th>Exit Price</th>
+                        <th>Strategy</th>
+                        <th>Status</th>
+                        <th>Timeframe</th>
+                        <th>Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody>{fx_signal_rows}</tbody>
+            </table>
+        </div>
+    </div>
+    <div class="timezone-note" style="margin-top:16px;">
+        <strong>Strategy Rules:</strong>
+        <ul>
+            <li><strong>Long Entry:</strong> Close &gt; Highest Close of prior 50 days AND SMA(50) &gt; SMA(100)</li>
+            <li><strong>Short Entry:</strong> Close &lt; Lowest Close of prior 50 days AND SMA(50) &lt; SMA(100)</li>
+            <li><strong>Exit (Trailing Stop):</strong> Long exits when close &lt; highest_since_entry - (ATR_at_entry &times; 3); Short exits when close &gt; lowest_since_entry + (ATR_at_entry &times; 3)</li>
+            <li><strong>ATR:</strong> Fixed at entry value for the duration of the trade (never recalculated)</li>
+            <li><strong>Timing:</strong> Evaluates at 5:00 PM ET daily (forex daily close), automated via APScheduler</li>
+            <li><strong>Reversal:</strong> Closing a Long allows a Short to open the next day if conditions are met (and vice versa)</li>
+        </ul>
+    </div>
+    """
+
+
 def _build_users_html(current_user_id: int) -> str:
     admins = get_all_admins()
     rows = ""
@@ -1030,8 +1312,14 @@ def admin_dashboard(
     spx_signal_count = len(spx_signals)
     spx_html = _build_spx_momentum_html(spx_data, spx_signal_rows, spx_signal_count)
 
+    fx_trend_data = _get_forex_trend_data()
+    fx_trend_signals = get_all_signals(strategy="trend_forex", limit=200)
+    fx_trend_signal_rows = _signals_to_table_rows(fx_trend_signals)
+    fx_trend_signal_count = len(fx_trend_signals)
+    forex_trend_html = _build_forex_trend_html(fx_trend_data, fx_trend_signal_rows, fx_trend_signal_count)
+
     strategy_options = ""
-    for s in ["", "mtf_ema", "trend_following", "sp500_momentum", "highest_lowest_fx"]:
+    for s in ["", "mtf_ema", "trend_following", "sp500_momentum", "highest_lowest_fx", "trend_forex"]:
         label = s.replace("_", " ").title() if s else "All Strategies"
         selected = "selected" if s == (strategy or "") else ""
         strategy_options += f'<option value="{s}" {selected}>{label}</option>'
@@ -1094,6 +1382,10 @@ def admin_dashboard(
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
                         SPX 500 Momentum
                     </a>
+                    <a class="sidebar-link {'active' if tab == 'forex_trend' else ''}" data-tab="forex_trend" onclick="showTab('forex_trend')" data-testid="sidebar-forex-trend">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                        Forex Trend
+                    </a>
                 </div>
                 <div class="sidebar-group">
                     <div class="sidebar-group-label">System</div>
@@ -1126,6 +1418,7 @@ def admin_dashboard(
             <div class="mobile-tab-bar">
                 <a class="tab {'active' if tab == 'signals' else ''}" data-tab="signals" onclick="showTab('signals')">Overview</a>
                 <a class="tab {'active' if tab == 'spx' else ''}" data-tab="spx" onclick="showTab('spx')">SPX 500</a>
+                <a class="tab {'active' if tab == 'forex_trend' else ''}" data-tab="forex_trend" onclick="showTab('forex_trend')">FX Trend</a>
                 <a class="tab {'active' if tab == 'credits' else ''}" data-tab="credits" onclick="showTab('credits')">Credits</a>
                 <a class="tab {'active' if tab == 'timezone' else ''}" data-tab="timezone" onclick="showTab('timezone')">Hours</a>
                 <a class="tab {'active' if tab == 'settings' else ''}" data-tab="settings" onclick="showTab('settings')">Settings</a>
@@ -1176,6 +1469,13 @@ def admin_dashboard(
             <div class="section">
                 <h2>SPX 500 Momentum Strategy</h2>
                 {spx_html}
+            </div>
+        </div>
+
+        <div id="tab-forex_trend" class="tab-content {'hidden' if tab != 'forex_trend' else ''}">
+            <div class="section">
+                <h2>Forex Trend Following Strategy</h2>
+                {forex_trend_html}
             </div>
         </div>
 

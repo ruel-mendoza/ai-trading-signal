@@ -4,6 +4,10 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+from contextlib import asynccontextmanager
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 logging.basicConfig(
     level=logging.INFO,
@@ -11,6 +15,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("apscheduler").setLevel(logging.INFO)
 logger = logging.getLogger("trading_engine")
 
 from trading_engine.database import init_db, get_candles, get_candle_count, get_all_signals, get_active_signals, VALID_TIMEFRAMES
@@ -19,11 +24,60 @@ from trading_engine.cache_layer import CacheLayer
 from trading_engine.indicators import IndicatorEngine
 from trading_engine.strategy_engine import StrategyEngine
 from trading_engine.admin import router as admin_router
+from trading_engine.strategies.trend_forex import TARGET_SYMBOLS as TREND_FOREX_SYMBOLS
+
+scheduler = BackgroundScheduler()
+
+init_db()
+
+api_client = FCSAPIClient()
+cache = CacheLayer(api_client)
+strategy_engine = StrategyEngine(cache)
+
+
+def _scheduled_trend_forex_evaluate():
+    logger.info("[SCHEDULER] ====== Triggered trend_forex daily evaluation at 5:00 PM ET ======")
+    for symbol in TREND_FOREX_SYMBOLS:
+        try:
+            result = strategy_engine.trend_forex_strategy.evaluate(symbol)
+            if result:
+                logger.info(f"[SCHEDULER] trend_forex | {symbol} | NEW SIGNAL generated: {result.get('direction', '').upper()} id={result.get('id')}")
+            else:
+                logger.info(f"[SCHEDULER] trend_forex | {symbol} | No signal triggered")
+        except Exception as e:
+            logger.error(f"[SCHEDULER] trend_forex | {symbol} | Exception: {e}")
+    try:
+        exits = strategy_engine.trend_forex_strategy.check_exits()
+        if exits:
+            logger.info(f"[SCHEDULER] trend_forex | {len(exits)} exit(s) triggered")
+        else:
+            logger.info("[SCHEDULER] trend_forex | No exits triggered")
+    except Exception as e:
+        logger.error(f"[SCHEDULER] trend_forex | Exit check exception: {e}")
+    logger.info("[SCHEDULER] ====== trend_forex daily evaluation complete ======")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler.add_job(
+        _scheduled_trend_forex_evaluate,
+        trigger=CronTrigger(hour=17, minute=0, timezone="US/Eastern"),
+        id="trend_forex_daily",
+        name="Forex Trend Daily Evaluation (5:00 PM ET)",
+        replace_existing=True,
+    )
+    scheduler.start()
+    logger.info("[SCHEDULER] APScheduler started | trend_forex scheduled at 17:00 US/Eastern daily")
+    yield
+    scheduler.shutdown(wait=False)
+    logger.info("[SCHEDULER] APScheduler shut down")
+
 
 app = FastAPI(
     title="Trading Signal Engine",
     description="Python-based trading signal engine with OHLC data, caching, and technical indicators",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -33,12 +87,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-init_db()
-
-api_client = FCSAPIClient()
-cache = CacheLayer(api_client)
-strategy_engine = StrategyEngine(cache)
 
 app.include_router(admin_router)
 
