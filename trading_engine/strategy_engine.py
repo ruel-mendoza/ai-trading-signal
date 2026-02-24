@@ -12,6 +12,7 @@ from trading_engine.database import (
     update_signal_tracking,
     close_signal,
 )
+from trading_engine.strategies.sp500_momentum import SP500MomentumStrategy
 
 logger = logging.getLogger("trading_engine.strategy")
 
@@ -24,6 +25,7 @@ STRATEGY_HIGHEST_LOWEST_FX = "highest_lowest_fx"
 class StrategyEngine:
     def __init__(self, cache: CacheLayer):
         self.cache = cache
+        self.sp500_strategy = SP500MomentumStrategy(cache)
 
     def evaluate_all(self, symbols: Optional[list[str]] = None) -> list[dict]:
         results = []
@@ -40,7 +42,7 @@ class StrategyEngine:
             if tf_result:
                 results.append(tf_result)
 
-        sp500_result = self.evaluate_sp500_momentum("SPX")
+        sp500_result = self.sp500_strategy.evaluate("SPX")
         if sp500_result:
             results.append(sp500_result)
 
@@ -239,68 +241,7 @@ class StrategyEngine:
         return dst_start <= dt < dst_end
 
     def evaluate_sp500_momentum(self, symbol: str = "SPX") -> Optional[dict]:
-        logger.info(f"[SP500-MOM] ====== Evaluating {symbol} ======")
-        try:
-            candles_30m = self.cache.get_candles(symbol, "30m", 300)
-        except Exception as e:
-            logger.error(f"[SP500-MOM] {symbol} | Exception fetching candles: {e}")
-            return None
-
-        logger.info(f"[SP500-MOM] {symbol} | 30m candles: {len(candles_30m)} (need 21)")
-        if len(candles_30m) < 21:
-            logger.warning(f"[SP500-MOM] {symbol} | INSUFFICIENT DATA - have {len(candles_30m)}, need 21")
-            return None
-
-        closes = [c["close"] for c in candles_30m]
-        highs = [c["high"] for c in candles_30m]
-        lows = [c["low"] for c in candles_30m]
-
-        rsi20 = IndicatorEngine.rsi(closes, 20)
-        atr100 = IndicatorEngine.atr(highs, lows, closes, 100)
-
-        current_rsi = rsi20[-1]
-        prev_rsi = rsi20[-2] if len(rsi20) >= 2 else None
-        atr_val = atr100[-1]
-        current_price = closes[-1]
-
-        if any(v is None for v in [current_rsi, prev_rsi]):
-            return None
-
-        rsi_crosses_above_70 = prev_rsi <= 70 and current_rsi > 70
-
-        if rsi_crosses_above_70:
-            trigger_candle_time = candles_30m[-1]["open_time"]
-            if signal_exists(STRATEGY_SP500_MOMENTUM, symbol, trigger_candle_time, "30m"):
-                return None
-
-            trailing_mult = 2.0
-            stop_loss_distance = (2 * atr_val) if atr_val else None
-            stop_loss = (current_price - stop_loss_distance) if stop_loss_distance else None
-
-            signal = {
-                "strategy": STRATEGY_SP500_MOMENTUM,
-                "symbol": symbol,
-                "direction": "long",
-                "entry_price": current_price,
-                "stop_loss": stop_loss,
-                "take_profit": None,
-                "trailing_stop_atr_mult": trailing_mult,
-                "trigger_candle_time": trigger_candle_time,
-                "trigger_timeframe": "30m",
-                "metadata": json.dumps({
-                    "rsi20": current_rsi,
-                    "prev_rsi20": prev_rsi,
-                    "atr100": atr_val,
-                    "trailing_stop_distance": stop_loss_distance,
-                }),
-            }
-            signal_id = insert_signal(signal)
-            if signal_id:
-                signal["id"] = signal_id
-                signal["status"] = "new"
-                return signal
-
-        return None
+        return self.sp500_strategy.evaluate(symbol)
 
     def evaluate_highest_lowest_fx(self, symbol: str = "EUR/USD") -> Optional[dict]:
         logger.info(f"[HLC-FX] ====== Evaluating {symbol} ======")

@@ -37,8 +37,10 @@ trading_engine/          - Python FastAPI trading engine
   fcsapi_client.py      - FCSAPI client for fetching OHLC data (with usage tracking)
   cache_layer.py        - Caching layer (calls API only on candle closes)
   indicators.py         - IndicatorEngine class (EMA, SMA, ATR, RSI)
-  strategy_engine.py    - StrategyEngine with 4 strategies + trailing stop management
+  strategy_engine.py    - StrategyEngine orchestrator + trailing stop management
   admin.py              - Admin dashboard (HTML), export endpoints, credit monitor, timezone logic
+  strategies/            - Individual strategy modules
+    sp500_momentum.py   - S&P 500 Momentum Strategy (ARCA session filter, RSI crossover, ATR stops)
 ```
 
 ## Trading Engine API (via /api/engine/)
@@ -60,7 +62,7 @@ trading_engine/          - Python FastAPI trading engine
 ## Strategies
 1. **MTF EMA (mtf_ema)**: Multi-timeframe using D1/H4/H1. Long when price > D1 200/50 EMA, H4 200 EMA rising, price dips below H4 50 EMA by < 1 ATR, H1 closes back above 20 EMA.
 2. **Trend Following (trend_following)**: Entry when close > last 50 days AND SMA50 > SMA100. Exit via 3x ATR(100) trailing stop.
-3. **S&P 500 Momentum (sp500_momentum)**: Long on 30m RSI(20) crossing above 70. Exit via 2x ATR(100) trailing stop or RSI back below 70.
+3. **S&P 500 Momentum (sp500_momentum)**: SPX only, 30m candles. ARCA session filter (9:30 AM-4:00 PM ET, last valid candle at 3:30 PM). LONG when prev RSI(20) < 70 AND current RSI(20) >= 70, no existing open trade. Stores ATR(100) at entry (fixed for trade). Exit via 2x ATR trailing stop or RSI back below 70. Module: `trading_engine/strategies/sp500_momentum.py`.
 4. **Highest/Lowest Close FX (highest_lowest_fx)**: EUR/USD time-sensitive strategy monitoring Tokyo 8am and NY 8am windows for breakouts/reversals.
 
 ## Indicator Engine
