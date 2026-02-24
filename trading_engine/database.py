@@ -269,7 +269,6 @@ def close_signal(signal_id: int, exit_reason: str = ""):
             sig = session.query(Signal).filter_by(id=signal_id).first()
             if sig:
                 sig.status = "CLOSED"
-                sig.updated_at = datetime.utcnow().isoformat()
                 session.commit()
                 logger.info(f"[DB] Closed signal #{signal_id}: {exit_reason}")
         except Exception as e:
@@ -433,7 +432,6 @@ def set_setting(key: str, value: str):
             existing = session.query(AppSetting).filter_by(key=key).first()
             if existing:
                 existing.value = value
-                existing.updated_at = datetime.utcnow().isoformat()
             else:
                 session.add(AppSetting(key=key, value=value))
             session.commit()
