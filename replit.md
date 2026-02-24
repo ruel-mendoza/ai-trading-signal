@@ -69,7 +69,11 @@ trading_engine/          - Python FastAPI trading engine
 5. **Forex Trend Following (trend_forex)**: EUR/USD, USD/JPY, GBP/USD only. D1 candles, evaluates at 5:00 PM ET (forex daily close). LONG when close > highest close of last 50 days AND SMA(50) > SMA(100). SHORT when close < lowest close of last 50 days AND SMA(50) < SMA(100). Exit via 3x ATR(100) trailing stop (ATR fixed at entry). Module: `trading_engine/strategies/trend_forex.py`.
 
 ## Indicator Engine
-Calculates locally: EMA(20,50,200), SMA(50,100), ATR(100), RSI(20)
+- `trading_engine/indicators/` — Package (converted from single file)
+  - `__init__.py` — IndicatorEngine class: EMA(20,50,200), SMA(50,100), ATR(100), RSI(20)
+  - `validation.py` — `check_data_length(data, period, label)` validates pd.Series/DataFrame length, raises `InsufficientDataError`
+  - `ema_slope.py` — `ema(series, period)` computes EMA on pd.Series (index/tz preserved); `calculate_slope(ema_series)` returns current − previous EMA
+- All functions in `ema_slope.py` and `validation.py` accept pd.Series or pd.DataFrame and return pd.Series with preserved indices (timezone-aware)
 
 ## Environment Variables
 - `FCSAPI_KEY` - FCSAPI API key for fetching OHLC data (required for live data)
