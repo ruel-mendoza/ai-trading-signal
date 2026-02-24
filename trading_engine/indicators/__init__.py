@@ -2,6 +2,9 @@ import logging
 import numpy as np
 from typing import Optional
 
+from trading_engine.indicators.validation import check_data_length, InsufficientDataError
+from trading_engine.indicators.ema_slope import ema as ema_series, calculate_slope
+
 logger = logging.getLogger("trading_engine.indicators")
 
 
