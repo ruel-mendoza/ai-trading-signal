@@ -455,6 +455,8 @@ def log_api_usage(endpoint: str, credits_used: int = 1):
 
 
 def get_api_usage_stats() -> dict:
+    import calendar
+
     with _get_session() as session:
         now = datetime.utcnow()
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
@@ -493,19 +495,31 @@ def get_api_usage_stats() -> dict:
 
     monthly_limit = 500000
     usage_pct = (monthly_total / monthly_limit) * 100 if monthly_limit > 0 else 0
+
+    day_of_month = now.day
+    total_days = calendar.monthrange(now.year, now.month)[1]
+    daily_rate = monthly_total / max(day_of_month, 1)
+    projected_eom = daily_rate * total_days
+    projected_pct = (projected_eom / monthly_limit) * 100 if monthly_limit > 0 else 0
+
     alert_level = None
-    if usage_pct >= 90:
+    if usage_pct >= 99:
+        alert_level = "kill_switch"
+    elif projected_pct >= 90:
         alert_level = "critical"
-    elif usage_pct >= 75:
+    elif projected_pct >= 60:
         alert_level = "warning"
-    elif usage_pct >= 60:
-        alert_level = "caution"
 
     return {
         "monthly_total": monthly_total,
         "monthly_limit": monthly_limit,
         "usage_percentage": round(usage_pct, 2),
         "daily_total": daily_total,
+        "daily_rate": round(daily_rate, 2),
+        "projected_eom": round(projected_eom, 0),
+        "projected_pct": round(projected_pct, 2),
+        "days_passed": day_of_month,
+        "days_in_month": total_days,
         "alert_level": alert_level,
         "by_endpoint": by_endpoint,
         "daily_history": daily_history,

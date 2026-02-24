@@ -99,6 +99,10 @@ class FCSAPIClient:
     )
     def _get(self, endpoint: str, params: dict) -> dict:
         from trading_engine.database import log_api_usage
+        from trading_engine.credit_control import pre_request_check, check_credit_thresholds
+
+        pre_request_check()
+
         params["access_key"] = self.api_key
         url = f"{BASE_URL}/{endpoint}"
         logger.info(f"[FCSAPI-REQUEST] {endpoint} | symbol={params.get('symbol')} | timeframe={params.get('time')} | period={params.get('period')}")
@@ -140,6 +144,7 @@ class FCSAPIClient:
             logger.info(f"[FCSAPI-RESPONSE] {endpoint} | response contains {len(response_data)} keys")
 
         log_api_usage(endpoint=endpoint)
+        check_credit_thresholds()
         return data
 
     def test_connection(self) -> dict:

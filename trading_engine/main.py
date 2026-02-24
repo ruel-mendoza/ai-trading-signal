@@ -244,6 +244,21 @@ def cache_status(
     }
 
 
+@app.get("/api/credit-control/status")
+def credit_control_status():
+    from trading_engine.credit_control import check_credit_thresholds, is_api_blocked
+    projection = check_credit_thresholds()
+    projection["api_blocked"] = is_api_blocked()
+    return projection
+
+
+@app.post("/api/credit-control/reset-kill-switch")
+def reset_credit_kill_switch():
+    from trading_engine.credit_control import reset_kill_switch, is_api_blocked
+    reset_kill_switch()
+    return {"success": True, "api_blocked": is_api_blocked()}
+
+
 @app.post("/api/strategies/evaluate")
 def evaluate_strategies(
     symbols: Optional[str] = Query(None, description="Comma-separated list of symbols to evaluate"),
