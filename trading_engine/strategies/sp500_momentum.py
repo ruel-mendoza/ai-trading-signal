@@ -1,6 +1,7 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Optional
 
 from trading_engine.indicators import IndicatorEngine
@@ -31,56 +32,37 @@ ARCA_SESSION_END_MIN = 0
 LAST_VALID_CANDLE_HOUR = 15
 LAST_VALID_CANDLE_MIN = 30
 
+ET_ZONE = ZoneInfo("America/New_York")
+
 
 class SP500MomentumStrategy:
     def __init__(self, cache: CacheLayer):
         self.cache = cache
 
-    def _is_us_dst(self, dt: datetime) -> bool:
-        year = dt.year
-        march_second_sunday = 8
-        for d in range(8, 15):
-            if datetime(year, 3, d).weekday() == 6:
-                march_second_sunday = d
-                break
-        dst_start = datetime(year, 3, march_second_sunday, 7, 0)
-
-        november_first_sunday = 1
-        for d in range(1, 8):
-            if datetime(year, 11, d).weekday() == 6:
-                november_first_sunday = d
-                break
-        dst_end = datetime(year, 11, november_first_sunday, 6, 0)
-
-        return dst_start <= dt < dst_end
-
-    def _get_et_offset(self, dt: datetime) -> int:
-        return -4 if self._is_us_dst(dt) else -5
-
-    def _is_within_arca_session(self, candle_time_str: str, utc_now: datetime) -> bool:
-        et_offset = self._get_et_offset(utc_now)
-
+    def _is_within_arca_session(self, candle_time_str: str) -> bool:
         try:
-            candle_utc = datetime.strptime(candle_time_str, "%Y-%m-%dT%H:%M:%S")
+            candle_utc = datetime.strptime(candle_time_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
         except ValueError:
             try:
-                candle_utc = datetime.strptime(candle_time_str, "%Y-%m-%d %H:%M:%S")
+                candle_utc = datetime.strptime(candle_time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
             except ValueError:
                 logger.warning(f"[SP500-MOM] Cannot parse candle time: {candle_time_str}")
                 return False
 
-        candle_et_hour = (candle_utc.hour + et_offset) % 24
-        candle_et_min = candle_utc.minute
-        candle_et_minutes = candle_et_hour * 60 + candle_et_min
+        candle_et = candle_utc.astimezone(ET_ZONE)
+        candle_et_minutes = candle_et.hour * 60 + candle_et.minute
 
         session_start_minutes = ARCA_SESSION_START_HOUR * 60 + ARCA_SESSION_START_MIN
         last_valid_minutes = LAST_VALID_CANDLE_HOUR * 60 + LAST_VALID_CANDLE_MIN
 
         in_session = session_start_minutes <= candle_et_minutes <= last_valid_minutes
 
+        is_dst = candle_et.dst() and candle_et.dst().total_seconds() > 0
+        tz_abbr = "EDT" if is_dst else "EST"
+
         logger.info(
             f"[SP500-MOM] Session filter | candle_utc={candle_time_str} | "
-            f"candle_ET={candle_et_hour:02d}:{candle_et_min:02d} | "
+            f"candle_ET={candle_et.strftime('%H:%M')} {tz_abbr} | "
             f"ARCA window=09:30-15:30 ET (last valid) | "
             f"in_session={in_session}"
         )
@@ -106,15 +88,15 @@ class SP500MomentumStrategy:
             logger.warning(f"[SP500-MOM] {symbol} | INSUFFICIENT DATA - have {len(candles_30m)}, need {MIN_BARS_REQUIRED}")
             return None
 
-        utc_now = datetime.utcnow()
-        is_dst = self._is_us_dst(utc_now)
-        et_offset = self._get_et_offset(utc_now)
+        now_et = datetime.now(ET_ZONE)
+        is_dst = now_et.dst() and now_et.dst().total_seconds() > 0
+        et_offset = "-4" if is_dst else "-5"
         logger.info(f"[SP500-MOM] {symbol} | US DST active: {is_dst} | ET offset: UTC{et_offset}")
 
         latest_candle = candles_30m[-1]
         candle_time_str = latest_candle["open_time"]
 
-        if not self._is_within_arca_session(candle_time_str, utc_now):
+        if not self._is_within_arca_session(candle_time_str):
             logger.info(f"[SP500-MOM] {symbol} | Outside ARCA session - skipping")
             return None
 
@@ -160,7 +142,7 @@ class SP500MomentumStrategy:
 
         trigger_candle_time = candle_time_str
         if signal_exists(STRATEGY_NAME, symbol, trigger_candle_time, TIMEFRAME):
-            logger.info(f"[SP500-MOM] {symbol} | Signal already exists for candle {trigger_candle_time} - skipping")
+            logger.info(f"[SP500-MOM] {symbol} | Signal already exists for candle {trigger_candle_time} - idempotency check passed, skipping duplicate")
             return None
 
         stop_loss_distance = TRAILING_STOP_ATR_MULT * atr_val
@@ -234,11 +216,10 @@ class SP500MomentumStrategy:
                 logger.warning(f"[SP500-MOM-EXIT] Signal #{sig_id} | Insufficient candles: {len(candles)} (need {RSI_PERIOD + 1})")
                 continue
 
-            utc_now = datetime.utcnow()
             latest_candle = candles[-1]
             candle_time_str = latest_candle["open_time"]
 
-            in_session = self._is_within_arca_session(candle_time_str, utc_now)
+            in_session = self._is_within_arca_session(candle_time_str)
             logger.info(f"[SP500-MOM-EXIT] Signal #{sig_id} | Session valid: {in_session}")
 
             closes = [c["close"] for c in candles]

@@ -353,15 +353,14 @@ def _build_login_page(error: str = "") -> str:
 
 
 def _get_spx_momentum_data() -> dict:
-    now_utc = datetime.now(timezone.utc)
-    ny_dst = _is_dst_us(now_utc)
-    et_offset = -4 if ny_dst else -5
-    et_tz = timezone(timedelta(hours=et_offset))
-    et_now = now_utc.astimezone(et_tz)
+    from zoneinfo import ZoneInfo
+    et_zone = ZoneInfo("America/New_York")
+    et_now = datetime.now(et_zone)
     et_minutes = et_now.hour * 60 + et_now.minute
     session_start = 9 * 60 + 30
     session_end = 15 * 60 + 30
     in_session = session_start <= et_minutes <= session_end
+    ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
 
     candles = get_candles("SPX", "30m", 300)
     current_rsi = None

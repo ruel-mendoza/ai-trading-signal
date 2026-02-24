@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Optional
 
 from trading_engine.indicators import IndicatorEngine
@@ -233,12 +234,13 @@ class StrategyEngine:
 
     @staticmethod
     def _is_us_dst(dt: datetime) -> bool:
-        year = dt.year
-        march_second_sunday = 8 + (6 - datetime(year, 3, 8).weekday()) % 7
-        nov_first_sunday = 1 + (6 - datetime(year, 11, 1).weekday()) % 7
-        dst_start = datetime(year, 3, march_second_sunday, 7)
-        dst_end = datetime(year, 11, nov_first_sunday, 6)
-        return dst_start <= dt < dst_end
+        et_zone = ZoneInfo("America/New_York")
+        if dt.tzinfo is None:
+            aware_dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+        else:
+            aware_dt = dt
+        et_dt = aware_dt.astimezone(et_zone)
+        return bool(et_dt.dst() and et_dt.dst().total_seconds() > 0)
 
     def evaluate_sp500_momentum(self, symbol: str = "SPX") -> Optional[dict]:
         return self.sp500_strategy.evaluate(symbol)
