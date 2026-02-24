@@ -10,8 +10,13 @@ from trading_engine.database import (
     signal_exists,
     insert_signal,
     get_active_signals,
-    update_signal_tracking,
     close_signal,
+    open_position,
+    get_open_position,
+    get_all_open_positions,
+    update_position_tracking,
+    close_position,
+    has_open_position,
 )
 from trading_engine.strategies.sp500_momentum import SP500MomentumStrategy
 from trading_engine.strategies.trend_forex import ForexTrendFollowingStrategy
@@ -37,12 +42,12 @@ class StrategyEngine:
         forex_symbols = symbols or ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "NZD/USD", "USD/CAD", "USD/CHF", "EUR/GBP"]
         logger.info(f"[STRATEGY-ENGINE] evaluate_all called | symbols={forex_symbols}")
 
-        for symbol in forex_symbols:
-            mtf_result = self.evaluate_mtf_ema(symbol)
+        for asset in forex_symbols:
+            mtf_result = self.evaluate_mtf_ema(asset)
             if mtf_result:
                 results.append(mtf_result)
 
-            tf_result = self.evaluate_trend_following(symbol)
+            tf_result = self.evaluate_trend_following(asset)
             if tf_result:
                 results.append(tf_result)
 
@@ -55,26 +60,26 @@ class StrategyEngine:
             results.append(hlc_result)
 
         from trading_engine.strategies.trend_forex import TARGET_SYMBOLS as TREND_FOREX_SYMBOLS
-        for symbol in TREND_FOREX_SYMBOLS:
-            tf_forex_result = self.trend_forex_strategy.evaluate(symbol)
+        for asset in TREND_FOREX_SYMBOLS:
+            tf_forex_result = self.trend_forex_strategy.evaluate(asset)
             if tf_forex_result:
                 results.append(tf_forex_result)
 
         return results
 
-    def evaluate_mtf_ema(self, symbol: str) -> Optional[dict]:
-        logger.info(f"[MTF-EMA] ====== Evaluating {symbol} ======")
+    def evaluate_mtf_ema(self, asset: str) -> Optional[dict]:
+        logger.info(f"[MTF-EMA] ====== Evaluating {asset} ======")
         try:
-            d1_candles = self.cache.get_candles(symbol, "D", 300)
-            h4_candles = self.cache.get_candles(symbol, "4H", 300)
-            h1_candles = self.cache.get_candles(symbol, "1H", 300)
+            d1_candles = self.cache.get_candles(asset, "D1", 300)
+            h4_candles = self.cache.get_candles(asset, "4H", 300)
+            h1_candles = self.cache.get_candles(asset, "1H", 300)
         except Exception as e:
-            logger.error(f"[MTF-EMA] {symbol} | Exception fetching candles: {e}")
+            logger.error(f"[MTF-EMA] {asset} | Exception fetching candles: {e}")
             return None
 
-        logger.info(f"[MTF-EMA] {symbol} | Candle counts: D1={len(d1_candles)} (need 200), H4={len(h4_candles)} (need 200), H1={len(h1_candles)} (need 20)")
+        logger.info(f"[MTF-EMA] {asset} | Candle counts: D1={len(d1_candles)} (need 200), H4={len(h4_candles)} (need 200), H1={len(h1_candles)} (need 20)")
         if len(d1_candles) < 200 or len(h4_candles) < 200 or len(h1_candles) < 20:
-            logger.warning(f"[MTF-EMA] {symbol} | INSUFFICIENT DATA - D1: {'OK' if len(d1_candles) >= 200 else 'FAIL'}, H4: {'OK' if len(h4_candles) >= 200 else 'FAIL'}, H1: {'OK' if len(h1_candles) >= 20 else 'FAIL'}")
+            logger.warning(f"[MTF-EMA] {asset} | INSUFFICIENT DATA - D1: {'OK' if len(d1_candles) >= 200 else 'FAIL'}, H4: {'OK' if len(h4_candles) >= 200 else 'FAIL'}, H1: {'OK' if len(h1_candles) >= 20 else 'FAIL'}")
             return None
 
         d1_closes = [c["close"] for c in d1_candles]
@@ -109,7 +114,7 @@ class StrategyEngine:
             if h4_ema50_val is None: none_indicators.append("H4_EMA50")
             if h4_atr_val is None: none_indicators.append("H4_ATR100")
             if h1_ema20_val is None: none_indicators.append("H1_EMA20")
-            logger.warning(f"[MTF-EMA] {symbol} | Indicators returned None: {none_indicators}")
+            logger.warning(f"[MTF-EMA] {asset} | Indicators returned None: {none_indicators}")
             return None
 
         price_above_d1_emas = current_price > d1_ema200_val and current_price > d1_ema50_val
@@ -118,57 +123,48 @@ class StrategyEngine:
         dip_within_1_atr = (h4_ema50_val - current_price) < h4_atr_val
         h1_closes_above_20_ema = current_price > h1_ema20_val
 
-        logger.info(f"[MTF-EMA] {symbol} | price={current_price:.5f}")
-        logger.info(f"[MTF-EMA] {symbol} | Condition 1 - Price > D1 EMA200 ({d1_ema200_val:.5f}) AND D1 EMA50 ({d1_ema50_val:.5f}): {price_above_d1_emas}")
-        logger.info(f"[MTF-EMA] {symbol} | Condition 2 - H4 EMA200 rising ({h4_ema200_val:.5f} > {h4_ema200_prev:.5f}): {h4_ema200_rising}")
-        logger.info(f"[MTF-EMA] {symbol} | Condition 3 - Price dips below H4 EMA50 ({h4_ema50_val:.5f}): {dip_below_h4_50}")
-        logger.info(f"[MTF-EMA] {symbol} | Condition 4 - Dip within 1 ATR ({h4_atr_val:.5f}): {dip_within_1_atr}")
-        logger.info(f"[MTF-EMA] {symbol} | Condition 5 - H1 closes above EMA20 ({h1_ema20_val:.5f}): {h1_closes_above_20_ema}")
-        logger.info(f"[MTF-EMA] {symbol} | ALL CONDITIONS MET: {price_above_d1_emas and h4_ema200_rising and dip_below_h4_50 and dip_within_1_atr and h1_closes_above_20_ema}")
+        logger.info(f"[MTF-EMA] {asset} | price={current_price:.5f}")
+        logger.info(f"[MTF-EMA] {asset} | Condition 1 - Price > D1 EMA200 ({d1_ema200_val:.5f}) AND D1 EMA50 ({d1_ema50_val:.5f}): {price_above_d1_emas}")
+        logger.info(f"[MTF-EMA] {asset} | Condition 2 - H4 EMA200 rising ({h4_ema200_val:.5f} > {h4_ema200_prev:.5f}): {h4_ema200_rising}")
+        logger.info(f"[MTF-EMA] {asset} | Condition 3 - Price dips below H4 EMA50 ({h4_ema50_val:.5f}): {dip_below_h4_50}")
+        logger.info(f"[MTF-EMA] {asset} | Condition 4 - Dip within 1 ATR ({h4_atr_val:.5f}): {dip_within_1_atr}")
+        logger.info(f"[MTF-EMA] {asset} | Condition 5 - H1 closes above EMA20 ({h1_ema20_val:.5f}): {h1_closes_above_20_ema}")
+        logger.info(f"[MTF-EMA] {asset} | ALL CONDITIONS MET: {price_above_d1_emas and h4_ema200_rising and dip_below_h4_50 and dip_within_1_atr and h1_closes_above_20_ema}")
 
         if price_above_d1_emas and h4_ema200_rising and dip_below_h4_50 and dip_within_1_atr and h1_closes_above_20_ema:
-            trigger_candle_time = h1_candles[-1]["open_time"]
-            if signal_exists(STRATEGY_MTF_EMA, symbol, trigger_candle_time, "1H"):
+            signal_timestamp = h1_candles[-1]["timestamp"]
+            if signal_exists(STRATEGY_MTF_EMA, asset, signal_timestamp):
                 return None
 
             signal = {
-                "strategy": STRATEGY_MTF_EMA,
-                "symbol": symbol,
-                "direction": "long",
+                "strategy_name": STRATEGY_MTF_EMA,
+                "asset": asset,
+                "direction": "BUY",
                 "entry_price": current_price,
                 "stop_loss": current_price - (2 * h4_atr_val),
                 "take_profit": current_price + (3 * h4_atr_val),
-                "trailing_stop_atr_mult": None,
-                "trigger_candle_time": trigger_candle_time,
-                "trigger_timeframe": "1H",
-                "metadata": json.dumps({
-                    "d1_ema200": d1_ema200_val,
-                    "d1_ema50": d1_ema50_val,
-                    "h4_ema200": h4_ema200_val,
-                    "h4_ema50": h4_ema50_val,
-                    "h4_atr": h4_atr_val,
-                    "h1_ema20": h1_ema20_val,
-                }),
+                "atr_at_entry": round(h4_atr_val, 6),
+                "signal_timestamp": signal_timestamp,
             }
             signal_id = insert_signal(signal)
             if signal_id:
                 signal["id"] = signal_id
-                signal["status"] = "new"
+                signal["status"] = "OPEN"
                 return signal
 
         return None
 
-    def evaluate_trend_following(self, symbol: str) -> Optional[dict]:
-        logger.info(f"[TREND-FOLLOW] ====== Evaluating {symbol} ======")
+    def evaluate_trend_following(self, asset: str) -> Optional[dict]:
+        logger.info(f"[TREND-FOLLOW] ====== Evaluating {asset} ======")
         try:
-            d_candles = self.cache.get_candles(symbol, "D", 300)
+            d_candles = self.cache.get_candles(asset, "D1", 300)
         except Exception as e:
-            logger.error(f"[TREND-FOLLOW] {symbol} | Exception fetching candles: {e}")
+            logger.error(f"[TREND-FOLLOW] {asset} | Exception fetching candles: {e}")
             return None
 
-        logger.info(f"[TREND-FOLLOW] {symbol} | Daily candles: {len(d_candles)} (need 100)")
+        logger.info(f"[TREND-FOLLOW] {asset} | Daily candles: {len(d_candles)} (need 100)")
         if len(d_candles) < 100:
-            logger.warning(f"[TREND-FOLLOW] {symbol} | INSUFFICIENT DATA - have {len(d_candles)}, need 100")
+            logger.warning(f"[TREND-FOLLOW] {asset} | INSUFFICIENT DATA - have {len(d_candles)}, need 100")
             return None
 
         closes = [c["close"] for c in d_candles]
@@ -189,54 +185,51 @@ class StrategyEngine:
             if sma50_val is None: none_list.append("SMA50")
             if sma100_val is None: none_list.append("SMA100")
             if atr_val is None: none_list.append("ATR100")
-            logger.warning(f"[TREND-FOLLOW] {symbol} | Indicators returned None: {none_list}")
+            logger.warning(f"[TREND-FOLLOW] {asset} | Indicators returned None: {none_list}")
             return None
 
         if len(closes) >= 50:
             highest_50 = max(closes[-50:])
         else:
-            logger.warning(f"[TREND-FOLLOW] {symbol} | Not enough closes for 50-day high (have {len(closes)})")
+            logger.warning(f"[TREND-FOLLOW] {asset} | Not enough closes for 50-day high (have {len(closes)})")
             return None
 
         price_at_50d_high = current_price >= highest_50
         sma50_above_sma100 = sma50_val > sma100_val
 
-        logger.info(f"[TREND-FOLLOW] {symbol} | price={current_price:.5f}")
-        logger.info(f"[TREND-FOLLOW] {symbol} | Condition 1 - Price >= 50-day high ({highest_50:.5f}): {price_at_50d_high}")
-        logger.info(f"[TREND-FOLLOW] {symbol} | Condition 2 - SMA50 ({sma50_val:.5f}) > SMA100 ({sma100_val:.5f}): {sma50_above_sma100}")
-        logger.info(f"[TREND-FOLLOW] {symbol} | ALL CONDITIONS MET: {price_at_50d_high and sma50_above_sma100}")
+        logger.info(f"[TREND-FOLLOW] {asset} | price={current_price:.5f}")
+        logger.info(f"[TREND-FOLLOW] {asset} | Condition 1 - Price >= 50-day high ({highest_50:.5f}): {price_at_50d_high}")
+        logger.info(f"[TREND-FOLLOW] {asset} | Condition 2 - SMA50 ({sma50_val:.5f}) > SMA100 ({sma100_val:.5f}): {sma50_above_sma100}")
+        logger.info(f"[TREND-FOLLOW] {asset} | ALL CONDITIONS MET: {price_at_50d_high and sma50_above_sma100}")
 
         if price_at_50d_high and sma50_above_sma100:
-            trigger_candle_time = d_candles[-1]["open_time"]
-            if signal_exists(STRATEGY_TREND_FOLLOWING, symbol, trigger_candle_time, "D"):
+            signal_timestamp = d_candles[-1]["timestamp"]
+            if signal_exists(STRATEGY_TREND_FOLLOWING, asset, signal_timestamp):
                 return None
 
-            direction = "long"
             stop_loss = current_price - (3 * atr_val)
-            trailing_mult = 3.0
 
             signal = {
-                "strategy": STRATEGY_TREND_FOLLOWING,
-                "symbol": symbol,
-                "direction": direction,
+                "strategy_name": STRATEGY_TREND_FOLLOWING,
+                "asset": asset,
+                "direction": "BUY",
                 "entry_price": current_price,
                 "stop_loss": stop_loss,
                 "take_profit": None,
-                "trailing_stop_atr_mult": trailing_mult,
-                "trigger_candle_time": trigger_candle_time,
-                "trigger_timeframe": "D",
-                "metadata": json.dumps({
-                    "sma50": sma50_val,
-                    "sma100": sma100_val,
-                    "atr100": atr_val,
-                    "highest_50d_close": highest_50,
-                    "trailing_stop_distance": 3 * atr_val,
-                }),
+                "atr_at_entry": round(atr_val, 6),
+                "signal_timestamp": signal_timestamp,
             }
             signal_id = insert_signal(signal)
             if signal_id:
+                open_position({
+                    "asset": asset,
+                    "strategy_name": STRATEGY_TREND_FOLLOWING,
+                    "direction": "BUY",
+                    "entry_price": current_price,
+                    "atr_at_entry": round(atr_val, 6),
+                })
                 signal["id"] = signal_id
-                signal["status"] = "new"
+                signal["status"] = "OPEN"
                 return signal
 
         return None
@@ -251,21 +244,21 @@ class StrategyEngine:
         et_dt = aware_dt.astimezone(et_zone)
         return bool(et_dt.dst() and et_dt.dst().total_seconds() > 0)
 
-    def evaluate_sp500_momentum(self, symbol: str = "SPX") -> Optional[dict]:
-        return self.sp500_strategy.evaluate(symbol)
+    def evaluate_sp500_momentum(self, asset: str = "SPX") -> Optional[dict]:
+        return self.sp500_strategy.evaluate(asset)
 
-    def evaluate_highest_lowest_fx(self, symbol: str = "EUR/USD") -> Optional[dict]:
-        logger.info(f"[HLC-FX] ====== Evaluating {symbol} ======")
+    def evaluate_highest_lowest_fx(self, asset: str = "EUR/USD") -> Optional[dict]:
+        logger.info(f"[HLC-FX] ====== Evaluating {asset} ======")
         try:
-            h1_candles = self.cache.get_candles(symbol, "1H", 300)
-            d_candles = self.cache.get_candles(symbol, "D", 60)
+            h1_candles = self.cache.get_candles(asset, "1H", 300)
+            d_candles = self.cache.get_candles(asset, "D1", 60)
         except Exception as e:
-            logger.error(f"[HLC-FX] {symbol} | Exception fetching candles: {e}")
+            logger.error(f"[HLC-FX] {asset} | Exception fetching candles: {e}")
             return None
 
-        logger.info(f"[HLC-FX] {symbol} | Candle counts: H1={len(h1_candles)} (need 50), D={len(d_candles)} (need 50)")
+        logger.info(f"[HLC-FX] {asset} | Candle counts: H1={len(h1_candles)} (need 50), D1={len(d_candles)} (need 50)")
         if len(h1_candles) < 50 or len(d_candles) < 50:
-            logger.warning(f"[HLC-FX] {symbol} | INSUFFICIENT DATA")
+            logger.warning(f"[HLC-FX] {asset} | INSUFFICIENT DATA")
             return None
 
         now = datetime.utcnow()
@@ -285,7 +278,7 @@ class StrategyEngine:
         logger.info(f"[TIMEZONE] In Tokyo window: {in_tokyo_window} | In NY window: {in_ny_window}")
 
         if not (in_tokyo_window or in_ny_window):
-            logger.info(f"[HLC-FX] {symbol} | Outside both Tokyo and NY windows - skipping")
+            logger.info(f"[HLC-FX] {asset} | Outside both Tokyo and NY windows - skipping")
             return None
 
         d_closes = [c["close"] for c in d_candles]
@@ -299,9 +292,9 @@ class StrategyEngine:
         lowest_50d = min(d_closes[-50:])
 
         current_price = h1_candles[-1]["close"]
-        trigger_candle_time = h1_candles[-1]["open_time"]
+        signal_timestamp = h1_candles[-1]["timestamp"]
 
-        if signal_exists(STRATEGY_HIGHEST_LOWEST_FX, symbol, trigger_candle_time, "1H"):
+        if signal_exists(STRATEGY_HIGHEST_LOWEST_FX, asset, signal_timestamp):
             return None
 
         session = "tokyo" if in_tokyo_window else "new_york"
@@ -310,25 +303,25 @@ class StrategyEngine:
         if in_tokyo_window:
             if current_price >= highest_50d:
                 signal_data = {
-                    "direction": "long",
+                    "direction": "BUY",
                     "reason": f"Price ({current_price:.5f}) at/above 50-day highest close ({highest_50d:.5f}) during Tokyo session",
                 }
             elif current_price <= lowest_50d:
                 signal_data = {
-                    "direction": "short",
+                    "direction": "SELL",
                     "reason": f"Price ({current_price:.5f}) at/below 50-day lowest close ({lowest_50d:.5f}) during Tokyo session",
                 }
 
         if in_ny_window:
             if current_price >= highest_50d:
                 signal_data = {
-                    "direction": "long",
+                    "direction": "BUY",
                     "reason": f"Price ({current_price:.5f}) at/above 50-day highest close ({highest_50d:.5f}) during NY session",
                 }
             elif current_price <= lowest_50d:
                 if current_price > lowest_50d * 0.998:
                     signal_data = {
-                        "direction": "long",
+                        "direction": "BUY",
                         "reason": f"Price ({current_price:.5f}) near 50-day lowest close ({lowest_50d:.5f}) - potential reversal during NY session",
                     }
 
@@ -336,7 +329,7 @@ class StrategyEngine:
             return None
 
         stop_distance = (2 * atr_val) if atr_val else 0.0050
-        if signal_data["direction"] == "long":
+        if signal_data["direction"] == "BUY":
             stop_loss = current_price - stop_distance
             take_profit = current_price + (3 * stop_distance)
         else:
@@ -344,27 +337,19 @@ class StrategyEngine:
             take_profit = current_price - (3 * stop_distance)
 
         signal = {
-            "strategy": STRATEGY_HIGHEST_LOWEST_FX,
-            "symbol": symbol,
+            "strategy_name": STRATEGY_HIGHEST_LOWEST_FX,
+            "asset": asset,
             "direction": signal_data["direction"],
             "entry_price": current_price,
             "stop_loss": stop_loss,
             "take_profit": take_profit,
-            "trailing_stop_atr_mult": None,
-            "trigger_candle_time": trigger_candle_time,
-            "trigger_timeframe": "1H",
-            "metadata": json.dumps({
-                "session": session,
-                "reason": signal_data["reason"],
-                "highest_50d": highest_50d,
-                "lowest_50d": lowest_50d,
-                "atr100": atr_val,
-            }),
+            "atr_at_entry": round(atr_val, 6) if atr_val else None,
+            "signal_timestamp": signal_timestamp,
         }
         signal_id = insert_signal(signal)
         if signal_id:
             signal["id"] = signal_id
-            signal["status"] = "new"
+            signal["status"] = "OPEN"
             return signal
 
         return None
@@ -373,46 +358,46 @@ class StrategyEngine:
         closed_signals = []
 
         for strategy_name in [STRATEGY_TREND_FOLLOWING]:
-            active = get_active_signals(strategy=strategy_name)
-            for sig in active:
-                symbol = sig["symbol"]
-                trailing_mult = sig.get("trailing_stop_atr_mult")
-                if not trailing_mult:
+            positions = get_all_open_positions(strategy_name=strategy_name)
+            for pos in positions:
+                asset = pos["asset"]
+                atr_at_entry = pos.get("atr_at_entry")
+                if not atr_at_entry:
                     continue
 
-                tf = sig["trigger_timeframe"]
                 try:
-                    candles = self.cache.get_candles(symbol, tf, 300)
+                    candles = self.cache.get_candles(asset, "D1", 300)
                 except Exception:
                     continue
                 if not candles:
                     continue
 
                 current_price = candles[-1]["close"]
-                closes = [c["close"] for c in candles]
-                highs = [c["high"] for c in candles]
-                lows = [c["low"] for c in candles]
-                atr100 = IndicatorEngine.atr(highs, lows, closes, 100)
-                atr_val = atr100[-1] if atr100 and atr100[-1] is not None else None
-                if atr_val is None:
-                    continue
+                direction = pos["direction"]
+                trailing_mult = 3.0
 
-                direction = sig["direction"]
-
-                if direction == "long":
-                    update_signal_tracking(sig["id"], highest_price=current_price)
-                    highest = max(sig.get("highest_price") or sig["entry_price"], current_price)
-                    trailing_stop = highest - (trailing_mult * atr_val)
+                if direction == "BUY":
+                    update_position_tracking(pos["id"], highest_price=current_price)
+                    highest = max(pos.get("highest_price_since_entry") or pos["entry_price"], current_price)
+                    trailing_stop = highest - (trailing_mult * atr_at_entry)
                     if current_price <= trailing_stop:
-                        close_signal(sig["id"], current_price, f"Trailing stop hit at {current_price:.5f} (highest: {highest:.5f}, stop: {trailing_stop:.5f})")
-                        closed_signals.append({**sig, "exit_price": current_price, "exit_reason": "trailing_stop"})
-                elif direction == "short":
-                    update_signal_tracking(sig["id"], lowest_price=current_price)
-                    lowest = min(sig.get("lowest_price") or sig["entry_price"], current_price)
-                    trailing_stop = lowest + (trailing_mult * atr_val)
+                        exit_reason = f"Trailing stop hit at {current_price:.5f} (highest: {highest:.5f}, stop: {trailing_stop:.5f})"
+                        active_sigs = get_active_signals(strategy_name=strategy_name, asset=asset)
+                        for sig in active_sigs:
+                            close_signal(sig["id"], exit_reason)
+                        close_position(strategy_name, asset)
+                        closed_signals.append({**pos, "exit_price": current_price, "exit_reason": "trailing_stop"})
+                elif direction == "SELL":
+                    update_position_tracking(pos["id"], lowest_price=current_price)
+                    lowest = min(pos.get("lowest_price_since_entry") or pos["entry_price"], current_price)
+                    trailing_stop = lowest + (trailing_mult * atr_at_entry)
                     if current_price >= trailing_stop:
-                        close_signal(sig["id"], current_price, f"Trailing stop hit at {current_price:.5f} (lowest: {lowest:.5f}, stop: {trailing_stop:.5f})")
-                        closed_signals.append({**sig, "exit_price": current_price, "exit_reason": "trailing_stop"})
+                        exit_reason = f"Trailing stop hit at {current_price:.5f} (lowest: {lowest:.5f}, stop: {trailing_stop:.5f})"
+                        active_sigs = get_active_signals(strategy_name=strategy_name, asset=asset)
+                        for sig in active_sigs:
+                            close_signal(sig["id"], exit_reason)
+                        close_position(strategy_name, asset)
+                        closed_signals.append({**pos, "exit_price": current_price, "exit_reason": "trailing_stop"})
 
         sp500_exits = self.sp500_strategy.check_exits()
         closed_signals.extend(sp500_exits)

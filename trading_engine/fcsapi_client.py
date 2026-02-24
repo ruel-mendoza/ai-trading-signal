@@ -12,14 +12,14 @@ TIMEFRAME_MAP = {
     "30m": "30m",
     "1H": "1h",
     "4H": "4h",
-    "D": "1d",
+    "D1": "1d",
 }
 
 TIMEFRAME_DURATION_MINUTES = {
     "30m": 30,
     "1H": 60,
     "4H": 240,
-    "D": 1440,
+    "D1": 1440,
 }
 
 
@@ -36,25 +36,16 @@ def _parse_response_items(response) -> list[dict]:
     for item in items:
         if not isinstance(item, dict):
             continue
-        vol_str = item.get("v", "")
-        volume = 0.0
-        if vol_str and vol_str.strip():
-            try:
-                volume = float(vol_str)
-            except (ValueError, TypeError):
-                volume = 0.0
 
         candles.append({
-            "open_time": item.get("tm", item.get("o_time", "")),
+            "timestamp": item.get("tm", item.get("o_time", "")),
             "open": float(item.get("o", 0)),
             "high": float(item.get("h", 0)),
             "low": float(item.get("l", 0)),
             "close": float(item.get("c", 0)),
-            "volume": volume,
-            "is_closed": 1,
         })
 
-    candles.sort(key=lambda x: x["open_time"])
+    candles.sort(key=lambda x: x["timestamp"])
     return candles
 
 
@@ -112,11 +103,7 @@ class FCSAPIClient:
             logger.info(f"[FCSAPI-RESPONSE] {endpoint} | response contains {len(response_data)} items")
         elif isinstance(response_data, dict):
             logger.info(f"[FCSAPI-RESPONSE] {endpoint} | response contains {len(response_data)} keys")
-        log_api_usage(
-            endpoint=endpoint,
-            symbol=params.get("symbol"),
-            timeframe=params.get("time"),
-        )
+        log_api_usage(endpoint=endpoint)
         return data
 
     def test_connection(self) -> dict:
@@ -166,7 +153,7 @@ class FCSAPIClient:
             return []
 
         candles = _parse_response_items(data["response"])
-        logger.info(f"[FETCH-HISTORY] {symbol} | Parsed {len(candles)} candles | first={candles[0]['open_time'] if candles else 'N/A'} | last={candles[-1]['open_time'] if candles else 'N/A'}")
+        logger.info(f"[FETCH-HISTORY] {symbol} | Parsed {len(candles)} candles | first={candles[0]['timestamp'] if candles else 'N/A'} | last={candles[-1]['timestamp'] if candles else 'N/A'}")
         return candles
 
     def fetch_latest(self, symbol: str, timeframe: str) -> list[dict]:

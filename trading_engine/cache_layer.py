@@ -21,7 +21,7 @@ class CacheLayer:
         now = datetime.utcnow()
         minutes = TIMEFRAME_DURATION_MINUTES[timeframe]
 
-        if timeframe == "D":
+        if timeframe == "D1":
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             if now >= today_start:
                 return today_start - timedelta(days=1)
@@ -40,21 +40,21 @@ class CacheLayer:
             close_time -= timedelta(minutes=minutes)
         return close_time
 
-    def _candle_close_to_iso(self, open_time: str, timeframe: str) -> str:
+    def _candle_close_to_iso(self, timestamp: str, timeframe: str) -> str:
         minutes = TIMEFRAME_DURATION_MINUTES[timeframe]
         try:
-            dt = datetime.fromisoformat(open_time)
+            dt = datetime.fromisoformat(timestamp)
             close_dt = dt + timedelta(minutes=minutes)
             return close_dt.isoformat()
         except (ValueError, TypeError):
-            return open_time
+            return timestamp
 
-    def _should_fetch(self, symbol: str, timeframe: str) -> bool:
-        meta = get_cache_metadata(symbol, timeframe)
+    def _should_fetch(self, asset: str, timeframe: str) -> bool:
+        meta = get_cache_metadata(asset, timeframe)
         if meta is None:
             return True
 
-        candle_count = get_candle_count(symbol, timeframe)
+        candle_count = get_candle_count(asset, timeframe)
         if candle_count == 0:
             return True
 
@@ -82,39 +82,39 @@ class CacheLayer:
 
         return False
 
-    def get_candles(self, symbol: str, timeframe: str, limit: int = 300) -> list[dict]:
-        should_fetch = self._should_fetch(symbol, timeframe)
-        logger.info(f"[CACHE] get_candles({symbol}, {timeframe}, limit={limit}) | should_fetch={should_fetch}")
+    def get_candles(self, asset: str, timeframe: str, limit: int = 300) -> list[dict]:
+        should_fetch = self._should_fetch(asset, timeframe)
+        logger.info(f"[CACHE] get_candles({asset}, {timeframe}, limit={limit}) | should_fetch={should_fetch}")
         if should_fetch:
-            self._fetch_and_store(symbol, timeframe, limit)
+            self._fetch_and_store(asset, timeframe, limit)
 
-        candles = get_candles(symbol, timeframe, limit)
-        logger.info(f"[CACHE] {symbol}/{timeframe} | Returned {len(candles)} candles from DB")
+        candles = get_candles(asset, timeframe, limit)
+        logger.info(f"[CACHE] {asset}/{timeframe} | Returned {len(candles)} candles from DB")
         return candles
 
-    def _fetch_and_store(self, symbol: str, timeframe: str, limit: int = 300):
-        candle_count = get_candle_count(symbol, timeframe)
-        logger.info(f"[CACHE-FETCH] {symbol}/{timeframe} | existing_candles={candle_count} | {'full history' if candle_count == 0 else 'latest only'}")
+    def _fetch_and_store(self, asset: str, timeframe: str, limit: int = 300):
+        candle_count = get_candle_count(asset, timeframe)
+        logger.info(f"[CACHE-FETCH] {asset}/{timeframe} | existing_candles={candle_count} | {'full history' if candle_count == 0 else 'latest only'}")
 
         if candle_count == 0:
-            candles = self.api_client.fetch_history(symbol, timeframe, period=limit)
+            candles = self.api_client.fetch_history(asset, timeframe, period=limit)
         else:
-            candles = self.api_client.fetch_latest(symbol, timeframe)
+            candles = self.api_client.fetch_latest(asset, timeframe)
 
         if candles:
-            upsert_candles(symbol, timeframe, candles)
-            last_open = candles[-1]["open_time"]
-            last_close = self._candle_close_to_iso(last_open, timeframe)
-            update_cache_metadata(symbol, timeframe, last_close)
-            logger.info(f"[CACHE-FETCH] {symbol}/{timeframe} | Stored {len(candles)} candles | last_close={last_close}")
+            upsert_candles(asset, timeframe, candles)
+            last_ts = candles[-1]["timestamp"]
+            last_close = self._candle_close_to_iso(last_ts, timeframe)
+            update_cache_metadata(asset, timeframe, last_close)
+            logger.info(f"[CACHE-FETCH] {asset}/{timeframe} | Stored {len(candles)} candles | last_close={last_close}")
         else:
-            logger.warning(f"[CACHE-FETCH] {symbol}/{timeframe} | API returned 0 candles")
+            logger.warning(f"[CACHE-FETCH] {asset}/{timeframe} | API returned 0 candles")
 
-    def force_refresh(self, symbol: str, timeframe: str, limit: int = 300) -> list[dict]:
-        candles = self.api_client.fetch_history(symbol, timeframe, period=limit)
+    def force_refresh(self, asset: str, timeframe: str, limit: int = 300) -> list[dict]:
+        candles = self.api_client.fetch_history(asset, timeframe, period=limit)
         if candles:
-            upsert_candles(symbol, timeframe, candles)
-            last_open = candles[-1]["open_time"]
-            last_close = self._candle_close_to_iso(last_open, timeframe)
-            update_cache_metadata(symbol, timeframe, last_close)
-        return get_candles(symbol, timeframe, limit)
+            upsert_candles(asset, timeframe, candles)
+            last_ts = candles[-1]["timestamp"]
+            last_close = self._candle_close_to_iso(last_ts, timeframe)
+            update_cache_metadata(asset, timeframe, last_close)
+        return get_candles(asset, timeframe, limit)

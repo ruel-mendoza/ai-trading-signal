@@ -18,7 +18,8 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("apscheduler").setLevel(logging.INFO)
 logger = logging.getLogger("trading_engine")
 
-from trading_engine.database import init_db, get_candles, get_candle_count, get_all_signals, get_active_signals, VALID_TIMEFRAMES
+from trading_engine.database import init_db, get_candles, get_candle_count, get_all_signals, get_active_signals
+from trading_engine.models import VALID_TIMEFRAMES
 from trading_engine.fcsapi_client import FCSAPIClient
 from trading_engine.cache_layer import CacheLayer
 from trading_engine.indicators import IndicatorEngine
@@ -37,15 +38,15 @@ strategy_engine = StrategyEngine(cache)
 
 def _scheduled_trend_forex_evaluate():
     logger.info("[SCHEDULER] ====== Triggered trend_forex daily evaluation at 5:00 PM ET ======")
-    for symbol in TREND_FOREX_SYMBOLS:
+    for asset in TREND_FOREX_SYMBOLS:
         try:
-            result = strategy_engine.trend_forex_strategy.evaluate(symbol)
+            result = strategy_engine.trend_forex_strategy.evaluate(asset)
             if result:
-                logger.info(f"[SCHEDULER] trend_forex | {symbol} | NEW SIGNAL generated: {result.get('direction', '').upper()} id={result.get('id')}")
+                logger.info(f"[SCHEDULER] trend_forex | {asset} | NEW SIGNAL generated: {result.get('direction', '')} id={result.get('id')}")
             else:
-                logger.info(f"[SCHEDULER] trend_forex | {symbol} | No signal triggered")
+                logger.info(f"[SCHEDULER] trend_forex | {asset} | No signal triggered")
         except Exception as e:
-            logger.error(f"[SCHEDULER] trend_forex | {symbol} | Exception: {e}")
+            logger.error(f"[SCHEDULER] trend_forex | {asset} | Exception: {e}")
     try:
         exits = strategy_engine.trend_forex_strategy.check_exits()
         if exits:
@@ -76,7 +77,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Trading Signal Engine",
     description="Python-based trading signal engine with OHLC data, caching, and technical indicators",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -92,14 +93,14 @@ app.include_router(admin_router)
 
 
 class CandleResponse(BaseModel):
-    symbol: str
+    asset: str
     timeframe: str
     candle_count: int
     candles: list[dict]
 
 
 class IndicatorResponse(BaseModel):
-    symbol: str
+    asset: str
     timeframe: str
     latest: dict
     series: Optional[dict] = None
@@ -113,7 +114,7 @@ class StatusResponse(BaseModel):
 
 
 class RefreshResponse(BaseModel):
-    symbol: str
+    asset: str
     timeframe: str
     candles_stored: int
     message: str
@@ -132,7 +133,7 @@ def health_check():
 @app.get("/api/candles", response_model=CandleResponse)
 def get_candle_data(
     symbol: str = Query(..., description="Trading pair symbol, e.g. EUR/USD"),
-    timeframe: str = Query(..., description="Timeframe: 30m, 1H, 4H, or D"),
+    timeframe: str = Query(..., description="Timeframe: 30m, 1H, 4H, or D1"),
     limit: int = Query(300, ge=1, le=1000, description="Number of candles to return"),
 ):
     if timeframe not in VALID_TIMEFRAMES:
@@ -144,7 +145,7 @@ def get_candle_data(
     candles = cache.get_candles(symbol, timeframe, limit)
 
     return CandleResponse(
-        symbol=symbol,
+        asset=symbol,
         timeframe=timeframe,
         candle_count=len(candles),
         candles=candles,
@@ -154,7 +155,7 @@ def get_candle_data(
 @app.get("/api/indicators", response_model=IndicatorResponse)
 def get_indicators(
     symbol: str = Query(..., description="Trading pair symbol, e.g. EUR/USD"),
-    timeframe: str = Query(..., description="Timeframe: 30m, 1H, 4H, or D"),
+    timeframe: str = Query(..., description="Timeframe: 30m, 1H, 4H, or D1"),
     include_series: bool = Query(False, description="Include full indicator series"),
     limit: int = Query(300, ge=1, le=1000, description="Number of candles to calculate from"),
 ):
@@ -179,7 +180,7 @@ def get_indicators(
         series = IndicatorEngine.calculate_all(candles)
 
     return IndicatorResponse(
-        symbol=symbol,
+        asset=symbol,
         timeframe=timeframe,
         latest=latest,
         series=series,
@@ -189,7 +190,7 @@ def get_indicators(
 @app.post("/api/candles/refresh", response_model=RefreshResponse)
 def refresh_candles(
     symbol: str = Query(..., description="Trading pair symbol, e.g. EUR/USD"),
-    timeframe: str = Query(..., description="Timeframe: 30m, 1H, 4H, or D"),
+    timeframe: str = Query(..., description="Timeframe: 30m, 1H, 4H, or D1"),
     limit: int = Query(300, ge=1, le=1000),
 ):
     if timeframe not in VALID_TIMEFRAMES:
@@ -202,7 +203,7 @@ def refresh_candles(
     count = get_candle_count(symbol, timeframe)
 
     return RefreshResponse(
-        symbol=symbol,
+        asset=symbol,
         timeframe=timeframe,
         candles_stored=count,
         message=f"Successfully refreshed {count} candles for {symbol} on {timeframe}",
@@ -221,7 +222,7 @@ def list_symbols():
 @app.get("/api/cache/status")
 def cache_status(
     symbol: str = Query(..., description="Trading pair symbol"),
-    timeframe: str = Query(..., description="Timeframe: 30m, 1H, 4H, or D"),
+    timeframe: str = Query(..., description="Timeframe: 30m, 1H, 4H, or D1"),
 ):
     from trading_engine.database import get_cache_metadata
 
@@ -299,10 +300,10 @@ def check_exit_conditions():
 def list_strategy_signals(
     strategy: Optional[str] = Query(None, description="Filter by strategy name"),
     symbol: Optional[str] = Query(None, description="Filter by symbol"),
-    status: Optional[str] = Query(None, description="Filter by status: active, closed, expired"),
+    status: Optional[str] = Query(None, description="Filter by status: OPEN, CLOSED"),
     limit: int = Query(100, ge=1, le=500),
 ):
-    signals = get_all_signals(strategy=strategy, symbol=symbol, status=status, limit=limit)
+    signals = get_all_signals(strategy_name=strategy, asset=symbol, status=status, limit=limit)
     return {
         "signals": signals,
         "count": len(signals),
@@ -314,7 +315,7 @@ def list_active_signals(
     strategy: Optional[str] = Query(None, description="Filter by strategy name"),
     symbol: Optional[str] = Query(None, description="Filter by symbol"),
 ):
-    signals = get_active_signals(strategy=strategy, symbol=symbol)
+    signals = get_active_signals(strategy_name=strategy, asset=symbol)
     return {
         "signals": signals,
         "count": len(signals),

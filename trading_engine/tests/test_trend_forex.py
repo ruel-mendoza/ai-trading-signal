@@ -36,8 +36,7 @@ def _load_csv_candles(filename: str) -> list[dict]:
                 "high": float(row["high"]),
                 "low": float(row["low"]),
                 "close": float(row["close"]),
-                "open_time": row["date"] + "T00:00:00",
-                "volume": 10000,
+                "timestamp": row["date"] + "T00:00:00",
             })
     return candles
 
@@ -70,8 +69,7 @@ def _generate_daily_candles(
             "high": h,
             "low": l,
             "close": c,
-            "open_time": candle_dt.strftime("%Y-%m-%dT00:00:00"),
-            "volume": 10000,
+            "timestamp": candle_dt.strftime("%Y-%m-%dT00:00:00"),
         })
 
     return candles
@@ -79,14 +77,13 @@ def _generate_daily_candles(
 
 def _generate_breakout_candles(base_price: float, count: int, breakout_close: float):
     candles = _generate_daily_candles(base_price, count - 1, trend="flat", volatility=0.0001)
-    last_dt = datetime.strptime(candles[-1]["open_time"], "%Y-%m-%dT%H:%M:%S") + timedelta(days=1)
+    last_dt = datetime.strptime(candles[-1]["timestamp"], "%Y-%m-%dT%H:%M:%S") + timedelta(days=1)
     candles.append({
         "open": round(breakout_close * 0.999, 6),
         "high": round(breakout_close * 1.001, 6),
         "low": round(breakout_close * 0.998, 6),
         "close": breakout_close,
-        "open_time": last_dt.strftime("%Y-%m-%dT00:00:00"),
-        "volume": 15000,
+        "timestamp": last_dt.strftime("%Y-%m-%dT00:00:00"),
     })
     return candles
 
@@ -98,9 +95,10 @@ class TestIdempotency:
 
     @patch("trading_engine.strategies.trend_forex.datetime")
     @patch("trading_engine.strategies.trend_forex.signal_exists")
-    @patch("trading_engine.strategies.trend_forex.get_active_signals")
+    @patch("trading_engine.strategies.trend_forex.get_open_position")
+    @patch("trading_engine.strategies.trend_forex.open_position")
     @patch("trading_engine.strategies.trend_forex.insert_signal")
-    def test_first_run_generates_signal(self, mock_insert, mock_active, mock_exists, mock_dt):
+    def test_first_run_generates_signal(self, mock_insert, mock_open_pos, mock_get_pos, mock_exists, mock_dt):
         et_now = ET.localize(datetime(2026, 3, 10, 17, 5))
         mock_dt.now.return_value = et_now
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
@@ -109,20 +107,20 @@ class TestIdempotency:
         self.mock_cache.get_candles.return_value = candles
 
         mock_exists.return_value = False
-        mock_active.return_value = []
+        mock_get_pos.return_value = None
         mock_insert.return_value = 42
 
         result = self.strategy.evaluate("EUR/USD")
         assert result is not None
         assert result["id"] == 42
-        assert result["direction"] == "long"
+        assert result["direction"] == "BUY"
         mock_insert.assert_called_once()
 
     @patch("trading_engine.strategies.trend_forex.datetime")
     @patch("trading_engine.strategies.trend_forex.signal_exists")
-    @patch("trading_engine.strategies.trend_forex.get_active_signals")
+    @patch("trading_engine.strategies.trend_forex.get_open_position")
     @patch("trading_engine.strategies.trend_forex.insert_signal")
-    def test_rerun_at_515pm_blocked_by_signal_exists(self, mock_insert, mock_active, mock_exists, mock_dt):
+    def test_rerun_at_515pm_blocked_by_signal_exists(self, mock_insert, mock_get_pos, mock_exists, mock_dt):
         et_now = ET.localize(datetime(2026, 3, 10, 17, 15))
         mock_dt.now.return_value = et_now
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
@@ -131,7 +129,7 @@ class TestIdempotency:
         self.mock_cache.get_candles.return_value = candles
 
         mock_exists.return_value = True
-        mock_active.return_value = []
+        mock_get_pos.return_value = None
 
         result = self.strategy.evaluate("EUR/USD")
         assert result is None
@@ -139,9 +137,9 @@ class TestIdempotency:
 
     @patch("trading_engine.strategies.trend_forex.datetime")
     @patch("trading_engine.strategies.trend_forex.signal_exists")
-    @patch("trading_engine.strategies.trend_forex.get_active_signals")
+    @patch("trading_engine.strategies.trend_forex.get_open_position")
     @patch("trading_engine.strategies.trend_forex.insert_signal")
-    def test_rerun_blocked_by_open_trade(self, mock_insert, mock_active, mock_exists, mock_dt):
+    def test_rerun_blocked_by_open_trade(self, mock_insert, mock_get_pos, mock_exists, mock_dt):
         et_now = ET.localize(datetime(2026, 3, 10, 17, 15))
         mock_dt.now.return_value = et_now
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
@@ -149,7 +147,7 @@ class TestIdempotency:
         candles = _generate_breakout_candles(1.0800, 200, 1.1200)
         self.mock_cache.get_candles.return_value = candles
 
-        mock_active.return_value = [{"id": 99, "direction": "long", "symbol": "EUR/USD"}]
+        mock_get_pos.return_value = {"id": 99, "direction": "BUY", "asset": "EUR/USD"}
 
         result = self.strategy.evaluate("EUR/USD")
         assert result is None
@@ -224,10 +222,12 @@ class TestLongExitTrailingStop:
         self.mock_cache = MagicMock()
         self.strategy = ForexTrendFollowingStrategy(self.mock_cache)
 
+    @patch("trading_engine.strategies.trend_forex.close_position")
     @patch("trading_engine.strategies.trend_forex.close_signal")
-    @patch("trading_engine.strategies.trend_forex.update_signal_tracking")
-    @patch("trading_engine.strategies.trend_forex.get_active_signals")
-    def test_long_exit_triggers_at_3x_atr_below_peak(self, mock_active, mock_tracking, mock_close):
+    @patch("trading_engine.strategies.trend_forex.update_position_tracking")
+    @patch("trading_engine.database.get_active_signals")
+    @patch("trading_engine.strategies.trend_forex.get_all_open_positions")
+    def test_long_exit_triggers_at_3x_atr_below_peak(self, mock_positions, mock_active_sigs, mock_tracking, mock_close, mock_close_pos):
         entry_price = 1.10000
         atr_at_entry = 0.00500
         highest_close_since_entry = 1.12000
@@ -235,16 +235,19 @@ class TestLongExitTrailingStop:
 
         current_close = trailing_stop - 0.00010
 
-        mock_active.return_value = [{
+        mock_positions.return_value = [{
             "id": 1,
-            "symbol": "EUR/USD",
-            "direction": "long",
+            "asset": "EUR/USD",
+            "strategy_name": STRATEGY_NAME,
+            "direction": "BUY",
             "entry_price": entry_price,
-            "highest_price": highest_close_since_entry,
-            "lowest_price": None,
-            "metadata": json.dumps({"atr100_at_entry": atr_at_entry}),
-            "created_at": "2026-01-15T17:00:00",
+            "atr_at_entry": atr_at_entry,
+            "highest_price_since_entry": highest_close_since_entry,
+            "lowest_price_since_entry": None,
+            "opened_at": "2026-01-15T17:00:00",
         }]
+
+        mock_active_sigs.return_value = [{"id": 1}]
 
         exit_candles = _generate_daily_candles(current_close, 5, trend="flat")
         exit_candles[-1]["close"] = current_close
@@ -259,13 +262,14 @@ class TestLongExitTrailingStop:
 
         call_args = mock_close.call_args
         assert call_args[0][0] == 1
-        assert call_args[0][1] == current_close
-        assert "Trailing stop hit" in call_args[0][2]
+        assert "Trailing stop hit" in call_args[0][1]
 
+    @patch("trading_engine.strategies.trend_forex.close_position")
     @patch("trading_engine.strategies.trend_forex.close_signal")
-    @patch("trading_engine.strategies.trend_forex.update_signal_tracking")
-    @patch("trading_engine.strategies.trend_forex.get_active_signals")
-    def test_long_holds_when_above_trailing_stop(self, mock_active, mock_tracking, mock_close):
+    @patch("trading_engine.strategies.trend_forex.update_position_tracking")
+    @patch("trading_engine.database.get_active_signals")
+    @patch("trading_engine.strategies.trend_forex.get_all_open_positions")
+    def test_long_holds_when_above_trailing_stop(self, mock_positions, mock_active_sigs, mock_tracking, mock_close, mock_close_pos):
         entry_price = 1.10000
         atr_at_entry = 0.00500
         highest_close_since_entry = 1.12000
@@ -273,15 +277,16 @@ class TestLongExitTrailingStop:
 
         current_close = trailing_stop + 0.00100
 
-        mock_active.return_value = [{
+        mock_positions.return_value = [{
             "id": 2,
-            "symbol": "EUR/USD",
-            "direction": "long",
+            "asset": "EUR/USD",
+            "strategy_name": STRATEGY_NAME,
+            "direction": "BUY",
             "entry_price": entry_price,
-            "highest_price": highest_close_since_entry,
-            "lowest_price": None,
-            "metadata": json.dumps({"atr100_at_entry": atr_at_entry}),
-            "created_at": "2026-01-15T17:00:00",
+            "atr_at_entry": atr_at_entry,
+            "highest_price_since_entry": highest_close_since_entry,
+            "lowest_price_since_entry": None,
+            "opened_at": "2026-01-15T17:00:00",
         }]
 
         exit_candles = _generate_daily_candles(current_close, 5, trend="flat")
@@ -293,10 +298,12 @@ class TestLongExitTrailingStop:
         assert len(closed) == 0
         mock_close.assert_not_called()
 
+    @patch("trading_engine.strategies.trend_forex.close_position")
     @patch("trading_engine.strategies.trend_forex.close_signal")
-    @patch("trading_engine.strategies.trend_forex.update_signal_tracking")
-    @patch("trading_engine.strategies.trend_forex.get_active_signals")
-    def test_long_exit_exactly_at_trailing_stop_holds(self, mock_active, mock_tracking, mock_close):
+    @patch("trading_engine.strategies.trend_forex.update_position_tracking")
+    @patch("trading_engine.database.get_active_signals")
+    @patch("trading_engine.strategies.trend_forex.get_all_open_positions")
+    def test_long_exit_exactly_at_trailing_stop_holds(self, mock_positions, mock_active_sigs, mock_tracking, mock_close, mock_close_pos):
         entry_price = 1.10000
         atr_at_entry = 0.00500
         highest_close_since_entry = 1.12000
@@ -304,15 +311,16 @@ class TestLongExitTrailingStop:
 
         current_close = trailing_stop
 
-        mock_active.return_value = [{
+        mock_positions.return_value = [{
             "id": 3,
-            "symbol": "EUR/USD",
-            "direction": "long",
+            "asset": "EUR/USD",
+            "strategy_name": STRATEGY_NAME,
+            "direction": "BUY",
             "entry_price": entry_price,
-            "highest_price": highest_close_since_entry,
-            "lowest_price": None,
-            "metadata": json.dumps({"atr100_at_entry": atr_at_entry}),
-            "created_at": "2026-01-15T17:00:00",
+            "atr_at_entry": atr_at_entry,
+            "highest_price_since_entry": highest_close_since_entry,
+            "lowest_price_since_entry": None,
+            "opened_at": "2026-01-15T17:00:00",
         }]
 
         exit_candles = _generate_daily_candles(current_close, 5, trend="flat")
@@ -324,10 +332,12 @@ class TestLongExitTrailingStop:
         assert len(closed) == 0
         mock_close.assert_not_called()
 
+    @patch("trading_engine.strategies.trend_forex.close_position")
     @patch("trading_engine.strategies.trend_forex.close_signal")
-    @patch("trading_engine.strategies.trend_forex.update_signal_tracking")
-    @patch("trading_engine.strategies.trend_forex.get_active_signals")
-    def test_long_exit_uses_fixed_atr_not_current(self, mock_active, mock_tracking, mock_close):
+    @patch("trading_engine.strategies.trend_forex.update_position_tracking")
+    @patch("trading_engine.database.get_active_signals")
+    @patch("trading_engine.strategies.trend_forex.get_all_open_positions")
+    def test_long_exit_uses_fixed_atr_not_current(self, mock_positions, mock_active_sigs, mock_tracking, mock_close, mock_close_pos):
         entry_price = 1.10000
         atr_at_entry = 0.00500
         highest_close_since_entry = 1.13000
@@ -335,16 +345,19 @@ class TestLongExitTrailingStop:
         trailing_stop = highest_close_since_entry - (atr_at_entry * 3.0)
         current_close = trailing_stop - 0.00001
 
-        mock_active.return_value = [{
+        mock_positions.return_value = [{
             "id": 4,
-            "symbol": "EUR/USD",
-            "direction": "long",
+            "asset": "EUR/USD",
+            "strategy_name": STRATEGY_NAME,
+            "direction": "BUY",
             "entry_price": entry_price,
-            "highest_price": highest_close_since_entry,
-            "lowest_price": None,
-            "metadata": json.dumps({"atr100_at_entry": atr_at_entry}),
-            "created_at": "2026-01-15T17:00:00",
+            "atr_at_entry": atr_at_entry,
+            "highest_price_since_entry": highest_close_since_entry,
+            "lowest_price_since_entry": None,
+            "opened_at": "2026-01-15T17:00:00",
         }]
+
+        mock_active_sigs.return_value = [{"id": 4}]
 
         exit_candles = _generate_daily_candles(current_close, 5, trend="flat")
         exit_candles[-1]["close"] = current_close
@@ -353,27 +366,30 @@ class TestLongExitTrailingStop:
         closed = self.strategy.check_exits()
         assert len(closed) == 1
 
-        exit_reason = mock_close.call_args[0][2]
+        exit_reason = mock_close.call_args[0][1]
         assert str(round(atr_at_entry, 6)) in exit_reason
 
+    @patch("trading_engine.strategies.trend_forex.close_position")
     @patch("trading_engine.strategies.trend_forex.close_signal")
-    @patch("trading_engine.strategies.trend_forex.update_signal_tracking")
-    @patch("trading_engine.strategies.trend_forex.get_active_signals")
-    def test_highest_price_updates_with_new_high(self, mock_active, mock_tracking, mock_close):
+    @patch("trading_engine.strategies.trend_forex.update_position_tracking")
+    @patch("trading_engine.database.get_active_signals")
+    @patch("trading_engine.strategies.trend_forex.get_all_open_positions")
+    def test_highest_price_updates_with_new_high(self, mock_positions, mock_active_sigs, mock_tracking, mock_close, mock_close_pos):
         entry_price = 1.10000
         atr_at_entry = 0.00500
         stored_highest = 1.11000
         new_close = 1.11500
 
-        mock_active.return_value = [{
+        mock_positions.return_value = [{
             "id": 5,
-            "symbol": "EUR/USD",
-            "direction": "long",
+            "asset": "EUR/USD",
+            "strategy_name": STRATEGY_NAME,
+            "direction": "BUY",
             "entry_price": entry_price,
-            "highest_price": stored_highest,
-            "lowest_price": None,
-            "metadata": json.dumps({"atr100_at_entry": atr_at_entry}),
-            "created_at": "2026-01-15T17:00:00",
+            "atr_at_entry": atr_at_entry,
+            "highest_price_since_entry": stored_highest,
+            "lowest_price_since_entry": None,
+            "opened_at": "2026-01-15T17:00:00",
         }]
 
         exit_candles = _generate_daily_candles(new_close, 5, trend="flat")
@@ -390,10 +406,12 @@ class TestShortExitTrailingStop:
         self.mock_cache = MagicMock()
         self.strategy = ForexTrendFollowingStrategy(self.mock_cache)
 
+    @patch("trading_engine.strategies.trend_forex.close_position")
     @patch("trading_engine.strategies.trend_forex.close_signal")
-    @patch("trading_engine.strategies.trend_forex.update_signal_tracking")
-    @patch("trading_engine.strategies.trend_forex.get_active_signals")
-    def test_short_exit_triggers_at_3x_atr_above_trough(self, mock_active, mock_tracking, mock_close):
+    @patch("trading_engine.strategies.trend_forex.update_position_tracking")
+    @patch("trading_engine.database.get_active_signals")
+    @patch("trading_engine.strategies.trend_forex.get_all_open_positions")
+    def test_short_exit_triggers_at_3x_atr_above_trough(self, mock_positions, mock_active_sigs, mock_tracking, mock_close, mock_close_pos):
         entry_price = 1.10000
         atr_at_entry = 0.00500
         lowest_close_since_entry = 1.08000
@@ -401,16 +419,19 @@ class TestShortExitTrailingStop:
 
         current_close = trailing_stop + 0.00010
 
-        mock_active.return_value = [{
+        mock_positions.return_value = [{
             "id": 10,
-            "symbol": "EUR/USD",
-            "direction": "short",
+            "asset": "EUR/USD",
+            "strategy_name": STRATEGY_NAME,
+            "direction": "SELL",
             "entry_price": entry_price,
-            "highest_price": None,
-            "lowest_price": lowest_close_since_entry,
-            "metadata": json.dumps({"atr100_at_entry": atr_at_entry}),
-            "created_at": "2026-01-20T17:00:00",
+            "atr_at_entry": atr_at_entry,
+            "highest_price_since_entry": None,
+            "lowest_price_since_entry": lowest_close_since_entry,
+            "opened_at": "2026-01-20T17:00:00",
         }]
+
+        mock_active_sigs.return_value = [{"id": 10}]
 
         exit_candles = _generate_daily_candles(current_close, 5, trend="flat")
         exit_candles[-1]["close"] = current_close
@@ -422,10 +443,12 @@ class TestShortExitTrailingStop:
         assert closed[0]["exit_reason"] == "trailing_stop"
         mock_close.assert_called_once()
 
+    @patch("trading_engine.strategies.trend_forex.close_position")
     @patch("trading_engine.strategies.trend_forex.close_signal")
-    @patch("trading_engine.strategies.trend_forex.update_signal_tracking")
-    @patch("trading_engine.strategies.trend_forex.get_active_signals")
-    def test_short_holds_when_below_trailing_stop(self, mock_active, mock_tracking, mock_close):
+    @patch("trading_engine.strategies.trend_forex.update_position_tracking")
+    @patch("trading_engine.database.get_active_signals")
+    @patch("trading_engine.strategies.trend_forex.get_all_open_positions")
+    def test_short_holds_when_below_trailing_stop(self, mock_positions, mock_active_sigs, mock_tracking, mock_close, mock_close_pos):
         entry_price = 1.10000
         atr_at_entry = 0.00500
         lowest_close_since_entry = 1.08000
@@ -433,15 +456,16 @@ class TestShortExitTrailingStop:
 
         current_close = trailing_stop - 0.00200
 
-        mock_active.return_value = [{
+        mock_positions.return_value = [{
             "id": 11,
-            "symbol": "EUR/USD",
-            "direction": "short",
+            "asset": "EUR/USD",
+            "strategy_name": STRATEGY_NAME,
+            "direction": "SELL",
             "entry_price": entry_price,
-            "highest_price": None,
-            "lowest_price": lowest_close_since_entry,
-            "metadata": json.dumps({"atr100_at_entry": atr_at_entry}),
-            "created_at": "2026-01-20T17:00:00",
+            "atr_at_entry": atr_at_entry,
+            "highest_price_since_entry": None,
+            "lowest_price_since_entry": lowest_close_since_entry,
+            "opened_at": "2026-01-20T17:00:00",
         }]
 
         exit_candles = _generate_daily_candles(current_close, 5, trend="flat")
@@ -459,19 +483,22 @@ class TestMissingMetadata:
         self.mock_cache = MagicMock()
         self.strategy = ForexTrendFollowingStrategy(self.mock_cache)
 
+    @patch("trading_engine.strategies.trend_forex.close_position")
     @patch("trading_engine.strategies.trend_forex.close_signal")
-    @patch("trading_engine.strategies.trend_forex.update_signal_tracking")
-    @patch("trading_engine.strategies.trend_forex.get_active_signals")
-    def test_missing_atr_metadata_skips_exit_check(self, mock_active, mock_tracking, mock_close):
-        mock_active.return_value = [{
+    @patch("trading_engine.strategies.trend_forex.update_position_tracking")
+    @patch("trading_engine.database.get_active_signals")
+    @patch("trading_engine.strategies.trend_forex.get_all_open_positions")
+    def test_missing_atr_metadata_skips_exit_check(self, mock_positions, mock_active_sigs, mock_tracking, mock_close, mock_close_pos):
+        mock_positions.return_value = [{
             "id": 20,
-            "symbol": "EUR/USD",
-            "direction": "long",
+            "asset": "EUR/USD",
+            "strategy_name": STRATEGY_NAME,
+            "direction": "BUY",
             "entry_price": 1.10000,
-            "highest_price": 1.12000,
-            "lowest_price": None,
-            "metadata": json.dumps({}),
-            "created_at": "2026-01-15T17:00:00",
+            "atr_at_entry": None,
+            "highest_price_since_entry": 1.12000,
+            "lowest_price_since_entry": None,
+            "opened_at": "2026-01-15T17:00:00",
         }]
 
         closed = self.strategy.check_exits()
@@ -486,10 +513,12 @@ class TestLongExitWithCSVData:
         self.mock_cache = MagicMock()
         self.strategy = ForexTrendFollowingStrategy(self.mock_cache)
 
+    @patch("trading_engine.strategies.trend_forex.close_position")
     @patch("trading_engine.strategies.trend_forex.close_signal")
-    @patch("trading_engine.strategies.trend_forex.update_signal_tracking")
-    @patch("trading_engine.strategies.trend_forex.get_active_signals")
-    def test_long_exit_triggers_from_csv_history(self, mock_active, mock_tracking, mock_close):
+    @patch("trading_engine.strategies.trend_forex.update_position_tracking")
+    @patch("trading_engine.database.get_active_signals")
+    @patch("trading_engine.strategies.trend_forex.get_all_open_positions")
+    def test_long_exit_triggers_from_csv_history(self, mock_positions, mock_active_sigs, mock_tracking, mock_close, mock_close_pos):
         csv_candles = _load_csv_candles("eurusd_daily_exit_test.csv")
         assert len(csv_candles) >= 120, f"CSV has {len(csv_candles)} candles, need 120+"
 
@@ -510,16 +539,19 @@ class TestLongExitWithCSVData:
 
         should_exit = final_close < trailing_stop
 
-        mock_active.return_value = [{
+        mock_positions.return_value = [{
             "id": 100,
-            "symbol": "EUR/USD",
-            "direction": "long",
+            "asset": "EUR/USD",
+            "strategy_name": STRATEGY_NAME,
+            "direction": "BUY",
             "entry_price": entry_price,
-            "highest_price": highest_close_after_entry,
-            "lowest_price": None,
-            "metadata": json.dumps({"atr100_at_entry": atr_at_entry}),
-            "created_at": "2025-09-15T17:00:00",
+            "atr_at_entry": atr_at_entry,
+            "highest_price_since_entry": highest_close_after_entry,
+            "lowest_price_since_entry": None,
+            "opened_at": "2025-09-15T17:00:00",
         }]
+
+        mock_active_sigs.return_value = [{"id": 100}]
 
         self.mock_cache.get_candles.return_value = csv_candles
 
@@ -535,17 +567,19 @@ class TestLongExitWithCSVData:
 
             call_args = mock_close.call_args
             assert call_args[0][0] == 100
-            assert "Trailing stop hit" in call_args[0][2]
-            assert str(round(atr_at_entry, 6)) in call_args[0][2]
+            assert "Trailing stop hit" in call_args[0][1]
+            assert str(round(atr_at_entry, 6)) in call_args[0][1]
         else:
             assert len(closed) == 0, (
                 f"Expected hold: close={final_close:.5f} >= trailing_stop={trailing_stop:.5f}"
             )
 
+    @patch("trading_engine.strategies.trend_forex.close_position")
     @patch("trading_engine.strategies.trend_forex.close_signal")
-    @patch("trading_engine.strategies.trend_forex.update_signal_tracking")
-    @patch("trading_engine.strategies.trend_forex.get_active_signals")
-    def test_csv_atr_remains_fixed_throughout_trade(self, mock_active, mock_tracking, mock_close):
+    @patch("trading_engine.strategies.trend_forex.update_position_tracking")
+    @patch("trading_engine.database.get_active_signals")
+    @patch("trading_engine.strategies.trend_forex.get_all_open_positions")
+    def test_csv_atr_remains_fixed_throughout_trade(self, mock_positions, mock_active_sigs, mock_tracking, mock_close, mock_close_pos):
         csv_candles = _load_csv_candles("eurusd_daily_exit_test.csv")
 
         closes = [c["close"] for c in csv_candles]
@@ -563,21 +597,24 @@ class TestLongExitWithCSVData:
 
         highest_since = max(closes[entry_idx:])
 
-        mock_active.return_value = [{
+        mock_positions.return_value = [{
             "id": 101,
-            "symbol": "EUR/USD",
-            "direction": "long",
+            "asset": "EUR/USD",
+            "strategy_name": STRATEGY_NAME,
+            "direction": "BUY",
             "entry_price": entry_price,
-            "highest_price": highest_since,
-            "lowest_price": None,
-            "metadata": json.dumps({"atr100_at_entry": atr_at_entry}),
-            "created_at": "2025-08-15T17:00:00",
+            "atr_at_entry": atr_at_entry,
+            "highest_price_since_entry": highest_since,
+            "lowest_price_since_entry": None,
+            "opened_at": "2025-08-15T17:00:00",
         }]
+
+        mock_active_sigs.return_value = [{"id": 101}]
 
         self.mock_cache.get_candles.return_value = csv_candles
         self.strategy.check_exits()
 
         if mock_close.called:
-            exit_reason = mock_close.call_args[0][2]
+            exit_reason = mock_close.call_args[0][1]
             assert str(round(atr_at_entry, 6)) in exit_reason
             assert str(round(atr_at_exit, 6)) not in exit_reason or atr_at_entry == atr_at_exit

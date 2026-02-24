@@ -136,12 +136,13 @@ class TestIdempotency:
         mock_cache = MagicMock()
         self.strategy = SP500MomentumStrategy(mock_cache)
 
-    @patch("trading_engine.strategies.sp500_momentum.get_active_signals")
+    @patch("trading_engine.strategies.sp500_momentum.has_open_position")
     @patch("trading_engine.strategies.sp500_momentum.signal_exists")
+    @patch("trading_engine.strategies.sp500_momentum.open_position")
     @patch("trading_engine.strategies.sp500_momentum.insert_signal")
-    def test_duplicate_signal_not_created(self, mock_insert, mock_exists, mock_active):
+    def test_duplicate_signal_not_created(self, mock_insert, mock_open_pos, mock_exists, mock_has_pos):
         mock_exists.return_value = True
-        mock_active.return_value = []
+        mock_has_pos.return_value = False
         mock_insert.return_value = None
 
         closes = [100.0 + i * 0.1 for i in range(150)]
@@ -159,7 +160,7 @@ class TestIdempotency:
                 "high": highs[i],
                 "low": lows[i],
                 "close": closes[i],
-                "open_time": candle_str,
+                "timestamp": candle_str,
             })
 
         self.strategy.cache.get_candles.return_value = candles
@@ -171,12 +172,13 @@ class TestIdempotency:
                 result = self.strategy.evaluate("SPX")
                 mock_insert.assert_not_called()
 
-    @patch("trading_engine.strategies.sp500_momentum.get_active_signals")
+    @patch("trading_engine.strategies.sp500_momentum.has_open_position")
     @patch("trading_engine.strategies.sp500_momentum.signal_exists")
+    @patch("trading_engine.strategies.sp500_momentum.open_position")
     @patch("trading_engine.strategies.sp500_momentum.insert_signal")
-    def test_first_signal_created(self, mock_insert, mock_exists, mock_active):
+    def test_first_signal_created(self, mock_insert, mock_open_pos, mock_exists, mock_has_pos):
         mock_exists.return_value = False
-        mock_active.return_value = []
+        mock_has_pos.return_value = False
         mock_insert.return_value = 42
 
         et_time = datetime(2026, 2, 24, 14, 0, tzinfo=ET_ZONE)
@@ -186,7 +188,7 @@ class TestIdempotency:
         closes = [100.0] * 150
         highs = [101.0] * 150
         lows = [99.0] * 150
-        candles = [{"open": 99.9, "high": 101.0, "low": 99.0, "close": 100.0, "open_time": candle_str} for _ in range(150)]
+        candles = [{"open": 99.9, "high": 101.0, "low": 99.0, "close": 100.0, "timestamp": candle_str} for _ in range(150)]
 
         self.strategy.cache.get_candles.return_value = candles
 

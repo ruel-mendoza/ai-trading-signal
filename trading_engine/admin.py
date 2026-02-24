@@ -12,6 +12,7 @@ from trading_engine.database import (
     authenticate_admin, create_session, validate_session, delete_session,
     get_all_admins, create_admin, update_admin, delete_admin, get_admin_by_id,
     cleanup_expired_sessions, get_candles,
+    get_all_open_positions, get_open_position,
 )
 from trading_engine.indicators import IndicatorEngine
 
@@ -98,36 +99,31 @@ def _nth_weekday(year: int, month: int, weekday: int, n: int) -> datetime:
 
 def _signals_to_table_rows(signals: list[dict]) -> str:
     if not signals:
-        return '<tr><td colspan="10" style="text-align:center;padding:24px;color:#94a3b8;">No signals found</td></tr>'
+        return '<tr><td colspan="8" style="text-align:center;padding:24px;color:#94a3b8;">No signals found</td></tr>'
 
     rows = []
     for s in signals:
         direction = s.get("direction", "")
-        dir_class = "buy" if direction == "long" else "sell"
-        dir_label = "BUY" if direction == "long" else "SELL"
-        status = s.get("status", "active")
-        status_class = f"status-{status}"
+        dir_class = "buy" if direction == "BUY" else "sell"
+        status = s.get("status", "OPEN")
+        status_class = "status-active" if status == "OPEN" else "status-closed"
 
         entry_str = f'{s.get("entry_price", 0):.5f}'
         sl_val = s.get("stop_loss")
         sl_str = f'{sl_val:.5f}' if sl_val is not None else "—"
         tp_val = s.get("take_profit")
         tp_str = f'{tp_val:.5f}' if tp_val is not None else "—"
-        exit_val = s.get("exit_price")
-        exit_str = f'{exit_val:.5f}' if exit_val is not None else "—"
 
         rows.append(f"""
         <tr>
-            <td>{s.get("symbol", "")}</td>
-            <td><span class="badge {dir_class}">{dir_label}</span></td>
+            <td>{s.get("asset", "")}</td>
+            <td><span class="badge {dir_class}">{direction}</span></td>
             <td>{entry_str}</td>
             <td>{sl_str}</td>
             <td>{tp_str}</td>
-            <td>{exit_str}</td>
-            <td>{s.get("strategy", "")}</td>
-            <td><span class="badge {status_class}">{status.upper()}</span></td>
-            <td>{s.get("trigger_timeframe", "")}</td>
-            <td>{s.get("created_at", "")}</td>
+            <td>{s.get("strategy_name", "")}</td>
+            <td><span class="badge {status_class}">{status}</span></td>
+            <td>{s.get("signal_timestamp", "")}</td>
         </tr>""")
     return "\n".join(rows)
 
@@ -385,18 +381,13 @@ def _get_spx_momentum_data() -> dict:
         if atr_values and atr_values[-1] is not None:
             current_atr = atr_values[-1]
 
-    active = get_active_signals(strategy="sp500_momentum", symbol="SPX")
+    active = get_active_signals(strategy_name="sp500_momentum", asset="SPX")
     active_signal = None
     if active:
         sig = active[0]
-        metadata = {}
-        if sig.get("metadata"):
-            try:
-                metadata = json.loads(sig["metadata"])
-            except (json.JSONDecodeError, TypeError):
-                pass
-        atr_at_entry = metadata.get("atr100_at_entry")
-        stored_highest = sig.get("highest_price") or sig["entry_price"]
+        atr_at_entry = sig.get("atr_at_entry")
+        pos = get_open_position("sp500_momentum", "SPX")
+        stored_highest = (pos.get("highest_price_since_entry") if pos else None) or sig["entry_price"]
         highest_close = max(stored_highest, current_close) if current_close else stored_highest
         trailing_stop = None
         if atr_at_entry is not None:
@@ -494,7 +485,7 @@ def _build_spx_momentum_html(spx_data: dict, spx_signal_rows: str, spx_signal_co
                     <div class="stat-value" style="font-size:1.3rem;">{pnl}</div>
                 </div>
             </div>
-            <div class="stat-label" style="margin-top:8px;">Opened: {sig.get('created_at', 'N/A')} | Direction: {sig['direction'].upper()}</div>
+            <div class="stat-label" style="margin-top:8px;">Opened: {sig.get('created_at', 'N/A')} | Direction: {sig['direction']}</div>
         </div>"""
     else:
         active_html = """
@@ -538,10 +529,8 @@ def _build_spx_momentum_html(spx_data: dict, spx_signal_rows: str, spx_signal_co
                         <th>Entry Price</th>
                         <th>Stop Loss</th>
                         <th>Take Profit</th>
-                        <th>Exit Price</th>
                         <th>Strategy</th>
                         <th>Status</th>
-                        <th>Timeframe</th>
                         <th>Timestamp</th>
                     </tr>
                 </thead>
@@ -574,7 +563,7 @@ def _get_forex_trend_data() -> dict:
 
     symbols_data = []
     for symbol in ["EUR/USD", "USD/JPY", "GBP/USD"]:
-        candles = get_candles(symbol, "D", 300)
+        candles = get_candles(symbol, "D1", 300)
         sym_info = {
             "symbol": symbol,
             "current_close": None,
@@ -610,22 +599,19 @@ def _get_forex_trend_data() -> dict:
 
         symbols_data.append(sym_info)
 
-    active_trades = get_active_signals(strategy="trend_forex")
+    active_trades = get_active_signals(strategy_name="trend_forex")
+    open_positions = get_all_open_positions(strategy_name="trend_forex")
+    pos_by_asset = {p["asset"]: p for p in open_positions}
     trade_details = []
     for sig in active_trades:
-        metadata = {}
-        if sig.get("metadata"):
-            try:
-                metadata = json.loads(sig["metadata"])
-            except (json.JSONDecodeError, TypeError):
-                pass
-        atr_at_entry = metadata.get("atr100_at_entry")
+        atr_at_entry = sig.get("atr_at_entry")
         direction = sig["direction"]
         entry_price = sig["entry_price"]
+        pos = pos_by_asset.get(sig["asset"])
 
-        if direction == "long":
-            stored_extreme = sig.get("highest_price") or entry_price
-            sym_candles = get_candles(sig["symbol"], "D", 5)
+        if direction == "BUY":
+            stored_extreme = (pos.get("highest_price_since_entry") if pos else None) or entry_price
+            sym_candles = get_candles(sig["asset"], "D1", 5)
             cur_close = sym_candles[-1]["close"] if sym_candles else None
             if cur_close:
                 stored_extreme = max(stored_extreme, cur_close)
@@ -634,7 +620,7 @@ def _get_forex_trend_data() -> dict:
                 trailing_stop = stored_extreme - (atr_at_entry * 3.0)
             trade_details.append({
                 "id": sig["id"],
-                "symbol": sig["symbol"],
+                "symbol": sig["asset"],
                 "direction": direction,
                 "entry_price": entry_price,
                 "atr_at_entry": atr_at_entry,
@@ -643,9 +629,9 @@ def _get_forex_trend_data() -> dict:
                 "current_close": cur_close,
                 "created_at": sig.get("created_at"),
             })
-        elif direction == "short":
-            stored_extreme = sig.get("lowest_price") or entry_price
-            sym_candles = get_candles(sig["symbol"], "D", 5)
+        elif direction == "SELL":
+            stored_extreme = (pos.get("lowest_price_since_entry") if pos else None) or entry_price
+            sym_candles = get_candles(sig["asset"], "D1", 5)
             cur_close = sym_candles[-1]["close"] if sym_candles else None
             if cur_close:
                 stored_extreme = min(stored_extreme, cur_close)
@@ -654,7 +640,7 @@ def _get_forex_trend_data() -> dict:
                 trailing_stop = stored_extreme + (atr_at_entry * 3.0)
             trade_details.append({
                 "id": sig["id"],
-                "symbol": sig["symbol"],
+                "symbol": sig["asset"],
                 "direction": direction,
                 "entry_price": entry_price,
                 "atr_at_entry": atr_at_entry,
@@ -729,16 +715,16 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
     if fx_data["active_trades"]:
         trade_rows = ""
         for t in fx_data["active_trades"]:
-            dir_class = "buy" if t["direction"] == "long" else "sell"
+            dir_class = "buy" if t["direction"] == "BUY" else "sell"
             entry_display = f"{t['entry_price']:.5f}"
             atr_display = f"{t['atr_at_entry']:.6f}" if t["atr_at_entry"] is not None else "N/A"
-            extreme_label = "Highest Close" if t["direction"] == "long" else "Lowest Close"
+            extreme_label = "Highest Close" if t["direction"] == "BUY" else "Lowest Close"
             extreme_display = f"{t['extreme_price']:.5f}"
             trail_display = f"{t['trailing_stop']:.5f}" if t["trailing_stop"] is not None else "N/A"
             cur_display = f"{t['current_close']:.5f}" if t["current_close"] is not None else "N/A"
             pnl = ""
             if t["current_close"] is not None:
-                if t["direction"] == "long":
+                if t["direction"] == "BUY":
                     diff = t["current_close"] - t["entry_price"]
                 else:
                     diff = t["entry_price"] - t["current_close"]
@@ -748,7 +734,7 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
             trade_rows += f"""
             <tr data-testid="row-forex-trade-{t['id']}">
                 <td>{t['symbol']}</td>
-                <td><span class="badge {dir_class}">{t['direction'].upper()}</span></td>
+                <td><span class="badge {dir_class}">{t['direction']}</span></td>
                 <td>{entry_display}</td>
                 <td>{atr_display}</td>
                 <td>{extreme_display} <span style="color:#64748b;font-size:0.75rem;">({extreme_label})</span></td>
@@ -819,10 +805,8 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
                         <th>Entry Price</th>
                         <th>Stop Loss</th>
                         <th>Take Profit</th>
-                        <th>Exit Price</th>
                         <th>Strategy</th>
                         <th>Status</th>
-                        <th>Timeframe</th>
                         <th>Timestamp</th>
                     </tr>
                 </thead>
@@ -1282,9 +1266,9 @@ def logout(request: Request):
 @router.get("/", response_class=HTMLResponse)
 def admin_dashboard(
     request: Request,
-    strategy: Optional[str] = Query(None),
+    strategy_name: Optional[str] = Query(None, alias="strategy"),
     status: Optional[str] = Query(None),
-    symbol: Optional[str] = Query(None),
+    asset: Optional[str] = Query(None, alias="symbol"),
     tab: str = Query("signals"),
 ):
     user = _get_session_user(request)
@@ -1292,7 +1276,7 @@ def admin_dashboard(
         base_path = request.scope.get("root_path", "")
         return RedirectResponse(url=base_path + "/admin/login", status_code=302)
 
-    signals = get_all_signals(strategy=strategy, symbol=symbol, status=status, limit=200)
+    signals = get_all_signals(strategy_name=strategy_name, asset=asset, status=status, limit=200)
     active_signals = get_active_signals()
     usage_stats = get_api_usage_stats()
     market_times = _get_market_times()
@@ -1307,13 +1291,13 @@ def admin_dashboard(
     users_html = _build_users_html(user["user_id"])
 
     spx_data = _get_spx_momentum_data()
-    spx_signals = get_all_signals(strategy="sp500_momentum", limit=200)
+    spx_signals = get_all_signals(strategy_name="sp500_momentum", limit=200)
     spx_signal_rows = _signals_to_table_rows(spx_signals)
     spx_signal_count = len(spx_signals)
     spx_html = _build_spx_momentum_html(spx_data, spx_signal_rows, spx_signal_count)
 
     fx_trend_data = _get_forex_trend_data()
-    fx_trend_signals = get_all_signals(strategy="trend_forex", limit=200)
+    fx_trend_signals = get_all_signals(strategy_name="trend_forex", limit=200)
     fx_trend_signal_rows = _signals_to_table_rows(fx_trend_signals)
     fx_trend_signal_count = len(fx_trend_signals)
     forex_trend_html = _build_forex_trend_html(fx_trend_data, fx_trend_signal_rows, fx_trend_signal_count)
@@ -1321,12 +1305,12 @@ def admin_dashboard(
     strategy_options = ""
     for s in ["", "mtf_ema", "trend_following", "sp500_momentum", "highest_lowest_fx", "trend_forex"]:
         label = s.replace("_", " ").title() if s else "All Strategies"
-        selected = "selected" if s == (strategy or "") else ""
+        selected = "selected" if s == (strategy_name or "") else ""
         strategy_options += f'<option value="{s}" {selected}>{label}</option>'
 
     status_options = ""
-    for s in ["", "active", "closed", "expired"]:
-        label = s.title() if s else "All Statuses"
+    for s in ["", "OPEN", "CLOSED"]:
+        label = s if s else "All Statuses"
         selected = "selected" if s == (status or "") else ""
         status_options += f'<option value="{s}" {selected}>{label}</option>'
 
@@ -1370,11 +1354,11 @@ def admin_dashboard(
                 </div>
                 <div class="sidebar-group">
                     <div class="sidebar-group-label">Strategies</div>
-                    <a class="sidebar-link {'active' if tab == 'signals' and strategy == 'mtf_ema' else ''}" data-tab="signals" data-strategy="mtf_ema" onclick="showStrategyTab('mtf_ema')" data-testid="sidebar-mtf">
+                    <a class="sidebar-link {'active' if tab == 'signals' and strategy_name == 'mtf_ema' else ''}" data-tab="signals" data-strategy="mtf_ema" onclick="showStrategyTab('mtf_ema')" data-testid="sidebar-mtf">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/><path d="M22 4v16"/></svg>
                         MTF Algo
                     </a>
-                    <a class="sidebar-link {'active' if tab == 'signals' and strategy == 'trend_following' else ''}" data-tab="signals" data-strategy="trend_following" onclick="showStrategyTab('trend_following')" data-testid="sidebar-trend">
+                    <a class="sidebar-link {'active' if tab == 'signals' and strategy_name == 'trend_following' else ''}" data-tab="signals" data-strategy="trend_following" onclick="showStrategyTab('trend_following')" data-testid="sidebar-trend">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
                         Trend Following
                     </a>
@@ -1433,7 +1417,7 @@ def admin_dashboard(
                         <input type="hidden" name="tab" value="signals">
                         <select name="strategy" onchange="this.form.submit()">{strategy_options}</select>
                         <select name="status" onchange="this.form.submit()">{status_options}</select>
-                        <input type="text" name="symbol" placeholder="Symbol (e.g. EUR/USD)" value="{symbol or ''}" style="width:160px;">
+                        <input type="text" name="symbol" placeholder="Asset (e.g. EUR/USD)" value="{asset or ''}" style="width:160px;">
                         <button type="submit" class="btn btn-primary">Filter</button>
                     </form>
                 </div>
@@ -1452,10 +1436,8 @@ def admin_dashboard(
                                 <th>Entry Price</th>
                                 <th>Stop Loss</th>
                                 <th>Take Profit</th>
-                                <th>Exit Price</th>
                                 <th>Strategy</th>
                                 <th>Status</th>
-                                <th>Timeframe</th>
                                 <th>Timestamp</th>
                             </tr>
                         </thead>
@@ -1533,7 +1515,7 @@ def export_signals(
     if guard:
         return guard
 
-    signals = get_all_signals(strategy=strategy, symbol=symbol, status=status, limit=500)
+    signals = get_all_signals(strategy_name=strategy, asset=symbol, status=status, limit=500)
 
     if format == "json":
         content = json.dumps(signals, indent=2, default=str)
@@ -1545,9 +1527,9 @@ def export_signals(
 
     output = io.StringIO()
     if signals:
-        fields = ["symbol", "direction", "entry_price", "stop_loss", "take_profit",
-                  "exit_price", "strategy", "status", "trigger_timeframe", "created_at",
-                  "exit_reason", "highest_price", "lowest_price"]
+        fields = ["asset", "direction", "entry_price", "stop_loss", "take_profit",
+                  "atr_at_entry", "strategy_name", "status", "signal_timestamp", "created_at",
+                  "updated_at"]
         writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         for s in signals:

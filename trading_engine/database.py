@@ -7,31 +7,33 @@ from typing import Optional
 
 from sqlalchemy import (
     create_engine,
-    Column,
-    Integer,
-    Float,
-    Text,
-    CheckConstraint,
-    UniqueConstraint,
-    Index,
-    ForeignKey,
     event,
     text,
     inspect,
 )
 from sqlalchemy.orm import (
-    DeclarativeBase,
     sessionmaker,
     Session,
 )
 from sqlalchemy.pool import QueuePool
 
+from trading_engine.models import (
+    Base,
+    Candle,
+    Signal,
+    OpenPosition,
+    APIUsageLog,
+    CacheMetadata,
+    AppSetting,
+    AdminUser,
+    AdminSession,
+    VALID_TIMEFRAMES,
+)
+
 logger = logging.getLogger("trading_engine.database")
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "trading_data.db")
 DATABASE_URL = os.environ.get("TRADING_ENGINE_DB_URL", f"sqlite:///{DB_PATH}")
-
-VALID_TIMEFRAMES = ["30m", "1H", "4H", "D"]
 
 engine = create_engine(
     DATABASE_URL,
@@ -43,123 +45,6 @@ engine = create_engine(
     echo=False,
     connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
 )
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-class OHLCCandle(Base):
-    __tablename__ = "ohlc_candles"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    symbol = Column(Text, nullable=False)
-    timeframe = Column(Text, nullable=False)
-    open_time = Column(Text, nullable=False)
-    open = Column(Float, nullable=False)
-    high = Column(Float, nullable=False)
-    low = Column(Float, nullable=False)
-    close = Column(Float, nullable=False)
-    volume = Column(Float, default=0)
-    is_closed = Column(Integer, default=1)
-    created_at = Column(Text, default=lambda: datetime.utcnow().isoformat())
-
-    __table_args__ = (
-        UniqueConstraint("symbol", "timeframe", "open_time", name="uq_ohlc_symbol_tf_time"),
-        CheckConstraint("timeframe IN ('30m', '1H', '4H', 'D')", name="ck_ohlc_timeframe"),
-        Index("idx_ohlc_symbol_tf_time", "symbol", "timeframe", "open_time"),
-    )
-
-
-class CacheMetadata(Base):
-    __tablename__ = "cache_metadata"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    symbol = Column(Text, nullable=False)
-    timeframe = Column(Text, nullable=False)
-    last_fetched = Column(Text, nullable=False)
-    last_candle_close = Column(Text)
-
-    __table_args__ = (
-        UniqueConstraint("symbol", "timeframe", name="uq_cache_symbol_tf"),
-    )
-
-
-class StrategySignal(Base):
-    __tablename__ = "strategy_signals"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    strategy = Column(Text, nullable=False)
-    symbol = Column(Text, nullable=False)
-    direction = Column(Text, nullable=False)
-    entry_price = Column(Float, nullable=False)
-    stop_loss = Column(Float)
-    take_profit = Column(Float)
-    trailing_stop_atr_mult = Column(Float)
-    trigger_candle_time = Column(Text, nullable=False)
-    trigger_timeframe = Column(Text, nullable=False)
-    status = Column(Text, nullable=False, default="active")
-    highest_price = Column(Float)
-    lowest_price = Column(Float)
-    exit_price = Column(Float)
-    exit_reason = Column(Text)
-    signal_metadata = Column("metadata", Text)
-    created_at = Column(Text, default=lambda: datetime.utcnow().isoformat())
-
-    __table_args__ = (
-        UniqueConstraint("strategy", "symbol", "trigger_candle_time", "trigger_timeframe", name="uq_signal_lookup"),
-        CheckConstraint("direction IN ('long', 'short')", name="ck_signal_direction"),
-        CheckConstraint("status IN ('active', 'closed', 'expired')", name="ck_signal_status"),
-        Index("idx_strategy_signals_lookup", "strategy", "symbol", "trigger_candle_time", "trigger_timeframe"),
-        Index("idx_strategy_signals_active", "strategy", "symbol", "status"),
-    )
-
-
-class APIUsage(Base):
-    __tablename__ = "api_usage"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    endpoint = Column(Text, nullable=False)
-    symbol = Column(Text)
-    timeframe = Column(Text)
-    credits_used = Column(Integer, default=1)
-    created_at = Column(Text, default=lambda: datetime.utcnow().isoformat())
-
-    __table_args__ = (
-        Index("idx_api_usage_created", "created_at"),
-    )
-
-
-class AppSetting(Base):
-    __tablename__ = "app_settings"
-
-    key = Column(Text, primary_key=True)
-    value = Column(Text, nullable=False)
-    updated_at = Column(Text, default=lambda: datetime.utcnow().isoformat())
-
-
-class AdminUser(Base):
-    __tablename__ = "admin_users"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    username = Column(Text, nullable=False, unique=True)
-    password_hash = Column(Text, nullable=False)
-    created_at = Column(Text, default=lambda: datetime.utcnow().isoformat())
-
-
-class AdminSession(Base):
-    __tablename__ = "admin_sessions"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    token = Column(Text, nullable=False, unique=True)
-    user_id = Column(Integer, ForeignKey("admin_users.id", ondelete="CASCADE"), nullable=False)
-    expires_at = Column(Text, nullable=False)
-    created_at = Column(Text, default=lambda: datetime.utcnow().isoformat())
-
-    __table_args__ = (
-        Index("idx_admin_sessions_token", "token"),
-    )
-
 
 SessionFactory = sessionmaker(bind=engine, expire_on_commit=False)
 
@@ -245,75 +130,70 @@ def init_db():
     logger.info(f"[DB] Startup health check: {health['status']}")
 
 
-def upsert_candles(symbol: str, timeframe: str, candles: list[dict]):
+def upsert_candles(asset: str, timeframe: str, candles: list[dict]):
     with _get_session() as session:
         try:
             for c in candles:
-                existing = session.query(OHLCCandle).filter_by(
-                    symbol=symbol, timeframe=timeframe, open_time=c["open_time"]
+                ts = c.get("timestamp") or c.get("open_time")
+                existing = session.query(Candle).filter_by(
+                    asset=asset, timeframe=timeframe, timestamp=ts
                 ).first()
                 if existing:
                     existing.open = c["open"]
                     existing.high = c["high"]
                     existing.low = c["low"]
                     existing.close = c["close"]
-                    existing.volume = c.get("volume", 0)
-                    existing.is_closed = c.get("is_closed", 1)
                 else:
-                    session.add(OHLCCandle(
-                        symbol=symbol,
+                    session.add(Candle(
+                        asset=asset,
                         timeframe=timeframe,
-                        open_time=c["open_time"],
+                        timestamp=ts,
                         open=c["open"],
                         high=c["high"],
                         low=c["low"],
                         close=c["close"],
-                        volume=c.get("volume", 0),
-                        is_closed=c.get("is_closed", 1),
                     ))
             session.commit()
-            logger.debug(f"[DB] Upserted {len(candles)} candles for {symbol}/{timeframe}")
+            logger.debug(f"[DB] Upserted {len(candles)} candles for {asset}/{timeframe}")
         except Exception as e:
             session.rollback()
             logger.error(f"[DB] Upsert candles failed: {e}")
             raise
 
 
-def get_candles(symbol: str, timeframe: str, limit: int = 300) -> list[dict]:
+def get_candles(asset: str, timeframe: str, limit: int = 300) -> list[dict]:
     with _get_session() as session:
         rows = (
-            session.query(OHLCCandle)
-            .filter_by(symbol=symbol, timeframe=timeframe)
-            .order_by(OHLCCandle.open_time.desc())
+            session.query(Candle)
+            .filter_by(asset=asset, timeframe=timeframe)
+            .order_by(Candle.timestamp.desc())
             .limit(limit)
             .all()
         )
         return [
             {
-                "open_time": r.open_time,
+                "timestamp": r.timestamp,
                 "open": r.open,
                 "high": r.high,
                 "low": r.low,
                 "close": r.close,
-                "volume": r.volume,
-                "is_closed": r.is_closed,
             }
             for r in reversed(rows)
         ]
 
 
-def update_cache_metadata(symbol: str, timeframe: str, last_candle_close: Optional[str] = None):
+def update_cache_metadata(asset: str, timeframe: str, last_candle_close: Optional[str] = None):
     now = datetime.utcnow().isoformat()
     with _get_session() as session:
         try:
-            existing = session.query(CacheMetadata).filter_by(symbol=symbol, timeframe=timeframe).first()
+            existing = session.query(CacheMetadata).filter_by(asset=asset, timeframe=timeframe).first()
             if existing:
                 existing.last_fetched = now
                 if last_candle_close is not None:
                     existing.last_candle_close = last_candle_close
             else:
                 session.add(CacheMetadata(
-                    symbol=symbol,
+                    asset=asset,
                     timeframe=timeframe,
                     last_fetched=now,
                     last_candle_close=last_candle_close,
@@ -325,23 +205,22 @@ def update_cache_metadata(symbol: str, timeframe: str, last_candle_close: Option
             raise
 
 
-def get_cache_metadata(symbol: str, timeframe: str) -> Optional[dict]:
+def get_cache_metadata(asset: str, timeframe: str) -> Optional[dict]:
     with _get_session() as session:
-        row = session.query(CacheMetadata).filter_by(symbol=symbol, timeframe=timeframe).first()
+        row = session.query(CacheMetadata).filter_by(asset=asset, timeframe=timeframe).first()
         if row:
             return {"last_fetched": row.last_fetched, "last_candle_close": row.last_candle_close}
         return None
 
 
-def signal_exists(strategy: str, symbol: str, trigger_candle_time: str, trigger_timeframe: str) -> bool:
+def signal_exists(strategy_name: str, asset: str, signal_timestamp: str) -> bool:
     with _get_session() as session:
         row = (
-            session.query(StrategySignal.id)
+            session.query(Signal.id)
             .filter_by(
-                strategy=strategy,
-                symbol=symbol,
-                trigger_candle_time=trigger_candle_time,
-                trigger_timeframe=trigger_timeframe,
+                strategy_name=strategy_name,
+                asset=asset,
+                signal_timestamp=signal_timestamp,
             )
             .first()
         )
@@ -351,67 +230,46 @@ def signal_exists(strategy: str, symbol: str, trigger_candle_time: str, trigger_
 def insert_signal(signal: dict) -> Optional[int]:
     with _get_session() as session:
         try:
-            obj = StrategySignal(
-                strategy=signal["strategy"],
-                symbol=signal["symbol"],
+            obj = Signal(
+                strategy_name=signal["strategy_name"],
+                asset=signal["asset"],
                 direction=signal["direction"],
                 entry_price=signal["entry_price"],
                 stop_loss=signal.get("stop_loss"),
                 take_profit=signal.get("take_profit"),
-                trailing_stop_atr_mult=signal.get("trailing_stop_atr_mult"),
-                trigger_candle_time=signal["trigger_candle_time"],
-                trigger_timeframe=signal["trigger_timeframe"],
-                status="active",
-                highest_price=signal["entry_price"] if signal["direction"] == "long" else None,
-                lowest_price=signal["entry_price"] if signal["direction"] == "short" else None,
-                signal_metadata=signal.get("metadata"),
+                atr_at_entry=signal.get("atr_at_entry"),
+                signal_timestamp=signal["signal_timestamp"],
+                status="OPEN",
             )
             session.add(obj)
             session.commit()
-            logger.info(f"[DB] Inserted signal #{obj.id}: {signal['strategy']} {signal['direction']} {signal['symbol']}")
+            logger.info(f"[DB] Inserted signal #{obj.id}: {signal['strategy_name']} {signal['direction']} {signal['asset']}")
             return obj.id
-        except Exception:
+        except Exception as e:
             session.rollback()
+            logger.error(f"[DB] Insert signal failed: {e}")
             return None
 
 
-def get_active_signals(strategy: Optional[str] = None, symbol: Optional[str] = None) -> list[dict]:
+def get_active_signals(strategy_name: Optional[str] = None, asset: Optional[str] = None) -> list[dict]:
     with _get_session() as session:
-        q = session.query(StrategySignal).filter(StrategySignal.status == "active")
-        if strategy:
-            q = q.filter(StrategySignal.strategy == strategy)
-        if symbol:
-            q = q.filter(StrategySignal.symbol == symbol)
-        q = q.order_by(StrategySignal.created_at.desc())
+        q = session.query(Signal).filter(Signal.status == "OPEN")
+        if strategy_name:
+            q = q.filter(Signal.strategy_name == strategy_name)
+        if asset:
+            q = q.filter(Signal.asset == asset)
+        q = q.order_by(Signal.created_at.desc())
         rows = q.all()
         return [_signal_to_dict(r) for r in rows]
 
 
-def update_signal_tracking(signal_id: int, highest_price: Optional[float] = None, lowest_price: Optional[float] = None):
+def close_signal(signal_id: int, exit_reason: str = ""):
     with _get_session() as session:
         try:
-            sig = session.query(StrategySignal).filter_by(id=signal_id).first()
-            if not sig:
-                return
-            if highest_price is not None:
-                sig.highest_price = max(sig.highest_price or 0, highest_price)
-            if lowest_price is not None:
-                sig.lowest_price = min(sig.lowest_price or 999999, lowest_price)
-            session.commit()
-        except Exception as e:
-            session.rollback()
-            logger.error(f"[DB] Update signal tracking failed: {e}")
-            raise
-
-
-def close_signal(signal_id: int, exit_price: float, exit_reason: str):
-    with _get_session() as session:
-        try:
-            sig = session.query(StrategySignal).filter_by(id=signal_id).first()
+            sig = session.query(Signal).filter_by(id=signal_id).first()
             if sig:
-                sig.status = "closed"
-                sig.exit_price = exit_price
-                sig.exit_reason = exit_reason
+                sig.status = "CLOSED"
+                sig.updated_at = datetime.utcnow().isoformat()
                 session.commit()
                 logger.info(f"[DB] Closed signal #{signal_id}: {exit_reason}")
         except Exception as e:
@@ -420,39 +278,146 @@ def close_signal(signal_id: int, exit_price: float, exit_reason: str):
             raise
 
 
-def get_all_signals(strategy: Optional[str] = None, symbol: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> list[dict]:
+def get_all_signals(strategy_name: Optional[str] = None, asset: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> list[dict]:
     with _get_session() as session:
-        q = session.query(StrategySignal)
-        if strategy:
-            q = q.filter(StrategySignal.strategy == strategy)
-        if symbol:
-            q = q.filter(StrategySignal.symbol == symbol)
+        q = session.query(Signal)
+        if strategy_name:
+            q = q.filter(Signal.strategy_name == strategy_name)
+        if asset:
+            q = q.filter(Signal.asset == asset)
         if status:
-            q = q.filter(StrategySignal.status == status)
-        q = q.order_by(StrategySignal.created_at.desc()).limit(limit)
+            q = q.filter(Signal.status == status)
+        q = q.order_by(Signal.created_at.desc()).limit(limit)
         rows = q.all()
         return [_signal_to_dict(r) for r in rows]
 
 
-def _signal_to_dict(sig: StrategySignal) -> dict:
+def _signal_to_dict(sig: Signal) -> dict:
     return {
         "id": sig.id,
-        "strategy": sig.strategy,
-        "symbol": sig.symbol,
+        "asset": sig.asset,
+        "strategy_name": sig.strategy_name,
         "direction": sig.direction,
         "entry_price": sig.entry_price,
         "stop_loss": sig.stop_loss,
         "take_profit": sig.take_profit,
-        "trailing_stop_atr_mult": sig.trailing_stop_atr_mult,
-        "trigger_candle_time": sig.trigger_candle_time,
-        "trigger_timeframe": sig.trigger_timeframe,
+        "atr_at_entry": sig.atr_at_entry,
         "status": sig.status,
-        "highest_price": sig.highest_price,
-        "lowest_price": sig.lowest_price,
-        "exit_price": sig.exit_price,
-        "exit_reason": sig.exit_reason,
-        "metadata": sig.signal_metadata,
+        "signal_timestamp": sig.signal_timestamp,
         "created_at": sig.created_at,
+        "updated_at": sig.updated_at,
+    }
+
+
+def open_position(position: dict) -> Optional[int]:
+    with _get_session() as session:
+        try:
+            existing = session.query(OpenPosition).filter_by(
+                asset=position["asset"],
+                strategy_name=position["strategy_name"],
+            ).first()
+            if existing:
+                logger.warning(
+                    f"[DB] Open position already exists for {position['asset']}/{position['strategy_name']} "
+                    f"(id={existing.id}) - only one allowed per asset+strategy"
+                )
+                return existing.id
+
+            obj = OpenPosition(
+                asset=position["asset"],
+                strategy_name=position["strategy_name"],
+                direction=position["direction"],
+                entry_price=position["entry_price"],
+                atr_at_entry=position["atr_at_entry"],
+                highest_price_since_entry=position["entry_price"] if position["direction"] == "BUY" else None,
+                lowest_price_since_entry=position["entry_price"] if position["direction"] == "SELL" else None,
+            )
+            session.add(obj)
+            session.commit()
+            logger.info(f"[DB] Opened position #{obj.id}: {position['strategy_name']} {position['direction']} {position['asset']}")
+            return obj.id
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] Open position failed: {e}")
+            return None
+
+
+def get_open_position(strategy_name: str, asset: str) -> Optional[dict]:
+    with _get_session() as session:
+        pos = session.query(OpenPosition).filter_by(
+            asset=asset, strategy_name=strategy_name
+        ).first()
+        if pos:
+            return _position_to_dict(pos)
+        return None
+
+
+def get_all_open_positions(strategy_name: Optional[str] = None, asset: Optional[str] = None) -> list[dict]:
+    with _get_session() as session:
+        q = session.query(OpenPosition)
+        if strategy_name:
+            q = q.filter(OpenPosition.strategy_name == strategy_name)
+        if asset:
+            q = q.filter(OpenPosition.asset == asset)
+        q = q.order_by(OpenPosition.opened_at.desc())
+        rows = q.all()
+        return [_position_to_dict(r) for r in rows]
+
+
+def update_position_tracking(position_id: int, highest_price: Optional[float] = None, lowest_price: Optional[float] = None):
+    with _get_session() as session:
+        try:
+            pos = session.query(OpenPosition).filter_by(id=position_id).first()
+            if not pos:
+                return
+            if highest_price is not None:
+                pos.highest_price_since_entry = max(pos.highest_price_since_entry or 0, highest_price)
+            if lowest_price is not None:
+                pos.lowest_price_since_entry = min(pos.lowest_price_since_entry or 999999, lowest_price)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] Update position tracking failed: {e}")
+            raise
+
+
+def close_position(strategy_name: str, asset: str) -> bool:
+    with _get_session() as session:
+        try:
+            pos = session.query(OpenPosition).filter_by(
+                asset=asset, strategy_name=strategy_name
+            ).first()
+            if pos:
+                session.delete(pos)
+                session.commit()
+                logger.info(f"[DB] Closed position: {strategy_name} {asset}")
+                return True
+            return False
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] Close position failed: {e}")
+            return False
+
+
+def has_open_position(strategy_name: str, asset: str) -> bool:
+    with _get_session() as session:
+        pos = session.query(OpenPosition.id).filter_by(
+            asset=asset, strategy_name=strategy_name
+        ).first()
+        return pos is not None
+
+
+def _position_to_dict(pos: OpenPosition) -> dict:
+    return {
+        "id": pos.id,
+        "asset": pos.asset,
+        "strategy_name": pos.strategy_name,
+        "direction": pos.direction,
+        "entry_price": pos.entry_price,
+        "atr_at_entry": pos.atr_at_entry,
+        "highest_price_since_entry": pos.highest_price_since_entry,
+        "lowest_price_since_entry": pos.lowest_price_since_entry,
+        "opened_at": pos.opened_at,
     }
 
 
@@ -478,13 +443,11 @@ def set_setting(key: str, value: str):
             raise
 
 
-def log_api_usage(endpoint: str, symbol: Optional[str] = None, timeframe: Optional[str] = None, credits_used: int = 1):
+def log_api_usage(endpoint: str, credits_used: int = 1):
     with _get_session() as session:
         try:
-            session.add(APIUsage(
+            session.add(APIUsageLog(
                 endpoint=endpoint,
-                symbol=symbol,
-                timeframe=timeframe,
                 credits_used=credits_used,
             ))
             session.commit()
@@ -500,19 +463,19 @@ def get_api_usage_stats() -> dict:
         day_ago = (now - timedelta(days=1)).isoformat()
 
         monthly_total = session.execute(
-            text("SELECT COALESCE(SUM(credits_used), 0) as total FROM api_usage WHERE created_at >= :start"),
+            text("SELECT COALESCE(SUM(credits_used), 0) as total FROM api_usage_log WHERE timestamp >= :start"),
             {"start": month_start},
         ).scalar() or 0
 
         daily_total = session.execute(
-            text("SELECT COALESCE(SUM(credits_used), 0) as total FROM api_usage WHERE created_at >= :start"),
+            text("SELECT COALESCE(SUM(credits_used), 0) as total FROM api_usage_log WHERE timestamp >= :start"),
             {"start": day_ago},
         ).scalar() or 0
 
         by_endpoint_rows = session.execute(
             text("""
                 SELECT endpoint, COUNT(*) as count, SUM(credits_used) as credits
-                FROM api_usage WHERE created_at >= :start
+                FROM api_usage_log WHERE timestamp >= :start
                 GROUP BY endpoint ORDER BY credits DESC
             """),
             {"start": month_start},
@@ -522,9 +485,9 @@ def get_api_usage_stats() -> dict:
         thirty_days_ago = (now - timedelta(days=30)).isoformat()
         daily_rows = session.execute(
             text("""
-                SELECT date(created_at) as day, SUM(credits_used) as credits
-                FROM api_usage WHERE created_at >= :start
-                GROUP BY date(created_at) ORDER BY day DESC LIMIT 30
+                SELECT date(timestamp) as day, SUM(credits_used) as credits
+                FROM api_usage_log WHERE timestamp >= :start
+                GROUP BY date(timestamp) ORDER BY day DESC LIMIT 30
             """),
             {"start": thirty_days_ago},
         ).fetchall()
@@ -551,9 +514,9 @@ def get_api_usage_stats() -> dict:
     }
 
 
-def get_candle_count(symbol: str, timeframe: str) -> int:
+def get_candle_count(asset: str, timeframe: str) -> int:
     with _get_session() as session:
-        return session.query(OHLCCandle).filter_by(symbol=symbol, timeframe=timeframe).count()
+        return session.query(Candle).filter_by(asset=asset, timeframe=timeframe).count()
 
 
 def _hash_password(password: str) -> str:
