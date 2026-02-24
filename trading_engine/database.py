@@ -118,10 +118,27 @@ def check_db_health() -> dict:
         return {"status": "unhealthy", "error": str(e)}
 
 
+def _migrate_schema():
+    migrations = [
+        ("signals", "exit_price", "REAL"),
+        ("signals", "exit_reason", "TEXT"),
+    ]
+    with engine.connect() as conn:
+        for table, column, col_type in migrations:
+            try:
+                conn.execute(text(f"SELECT {column} FROM {table} LIMIT 1"))
+            except Exception:
+                logger.info(f"[DB] MIGRATE: Adding column {table}.{column} ({col_type})")
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+                conn.commit()
+
+
 def init_db():
     logger.info("[DB] Initializing database tables via SQLAlchemy...")
     Base.metadata.create_all(engine)
     logger.info("[DB] All tables created/verified")
+
+    _migrate_schema()
 
     with _get_session() as session:
         _seed_default_admin(session)
