@@ -263,14 +263,17 @@ def get_active_signals(strategy_name: Optional[str] = None, asset: Optional[str]
         return [_signal_to_dict(r) for r in rows]
 
 
-def close_signal(signal_id: int, exit_reason: str = ""):
+def close_signal(signal_id: int, exit_reason: str = "", exit_price: Optional[float] = None):
     with _get_session() as session:
         try:
             sig = session.query(Signal).filter_by(id=signal_id).first()
             if sig:
                 sig.status = "CLOSED"
+                sig.exit_reason = exit_reason or None
+                if exit_price is not None:
+                    sig.exit_price = exit_price
                 session.commit()
-                logger.info(f"[DB] Closed signal #{signal_id}: {exit_reason}")
+                logger.info(f"[DB] Closed signal #{signal_id}: {exit_reason} | exit_price={exit_price}")
         except Exception as e:
             session.rollback()
             logger.error(f"[DB] Close signal failed: {e}")
@@ -302,6 +305,8 @@ def _signal_to_dict(sig: Signal) -> dict:
         "take_profit": sig.take_profit,
         "atr_at_entry": sig.atr_at_entry,
         "status": sig.status,
+        "exit_price": sig.exit_price,
+        "exit_reason": sig.exit_reason,
         "signal_timestamp": sig.signal_timestamp,
         "created_at": sig.created_at,
         "updated_at": sig.updated_at,

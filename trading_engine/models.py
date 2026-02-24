@@ -56,6 +56,8 @@ class Signal(Base):
     take_profit = Column(Float)
     atr_at_entry = Column(Float)
     status = Column(Text, nullable=False, default="OPEN")
+    exit_price = Column(Float)
+    exit_reason = Column(Text)
     signal_timestamp = Column(Text, nullable=False)
     created_at = Column(Text, server_default=func.now())
     updated_at = Column(Text, server_default=func.now(), onupdate=func.now())
