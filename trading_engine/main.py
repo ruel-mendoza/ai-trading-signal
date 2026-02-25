@@ -102,6 +102,61 @@ def _scheduled_trend_non_forex_evaluate():
     logger.info("[SCHEDULER] ====== trend_non_forex daily evaluation complete ======")
 
 
+def _scheduled_sp500_momentum_30m():
+    import pandas as pd
+    from trading_engine.database import get_open_position
+    now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
+    is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
+    tz_label = "EDT" if is_dst else "EST"
+    et_minutes = now_et.hour * 60 + now_et.minute
+    arca_start = 9 * 60 + 30
+    arca_end = 15 * 60 + 30
+
+    logger.info(
+        f"[SCHEDULER] ====== SP500 Momentum 30m tick | "
+        f"time={now_et.strftime('%Y-%m-%d %H:%M:%S')} {tz_label} | "
+        f"DST={'active' if is_dst else 'inactive'} ======"
+    )
+
+    if et_minutes < arca_start or et_minutes > arca_end:
+        logger.info(
+            f"[SCHEDULER] sp500_momentum | Outside ARCA session "
+            f"({now_et.strftime('%H:%M')} {tz_label} not in 09:30-15:30 ET) — skipping"
+        )
+        return
+
+    logger.info(
+        f"[SCHEDULER] sp500_momentum | Inside ARCA session "
+        f"({now_et.strftime('%H:%M')} {tz_label}) — running intraday cycle"
+    )
+
+    try:
+        result = strategy_engine.run_sp500_intraday_cycle("SPX")
+        entry = result.get("entry")
+        exits = result.get("exits", [])
+        state_updated = result.get("state_updated", False)
+
+        if entry:
+            logger.info(
+                f"[SCHEDULER] sp500_momentum | NEW SIGNAL: BUY @ {entry.get('entry_price', 0):.2f} | "
+                f"atr_at_entry={entry.get('atr_at_entry', 0):.6f} | "
+                f"stop={entry.get('stop_loss', 0):.2f} | id={entry.get('id')}"
+            )
+        if exits:
+            for ex in exits:
+                logger.info(
+                    f"[SCHEDULER] sp500_momentum | EXIT: {ex.get('exit_reason')} @ {ex.get('exit_price', 0):.2f}"
+                )
+        if state_updated:
+            logger.info("[SCHEDULER] sp500_momentum | Position state updated (peak tracking)")
+        if not entry and not exits and not state_updated:
+            logger.info("[SCHEDULER] sp500_momentum | No action taken this tick")
+    except Exception as e:
+        logger.error(f"[SCHEDULER] sp500_momentum | Exception: {e}", exc_info=True)
+
+    logger.info("[SCHEDULER] ====== SP500 Momentum 30m tick complete ======")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler.add_job(
@@ -118,12 +173,21 @@ async def lifespan(app: FastAPI):
         name="Non-Forex Trend Daily Evaluation (4:00 PM ET)",
         replace_existing=True,
     )
+    scheduler.add_job(
+        _scheduled_sp500_momentum_30m,
+        trigger=CronTrigger(minute="0,30", timezone=ET_ZONE),
+        id="sp500_momentum_30m",
+        name="SP500 Momentum 30m Evaluation (:00 and :30 ET)",
+        replace_existing=True,
+    )
     scheduler.start()
     now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
     is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
     tz_label = "EDT" if is_dst else "EST"
     logger.info(
-        f"[SCHEDULER] APScheduler started | trend_forex at 17:00, trend_non_forex at 16:00 "
+        f"[SCHEDULER] APScheduler started | "
+        f"sp500_momentum every 30m (:00/:30), "
+        f"trend_non_forex at 16:00, trend_forex at 17:00 "
         f"America/New_York (currently {tz_label}, DST={'active' if is_dst else 'inactive'})"
     )
     yield

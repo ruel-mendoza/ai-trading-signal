@@ -286,6 +286,75 @@ class StrategyEngine:
             return result.metadata.get("signal")
         return None
 
+    def run_sp500_intraday_cycle(self, asset: str = "SPX") -> dict:
+        logger.info(f"[SP500-INTRADAY] ====== 30m cycle start | {asset} ======")
+
+        try:
+            candles = self.cache.get_candles(asset, "30m", 300)
+            df = pd.DataFrame(candles) if candles else pd.DataFrame()
+        except Exception as e:
+            logger.error(f"[SP500-INTRADAY] Failed to fetch {asset} 30m candles: {e}")
+            return {"entry": None, "exits": [], "state_updated": False}
+
+        logger.info(f"[SP500-INTRADAY] {asset} | Fetched {len(df)} candles for evaluation")
+
+        open_pos = get_open_position(STRATEGY_SP500_MOMENTUM, asset)
+
+        if open_pos:
+            pos_id = open_pos.get("id")
+            entry_price = open_pos.get("entry_price", 0)
+            atr_at_entry = open_pos.get("atr_at_entry")
+            stored_highest = open_pos.get("highest_price_since_entry") or entry_price
+            direction = open_pos.get("direction", "BUY")
+
+            logger.info(
+                f"[SP500-INTRADAY] {asset} | OPEN POSITION #{pos_id} | "
+                f"direction={direction} | entry={entry_price:.2f} | "
+                f"atr_at_entry={atr_at_entry:.6f} (FIXED from DB) | "
+                f"highest_since_entry={stored_highest:.2f}"
+            )
+            if atr_at_entry is not None:
+                trailing_stop = stored_highest - (2.0 * atr_at_entry)
+                logger.info(
+                    f"[SP500-INTRADAY] {asset} | Current trailing stop = "
+                    f"{stored_highest:.2f} - (2 × {atr_at_entry:.6f}) = {trailing_stop:.2f}"
+                )
+        else:
+            logger.info(f"[SP500-INTRADAY] {asset} | No open position — evaluating for new entry")
+
+        eval_result = self.sp500_strategy.evaluate(asset, "30m", df, open_pos)
+        entry_signal = None
+        if eval_result.is_entry:
+            entry_signal = eval_result.metadata.get("signal")
+            logger.info(
+                f"[SP500-INTRADAY] {asset} | NEW ENTRY SIGNAL: "
+                f"BUY @ {entry_signal.get('entry_price', 0):.2f} | "
+                f"atr_at_entry={entry_signal.get('atr_at_entry', 0):.6f} | "
+                f"initial_stop={entry_signal.get('stop_loss', 0):.2f}"
+            )
+
+        exits = self.sp500_strategy.check_exits()
+        if exits:
+            for ex in exits:
+                logger.info(
+                    f"[SP500-INTRADAY] {asset} | EXIT: {ex.get('exit_reason')} | "
+                    f"exit_price={ex.get('exit_price', 0):.2f} | "
+                    f"atr_at_entry={ex.get('atr_at_entry', 0):.6f}"
+                )
+
+        state_updated = open_pos is not None and eval_result.is_none
+        logger.info(
+            f"[SP500-INTRADAY] ====== 30m cycle complete | {asset} | "
+            f"entry={'YES' if entry_signal else 'NO'} | "
+            f"exits={len(exits)} | state_updated={state_updated} ======"
+        )
+
+        return {
+            "entry": entry_signal,
+            "exits": exits,
+            "state_updated": state_updated,
+        }
+
     def evaluate_highest_lowest_fx(self, asset: str = "EUR/USD") -> Optional[dict]:
         logger.info(f"[HLC-FX] ====== Evaluating {asset} ======")
         try:
