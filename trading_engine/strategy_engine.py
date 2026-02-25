@@ -55,9 +55,17 @@ class StrategyEngine:
             if tf_result:
                 results.append(tf_result)
 
-        sp500_result = self.sp500_strategy.evaluate("SPX")
-        if sp500_result:
-            results.append(sp500_result)
+        try:
+            sp500_candles = self.cache.get_candles("SPX", "30m", 300)
+            sp500_df = pd.DataFrame(sp500_candles) if sp500_candles else pd.DataFrame()
+        except Exception as e:
+            logger.error(f"[STRATEGY-ENGINE] Failed to fetch SPX 30m candles: {e}")
+            sp500_df = pd.DataFrame()
+
+        sp500_open_pos = get_open_position(STRATEGY_SP500_MOMENTUM, "SPX")
+        sp500_result = self.sp500_strategy.evaluate("SPX", "30m", sp500_df, sp500_open_pos)
+        if sp500_result.is_entry:
+            results.append(sp500_result.metadata.get("signal", {}))
 
         hlc_result = self.evaluate_highest_lowest_fx("EUR/USD")
         if hlc_result:
@@ -265,7 +273,18 @@ class StrategyEngine:
         return bool(et_dt.dst() and et_dt.dst().total_seconds() > 0)
 
     def evaluate_sp500_momentum(self, asset: str = "SPX") -> Optional[dict]:
-        return self.sp500_strategy.evaluate(asset)
+        try:
+            candles = self.cache.get_candles(asset, "30m", 300)
+            df = pd.DataFrame(candles) if candles else pd.DataFrame()
+        except Exception as e:
+            logger.error(f"[STRATEGY-ENGINE] Failed to fetch {asset} 30m candles: {e}")
+            return None
+
+        open_pos = get_open_position(STRATEGY_SP500_MOMENTUM, asset)
+        result = self.sp500_strategy.evaluate(asset, "30m", df, open_pos)
+        if result.is_entry:
+            return result.metadata.get("signal")
+        return None
 
     def evaluate_highest_lowest_fx(self, asset: str = "EUR/USD") -> Optional[dict]:
         logger.info(f"[HLC-FX] ====== Evaluating {asset} ======")
