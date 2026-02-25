@@ -799,9 +799,10 @@ def _get_trend_following_data() -> dict:
     ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
 
     forex_symbols = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "NZD/USD", "USD/CAD", "USD/CHF", "EUR/GBP"]
-    symbols_data = []
+    non_forex_symbols = ["SPX", "NDX", "XAU/USD", "XAG/USD", "WTI/USD", "BTC/USD", "ETH/USD"]
+    all_symbols = forex_symbols + non_forex_symbols
 
-    for symbol in forex_symbols:
+    def _compute_symbol_data(symbol, long_only=False):
         sym_info = {
             "symbol": symbol,
             "current_close": None,
@@ -809,11 +810,16 @@ def _get_trend_following_data() -> dict:
             "sma100": None,
             "atr100": None,
             "highest_50d": None,
+            "lowest_50d": None,
             "sma_status": "N/A",
             "candle_count": 0,
             "cond_price_above_50d_high": False,
+            "cond_price_below_50d_low": False,
             "cond_sma50_above_sma100": False,
-            "all_conditions": False,
+            "cond_sma50_below_sma100": False,
+            "long_ready": False,
+            "short_ready": False,
+            "long_only": long_only,
         }
 
         candles = get_candles(symbol, "D1", 300)
@@ -836,52 +842,75 @@ def _get_trend_following_data() -> dict:
             if len(closes) > 50:
                 prior_closes = closes[-51:-1]
                 sym_info["highest_50d"] = max(prior_closes)
+                sym_info["lowest_50d"] = min(prior_closes)
 
             if sym_info["sma50"] is not None and sym_info["sma100"] is not None:
                 sym_info["cond_sma50_above_sma100"] = sym_info["sma50"] > sym_info["sma100"]
-                sym_info["sma_status"] = "Bullish" if sym_info["cond_sma50_above_sma100"] else "Bearish"
+                sym_info["cond_sma50_below_sma100"] = sym_info["sma50"] < sym_info["sma100"]
+                if sym_info["cond_sma50_above_sma100"]:
+                    sym_info["sma_status"] = "Bullish"
+                elif sym_info["cond_sma50_below_sma100"]:
+                    sym_info["sma_status"] = "Bearish"
+                else:
+                    sym_info["sma_status"] = "Neutral"
 
             if sym_info["highest_50d"] is not None and sym_info["current_close"] is not None:
                 sym_info["cond_price_above_50d_high"] = sym_info["current_close"] >= sym_info["highest_50d"]
 
-            sym_info["all_conditions"] = sym_info["cond_price_above_50d_high"] and sym_info["cond_sma50_above_sma100"]
+            if sym_info["lowest_50d"] is not None and sym_info["current_close"] is not None:
+                sym_info["cond_price_below_50d_low"] = sym_info["current_close"] <= sym_info["lowest_50d"]
 
-        symbols_data.append(sym_info)
+            sym_info["long_ready"] = sym_info["cond_price_above_50d_high"] and sym_info["cond_sma50_above_sma100"]
+            if not long_only:
+                sym_info["short_ready"] = sym_info["cond_price_below_50d_low"] and sym_info["cond_sma50_below_sma100"]
 
-    active_trades = get_active_signals(strategy_name="trend_following")
-    open_positions_list = get_all_open_positions(strategy_name="trend_following")
-    pos_by_asset = {p["asset"]: p for p in open_positions_list}
-    trade_details = []
-    for sig in active_trades:
-        atr_at_entry = sig.get("atr_at_entry")
-        entry_price = sig["entry_price"]
-        direction = sig["direction"]
-        pos = pos_by_asset.get(sig["asset"])
-        stored_highest = (pos.get("highest_price_since_entry") if pos else None) or entry_price
-        sym_candles = get_candles(sig["asset"], "D1", 5)
-        cur_close = sym_candles[-1]["close"] if sym_candles else None
-        if cur_close and direction == "BUY":
-            stored_highest = max(stored_highest, cur_close)
-        trailing_stop = None
-        if atr_at_entry is not None:
-            trailing_stop = stored_highest - (atr_at_entry * 3.0)
-        trade_details.append({
-            "id": sig["id"],
-            "symbol": sig["asset"],
-            "direction": direction,
-            "entry_price": entry_price,
-            "atr_at_entry": atr_at_entry,
-            "highest_close": stored_highest,
-            "trailing_stop": trailing_stop,
-            "current_close": cur_close,
-            "created_at": sig.get("created_at"),
-        })
+        return sym_info
+
+    forex_data = [_compute_symbol_data(s, long_only=False) for s in forex_symbols]
+    non_forex_data = [_compute_symbol_data(s, long_only=True) for s in non_forex_symbols]
+
+    def _gather_trades(strategy_name):
+        active_trades = get_active_signals(strategy_name=strategy_name)
+        open_positions_list = get_all_open_positions(strategy_name=strategy_name)
+        pos_by_asset = {p["asset"]: p for p in open_positions_list}
+        trade_details = []
+        for sig in active_trades:
+            atr_at_entry = sig.get("atr_at_entry")
+            entry_price = sig["entry_price"]
+            direction = sig["direction"]
+            pos = pos_by_asset.get(sig["asset"])
+            stored_highest = (pos.get("highest_price_since_entry") if pos else None) or entry_price
+            sym_candles = get_candles(sig["asset"], "D1", 5)
+            cur_close = sym_candles[-1]["close"] if sym_candles else None
+            if cur_close and direction == "BUY":
+                stored_highest = max(stored_highest, cur_close)
+            trailing_stop = None
+            if atr_at_entry is not None:
+                trailing_stop = stored_highest - (atr_at_entry * 3.0)
+            trade_details.append({
+                "id": sig["id"],
+                "symbol": sig["asset"],
+                "direction": direction,
+                "strategy": strategy_name,
+                "entry_price": entry_price,
+                "atr_at_entry": atr_at_entry,
+                "highest_close": stored_highest,
+                "trailing_stop": trailing_stop,
+                "current_close": cur_close,
+                "created_at": sig.get("created_at"),
+            })
+        return trade_details
+
+    forex_trades = _gather_trades("trend_following")
+    non_forex_trades = _gather_trades("trend_non_forex")
 
     return {
         "et_time": et_now.strftime(f"%Y-%m-%d %H:%M:%S {'EDT' if ny_dst else 'EST'}"),
         "dst_active": ny_dst,
-        "symbols": symbols_data,
-        "active_trades": trade_details,
+        "forex_symbols": forex_data,
+        "non_forex_symbols": non_forex_data,
+        "forex_trades": forex_trades,
+        "non_forex_trades": non_forex_trades,
     }
 
 
@@ -892,40 +921,65 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
     def _cond(val):
         return '<span style="color:#6ee7b7;">YES</span>' if val else '<span style="color:#fca5a5;">NO</span>'
 
-    symbols_html = ""
-    for sym in tf_data["symbols"]:
-        if sym["candle_count"] < 101:
-            data_status = f'<div style="color:#fbbf24;font-size:0.8rem;margin-top:6px;">D1: {sym["candle_count"]}/101 candles loaded</div>'
-        else:
-            sma_color = "#6ee7b7" if sym["sma_status"] == "Bullish" else "#fca5a5"
-            data_status = f"""
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.8rem;">
-                <div>Close: {_fmt(sym["current_close"])}</div>
-                <div>50d High: {_fmt(sym["highest_50d"])}</div>
-                <div>SMA(50): {_fmt(sym["sma50"])}</div>
-                <div>SMA(100): {_fmt(sym["sma100"])}</div>
-                <div>ATR(100): {_fmt(sym["atr100"], 6)}</div>
-                <div>Trend: <span style="color:{sma_color};">{sym["sma_status"]}</span></div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.8rem;border-top:1px solid #334155;padding-top:8px;">
-                <div>Price &ge; 50d High: {_cond(sym["cond_price_above_50d_high"])}</div>
-                <div>SMA50 &gt; SMA100: {_cond(sym["cond_sma50_above_sma100"])}</div>
-                <div><strong>All Met:</strong> {_cond(sym["all_conditions"])}</div>
+    def _build_symbol_cards(symbols_list):
+        html = ""
+        for sym in symbols_list:
+            if sym["candle_count"] < 101:
+                data_status = f'<div style="color:#fbbf24;font-size:0.8rem;margin-top:6px;">D1: {sym["candle_count"]}/101 candles loaded</div>'
+            else:
+                sma_color = "#6ee7b7" if sym["sma_status"] == "Bullish" else ("#fca5a5" if sym["sma_status"] == "Bearish" else "#94a3b8")
+                lowest_row = ""
+                if not sym["long_only"]:
+                    lowest_row = f'<div>50d Low: {_fmt(sym["lowest_50d"])}</div>'
+
+                data_status = f"""
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.8rem;">
+                    <div>Close: {_fmt(sym["current_close"])}</div>
+                    <div>50d High: {_fmt(sym["highest_50d"])}</div>
+                    <div>SMA(50): {_fmt(sym["sma50"])}</div>
+                    <div>SMA(100): {_fmt(sym["sma100"])}</div>
+                    <div>ATR(100): {_fmt(sym["atr100"], 6)}</div>
+                    <div>Trend: <span style="color:{sma_color};">{sym["sma_status"]}</span></div>
+                    {lowest_row}
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.8rem;border-top:1px solid #334155;padding-top:8px;">
+                    <div>Price &ge; 50d High: {_cond(sym["cond_price_above_50d_high"])}</div>
+                    <div>SMA50 &gt; SMA100: {_cond(sym["cond_sma50_above_sma100"])}</div>
+                    <div><strong>LONG Ready:</strong> {_cond(sym["long_ready"])}</div>"""
+
+                if not sym["long_only"]:
+                    data_status += f"""
+                    <div>Price &le; 50d Low: {_cond(sym["cond_price_below_50d_low"])}</div>
+                    <div>SMA50 &lt; SMA100: {_cond(sym["cond_sma50_below_sma100"])}</div>
+                    <div><strong>SHORT Ready:</strong> {_cond(sym["short_ready"])}</div>"""
+
+                data_status += "</div>"
+
+            badges = ""
+            if sym.get("long_ready"):
+                badges += ' <span class="badge status-active">LONG</span>'
+            if sym.get("short_ready"):
+                badges += ' <span class="badge" style="background:#7f1d1d;color:#fca5a5;">SHORT</span>'
+            if sym["long_only"] and sym["candle_count"] >= 101:
+                badges += ' <span style="font-size:0.65rem;color:#94a3b8;margin-left:4px;">(long only)</span>'
+
+            html += f"""
+            <div class="stat-card" style="min-width:250px;">
+                <div class="stat-label">{sym["symbol"]}{badges}</div>
+                {data_status}
+            </div>"""
+        return html
+
+    def _build_trades_html(trades, label):
+        if not trades:
+            return f"""
+            <div class="settings-section" style="margin-top:20px;">
+                <h3>{label} - Active Trades</h3>
+                <p style="color:#94a3b8;padding:16px 0;">No active trades.</p>
             </div>"""
 
-        all_badge = ""
-        if sym["all_conditions"]:
-            all_badge = ' <span class="badge status-active">READY</span>'
-
-        symbols_html += f"""
-        <div class="stat-card" style="min-width:250px;">
-            <div class="stat-label">{sym["symbol"]}{all_badge}</div>
-            {data_status}
-        </div>"""
-
-    active_html = ""
-    if tf_data["active_trades"]:
-        for trade in tf_data["active_trades"]:
+        html = ""
+        for trade in trades:
             entry = trade["entry_price"]
             atr_e = trade["atr_at_entry"]
             trail = trade["trailing_stop"]
@@ -933,44 +987,56 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
             cur = trade["current_close"]
             pnl = ""
             if cur is not None and entry:
-                diff = cur - entry
+                diff = cur - entry if trade["direction"] == "BUY" else entry - cur
                 pnl_pct = (diff / entry) * 100
                 pnl_color = "#6ee7b7" if diff >= 0 else "#fca5a5"
                 pnl = f'<span style="color:{pnl_color};font-weight:600;">{diff:+.5f} ({pnl_pct:+.2f}%)</span>'
 
-            active_html += f"""
-        <div class="settings-section" style="margin-top:12px;border-left:3px solid #3b82f6;">
-            <h3>{trade["symbol"]} - {trade["direction"]}</h3>
-            <div class="stats-grid" style="margin-top:8px;">
-                <div class="stat-card"><div class="stat-label">Entry</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(entry)}</div></div>
-                <div class="stat-card"><div class="stat-label">Fixed ATR</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(atr_e, 6)}</div></div>
-                <div class="stat-card"><div class="stat-label">Trail Stop (3x)</div><div class="stat-value" style="font-size:1.1rem;color:#fbbf24;">{_fmt(trail)}</div></div>
-                <div class="stat-card"><div class="stat-label">Highest</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(highest)}</div></div>
-                <div class="stat-card"><div class="stat-label">Current</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(cur)}</div></div>
-                <div class="stat-card"><div class="stat-label">P&L</div><div class="stat-value" style="font-size:1.1rem;">{pnl}</div></div>
-            </div>
-            <div class="stat-label" style="margin-top:6px;">Opened: {trade.get("created_at", "N/A")}</div>
-        </div>"""
-    else:
-        active_html = """
+            html += f"""
+            <div class="settings-section" style="margin-top:12px;border-left:3px solid #3b82f6;">
+                <h3>{trade["symbol"]} - {trade["direction"]}</h3>
+                <div class="stats-grid" style="margin-top:8px;">
+                    <div class="stat-card"><div class="stat-label">Entry</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(entry)}</div></div>
+                    <div class="stat-card"><div class="stat-label">Fixed ATR</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(atr_e, 6)}</div></div>
+                    <div class="stat-card"><div class="stat-label">Trail Stop (3x)</div><div class="stat-value" style="font-size:1.1rem;color:#fbbf24;">{_fmt(trail)}</div></div>
+                    <div class="stat-card"><div class="stat-label">Highest</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(highest)}</div></div>
+                    <div class="stat-card"><div class="stat-label">Current</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(cur)}</div></div>
+                    <div class="stat-card"><div class="stat-label">P&L</div><div class="stat-value" style="font-size:1.1rem;">{pnl}</div></div>
+                </div>
+                <div class="stat-label" style="margin-top:6px;">Opened: {trade.get("created_at", "N/A")}</div>
+            </div>"""
+        return f"""
         <div class="settings-section" style="margin-top:20px;">
-            <h3>Active Trades</h3>
-            <p style="color:#94a3b8;padding:16px 0;">No active Trend Following trades.</p>
+            <h3>{label} - Active Trades ({len(trades)})</h3>
+            {html}
         </div>"""
+
+    forex_cards = _build_symbol_cards(tf_data["forex_symbols"])
+    non_forex_cards = _build_symbol_cards(tf_data["non_forex_symbols"])
+    forex_trades_html = _build_trades_html(tf_data["forex_trades"], "Forex")
+    non_forex_trades_html = _build_trades_html(tf_data["non_forex_trades"], "Non-Forex")
 
     return f"""
     <div class="stat-card" style="margin-bottom:16px;">
         <div class="stat-label">Evaluation Time</div>
         <div style="margin-top:4px;">{tf_data['et_time']}</div>
         <div class="stat-label" style="margin-top:4px;">DST: {'Active' if tf_data['dst_active'] else 'Inactive'}</div>
+        <div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;">Forex evals at 5:00 PM ET | Non-Forex evals at 4:00 PM ET</div>
     </div>
     <div class="settings-section">
-        <h3>Breakout Conditions (D1)</h3>
+        <h3>Forex Breakout Conditions (D1)</h3>
         <div class="stats-grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
-            {symbols_html}
+            {forex_cards}
         </div>
     </div>
-    {active_html}
+    <div class="settings-section" style="margin-top:20px;">
+        <h3>Non-Forex Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG only</span></h3>
+        <div class="stats-grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
+            {non_forex_cards}
+        </div>
+    </div>
+    {forex_trades_html}
+    {non_forex_trades_html}
     <div class="settings-section" style="margin-top:20px;">
         <h3>Signal History ({tf_signal_count})</h3>
         <div style="overflow-x:auto;margin-top:12px;">
@@ -994,8 +1060,10 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
     <div class="timezone-note" style="margin-top:16px;">
         <strong>Strategy Rules (Trend Following):</strong>
         <ul>
-            <li><strong>Entry (BUY):</strong> Close &ge; highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
-            <li><strong>Trailing Stop:</strong> Highest close - (Fixed ATR at entry &times; 3)</li>
+            <li><strong>Forex Entry (LONG):</strong> Close &ge; highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
+            <li><strong>Forex Entry (SHORT):</strong> Close &le; lowest close of last 50 days AND SMA(50) &lt; SMA(100)</li>
+            <li><strong>Non-Forex Entry:</strong> LONG only &mdash; Close &ge; highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
+            <li><strong>Trailing Stop:</strong> Highest close &minus; (Fixed ATR at entry &times; 3)</li>
             <li><strong>Timeframe:</strong> Daily (D1) candles</li>
             <li><strong>ATR:</strong> Fixed at entry value for the duration of the trade</li>
         </ul>
@@ -1761,9 +1829,11 @@ def admin_dashboard(
     forex_trend_html = _build_forex_trend_html(fx_trend_data, fx_trend_signal_rows, fx_trend_signal_count)
 
     tf_data = _get_trend_following_data()
-    tf_signals = get_all_signals(strategy_name="trend_following", limit=200)
-    tf_signal_rows = _signals_to_table_rows(tf_signals)
-    tf_signal_count = len(tf_signals)
+    tf_signals_forex = get_all_signals(strategy_name="trend_following", limit=200)
+    tf_signals_non_forex = get_all_signals(strategy_name="trend_non_forex", limit=200)
+    tf_signals_combined = sorted(tf_signals_forex + tf_signals_non_forex, key=lambda s: s.get("id", 0), reverse=True)
+    tf_signal_rows = _signals_to_table_rows(tf_signals_combined)
+    tf_signal_count = len(tf_signals_combined)
     trend_following_html = _build_trend_following_html(tf_data, tf_signal_rows, tf_signal_count)
 
     strategy_options = ""
