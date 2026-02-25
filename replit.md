@@ -144,7 +144,8 @@ trading_engine/          - Python FastAPI trading engine
 - Smart caching that only fetches new data on candle closes
 - Local technical indicator calculations
 - Idempotent strategy evaluation (no duplicate signals per candle)
-- Trailing stop management with automatic exit tracking
+- ATR State Lock: ATR(100) calculated once at entry, stored in open_positions table, never recalculated for exit logic
+- Trailing stop management with automatic exit tracking (uses fixed ATR from DB)
 - Admin dashboard with signal table, CSV/JSON export, credit monitor, timezone display
 
 ## API Endpoints (Express)

@@ -176,6 +176,13 @@ class StrategyEngine:
             }
             signal_id = insert_signal(signal)
             if signal_id:
+                open_position({
+                    "asset": asset,
+                    "strategy_name": STRATEGY_MTF_EMA,
+                    "direction": "BUY",
+                    "entry_price": current_price,
+                    "atr_at_entry": round(h4_atr_val, 6),
+                })
                 signal["id"] = signal_id
                 signal["status"] = "OPEN"
                 return signal
@@ -465,12 +472,17 @@ class StrategyEngine:
     def check_exit_conditions(self) -> list[dict]:
         closed_signals = []
 
-        for strategy_name in [STRATEGY_TREND_FOLLOWING]:
+        for strategy_name in [STRATEGY_TREND_FOLLOWING, STRATEGY_MTF_EMA]:
             positions = get_all_open_positions(strategy_name=strategy_name)
             for pos in positions:
                 asset = pos["asset"]
                 atr_at_entry = pos.get("atr_at_entry")
                 if not atr_at_entry:
+                    logger.warning(
+                        f"[EXIT-CHECK] STATE LOCK MISSING: Position #{pos['id']} "
+                        f"{strategy_name}/{asset} has no atr_at_entry — "
+                        f"cannot compute trailing stop. Skipping."
+                    )
                     continue
 
                 try:
@@ -482,7 +494,7 @@ class StrategyEngine:
 
                 current_price = candles[-1]["close"]
                 direction = pos["direction"]
-                trailing_mult = 3.0
+                trailing_mult = 2.0 if strategy_name == STRATEGY_MTF_EMA else 3.0
 
                 if direction == "BUY":
                     update_position_tracking(pos["id"], highest_price=current_price)

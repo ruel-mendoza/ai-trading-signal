@@ -406,6 +406,15 @@ def _signal_to_dict(sig: Signal) -> dict:
 
 
 def open_position(position: dict) -> Optional[int]:
+    atr_value = position.get("atr_at_entry")
+    if not atr_value or atr_value <= 0:
+        logger.error(
+            f"[DB] STATE LOCK VIOLATION: open_position() called without valid atr_at_entry "
+            f"for {position.get('asset')}/{position.get('strategy_name')} — "
+            f"ATR must be calculated once at entry and stored. Got: {atr_value}"
+        )
+        return None
+
     with _get_session() as session:
         try:
             existing = session.query(OpenPosition).filter_by(
@@ -424,7 +433,7 @@ def open_position(position: dict) -> Optional[int]:
                 strategy_name=position["strategy_name"],
                 direction=position["direction"],
                 entry_price=position["entry_price"],
-                atr_at_entry=position["atr_at_entry"],
+                atr_at_entry=atr_value,
                 highest_price_since_entry=position["entry_price"] if position["direction"] == "BUY" else None,
                 lowest_price_since_entry=position["entry_price"] if position["direction"] == "SELL" else None,
             )
