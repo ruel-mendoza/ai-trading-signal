@@ -1,10 +1,10 @@
 import pytest
 import pandas as pd
 import numpy as np
-from trading_engine.indicators.ema import EMA
-from trading_engine.indicators.sma import SMA
-from trading_engine.indicators.atr import ATR
-from trading_engine.indicators.rsi import RSI
+from trading_engine.indicators.ema import EMA, EMA20, EMA50, EMA200, latest as ema_latest
+from trading_engine.indicators.sma import SMA, SMA50, SMA100, latest as sma_latest
+from trading_engine.indicators.atr import ATR, true_range, latest as atr_latest
+from trading_engine.indicators.rsi import RSI, latest as rsi_latest
 from trading_engine.indicators.ema_slope import ema as ema_slope_fn, calculate_slope, calculate_slope_series
 from trading_engine.indicators.validation import check_data_length, InsufficientDataError
 
@@ -38,13 +38,16 @@ def _known_ohlc_df() -> pd.DataFrame:
 class TestRSICrossDetection:
     def test_cross_70_on_known_dataset(self):
         data = _known_series()
-        rsi, cross_70 = RSI(data, period=5)
+        rsi, cross_70, cross_70_down = RSI(data, period=5)
 
         assert isinstance(rsi, pd.Series)
         assert isinstance(cross_70, pd.Series)
+        assert isinstance(cross_70_down, pd.Series)
         assert cross_70.dtype == bool
+        assert cross_70_down.dtype == bool
         assert rsi.index.equals(data.index)
         assert cross_70.index.equals(data.index)
+        assert cross_70_down.index.equals(data.index)
 
         valid_rsi = rsi.dropna()
         assert (valid_rsi >= 0).all() and (valid_rsi <= 100).all()
@@ -57,16 +60,37 @@ class TestRSICrossDetection:
             assert rsi.iloc[pos] >= 70, "RSI must be >= 70 at cross point"
             assert rsi.iloc[pos - 1] < 70, "RSI must be < 70 before cross point"
 
+    def test_cross_down_70_detection(self):
+        prices = [50.0] * 10 + [50 + i * 2.0 for i in range(10)] + [50 - i * 2.0 for i in range(10)]
+        ts = pd.date_range("2025-01-01", periods=len(prices), freq="h", tz="UTC")
+        data = pd.Series(prices, index=ts, name="close")
+        rsi, cross_up, cross_down = RSI(data, period=5)
+
+        for i in cross_down.index[cross_down]:
+            pos = rsi.index.get_loc(i)
+            assert pos > 0, "Cross-down cannot happen at index 0"
+            assert rsi.iloc[pos] < 70, "RSI must be < 70 after cross-down"
+            assert rsi.iloc[pos - 1] >= 70, "RSI must be >= 70 before cross-down"
+
     def test_no_false_cross_on_flat_data(self):
         flat = pd.Series([50.0] * 30, index=pd.date_range("2025-01-01", periods=30, freq="h", tz="UTC"))
-        rsi, cross_70 = RSI(flat, period=5)
+        rsi, cross_70, cross_70_down = RSI(flat, period=5)
         assert not cross_70.any(), "Flat data should produce no cross-70 events"
+        assert not cross_70_down.any(), "Flat data should produce no cross-70-down events"
 
     def test_rsi_values_deterministic(self):
         data = _known_series()
-        rsi1, _ = RSI(data, period=5)
-        rsi2, _ = RSI(data, period=5)
+        rsi1, _, _ = RSI(data, period=5)
+        rsi2, _, _ = RSI(data, period=5)
         assert rsi1.equals(rsi2)
+
+
+class TestRSILatest:
+    def test_latest_returns_float(self):
+        data = _known_series()
+        val = rsi_latest(data, period=5)
+        assert isinstance(val, float)
+        assert 0 <= val <= 100
 
 
 class TestEMADeterminism:
@@ -112,6 +136,102 @@ class TestEMADeterminism:
         assert atr1.equals(atr2)
 
 
+class TestConvenienceFunctions:
+    def test_sma50_equals_sma_50(self):
+        data = pd.Series(range(100), dtype=float)
+        assert SMA50(data).equals(SMA(data, 50))
+
+    def test_sma100_equals_sma_100(self):
+        data = pd.Series(range(150), dtype=float)
+        assert SMA100(data).equals(SMA(data, 100))
+
+    def test_ema20_equals_ema_20(self):
+        data = pd.Series(range(50), dtype=float)
+        assert EMA20(data).equals(EMA(data, 20))
+
+    def test_ema50_equals_ema_50(self):
+        data = pd.Series(range(100), dtype=float)
+        assert EMA50(data).equals(EMA(data, 50))
+
+    def test_ema200_equals_ema_200(self):
+        data = pd.Series(range(250), dtype=float)
+        assert EMA200(data).equals(EMA(data, 200))
+
+    def test_sma_latest_returns_float(self):
+        data = pd.Series(range(100), dtype=float)
+        val = sma_latest(data, period=50)
+        assert isinstance(val, float)
+        expected = float(data.iloc[-50:].mean())
+        assert abs(val - expected) < 1e-10
+
+    def test_ema_latest_returns_float(self):
+        data = pd.Series(range(50), dtype=float)
+        val = ema_latest(data, period=20)
+        assert isinstance(val, float)
+
+    def test_atr_latest_returns_float(self):
+        df = _known_ohlc_df()
+        val = atr_latest(df, period=5)
+        assert isinstance(val, float)
+
+
+class TestATRSimpleMovingAverage:
+    def test_atr_is_sma_of_true_range(self):
+        df = _known_ohlc_df()
+        period = 5
+
+        tr = true_range(df)
+        expected_atr = tr.rolling(window=period).mean()
+        actual_atr = ATR(df, period=period)
+
+        valid = expected_atr.dropna()
+        for i in valid.index:
+            assert abs(actual_atr.loc[i] - expected_atr.loc[i]) < 1e-10, (
+                f"ATR at {i} = {actual_atr.loc[i]:.6f}, expected SMA(TR) = {expected_atr.loc[i]:.6f}"
+            )
+
+    def test_true_range_formula(self):
+        df = pd.DataFrame({
+            "high":  [12.0, 12.5, 13.0],
+            "low":   [10.0, 11.0, 11.5],
+            "close": [11.0, 12.0, 12.5],
+        })
+        tr = true_range(df)
+        assert tr.iloc[0] == 2.0
+        expected_tr1 = max(12.5 - 11.0, abs(12.5 - 11.0), abs(11.0 - 11.0))
+        assert abs(tr.iloc[1] - expected_tr1) < 1e-10
+        expected_tr2 = max(13.0 - 11.5, abs(13.0 - 12.0), abs(11.5 - 12.0))
+        assert abs(tr.iloc[2] - expected_tr2) < 1e-10
+
+    def test_atr_nan_count_matches_rolling_window(self):
+        df = _known_ohlc_df()
+        period = 5
+        atr = ATR(df, period=period)
+        nan_count = atr.isna().sum()
+        assert nan_count == period - 1
+
+
+class TestSeriesNames:
+    def test_sma_series_name(self):
+        data = _known_series()
+        assert SMA(data, 5).name == "SMA_5"
+
+    def test_ema_series_name(self):
+        data = _known_series()
+        assert EMA(data, 5).name == "EMA_5"
+
+    def test_atr_series_name(self):
+        df = _known_ohlc_df()
+        assert ATR(df, 5).name == "ATR_5"
+
+    def test_rsi_series_names(self):
+        data = _known_series()
+        rsi, cross_up, cross_down = RSI(data, 5)
+        assert rsi.name == "RSI_5"
+        assert cross_up.name == "RSI_5_cross_70"
+        assert cross_down.name == "RSI_5_cross_70_down"
+
+
 class TestOffByOne:
     def test_sma_uses_only_past_and_current(self):
         data = _known_series()
@@ -147,10 +267,10 @@ class TestOffByOne:
 
     def test_rsi_no_forward_looking(self):
         data = _known_series()
-        rsi_full, _ = RSI(data, period=5)
+        rsi_full, _, _ = RSI(data, period=5)
 
         data_short = data.iloc[:15]
-        rsi_short, _ = RSI(data_short, period=5)
+        rsi_short, _, _ = RSI(data_short, period=5)
 
         for i in range(len(data_short)):
             if pd.isna(rsi_full.iloc[i]) and pd.isna(rsi_short.iloc[i]):
@@ -182,9 +302,9 @@ class TestOffByOne:
         ema = EMA(data, period=5)
         sma = SMA(data, period=5)
         atr = ATR(df, period=5)
-        rsi, cross = RSI(data, period=5)
+        rsi, cross_up, cross_down = RSI(data, period=5)
 
-        for name, result in [("EMA", ema), ("SMA", sma), ("ATR", atr), ("RSI", rsi), ("cross_70", cross)]:
+        for name, result in [("EMA", ema), ("SMA", sma), ("ATR", atr), ("RSI", rsi), ("cross_70", cross_up), ("cross_70_down", cross_down)]:
             assert result.index.equals(TIMESTAMPS), (
                 f"{name} index does not match input timestamps — possible off-by-one shift"
             )

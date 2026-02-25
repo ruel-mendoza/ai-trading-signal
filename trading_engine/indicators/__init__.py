@@ -5,9 +5,9 @@ from typing import Optional
 
 from trading_engine.indicators.validation import check_data_length, InsufficientDataError
 from trading_engine.indicators.ema_slope import ema as ema_series, calculate_slope, calculate_slope_series
-from trading_engine.indicators.sma import SMA
-from trading_engine.indicators.ema import EMA
-from trading_engine.indicators.atr import ATR
+from trading_engine.indicators.sma import SMA, SMA50, SMA100
+from trading_engine.indicators.ema import EMA, EMA20, EMA50, EMA200
+from trading_engine.indicators.atr import ATR, true_range
 from trading_engine.indicators.rsi import RSI
 
 logger = logging.getLogger("trading_engine.indicators")
@@ -62,10 +62,11 @@ class IndicatorEngine:
         tr[0] = h[0] - l[0]
 
         tr_series = pd.Series(tr, dtype=np.float64)
-        atr_vals = tr_series.ewm(alpha=1.0 / period, adjust=False).mean()
+        atr_vals = tr_series.rolling(window=period).mean()
 
-        result: list[Optional[float]] = [None] * period
-        result.extend(atr_vals.iloc[period:].tolist())
+        result: list[Optional[float]] = []
+        for v in atr_vals:
+            result.append(None if pd.isna(v) else float(v))
         return result
 
     @staticmethod
