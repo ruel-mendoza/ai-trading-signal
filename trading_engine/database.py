@@ -350,13 +350,37 @@ def close_signal(signal_id: int, exit_reason: str = "", exit_price: Optional[flo
 
 def get_all_signals(strategy_name: Optional[str] = None, asset: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> list[dict]:
     with _get_session() as session:
+        from sqlalchemy import func, or_
+
+        latest_closed_subq = session.query(
+            func.max(Signal.id).label("max_id")
+        ).filter(Signal.status == "CLOSED")
+        if strategy_name:
+            latest_closed_subq = latest_closed_subq.filter(Signal.strategy_name == strategy_name)
+        if asset:
+            latest_closed_subq = latest_closed_subq.filter(Signal.asset == asset)
+        latest_closed_subq = latest_closed_subq.group_by(
+            Signal.strategy_name, Signal.asset
+        ).subquery()
+
         q = session.query(Signal)
         if strategy_name:
             q = q.filter(Signal.strategy_name == strategy_name)
         if asset:
             q = q.filter(Signal.asset == asset)
-        if status:
-            q = q.filter(Signal.status == status)
+
+        if status == "CLOSED":
+            q = q.filter(Signal.id.in_(
+                session.query(latest_closed_subq.c.max_id)
+            ))
+        elif status == "OPEN":
+            q = q.filter(Signal.status == "OPEN")
+        else:
+            q = q.filter(or_(
+                Signal.status != "CLOSED",
+                Signal.id.in_(session.query(latest_closed_subq.c.max_id)),
+            ))
+
         q = q.order_by(Signal.created_at.desc()).limit(limit)
         rows = q.all()
         return [_signal_to_dict(r) for r in rows]
