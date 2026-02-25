@@ -737,6 +737,127 @@ class TestTimezone4PMET:
         assert strat._is_eval_window() is True
 
 
+class TestPeakTrackingInEvaluate:
+    @patch("trading_engine.strategies.trend_non_forex.update_position_tracking")
+    def test_peak_updated_when_advance_close_exceeds_stored_highest(self, mock_update):
+        open_pos = {
+            "id": 5,
+            "direction": "BUY",
+            "entry_price": 5000.0,
+            "atr_at_entry": 50.0,
+            "highest_price_since_entry": 5200.0,
+        }
+        new_close = 5350.0
+
+        candles = _make_candles(150, base_close=100.0, increment=0.5)
+        df = _candles_to_df(candles)
+
+        cache = MagicMock()
+        strat = NonForexTrendFollowingStrategy(cache)
+        with patch.object(strat, "_is_eval_window", return_value=True), \
+             patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(new_close)):
+            strat.evaluate("SPX", TIMEFRAME, df, open_pos)
+
+        mock_update.assert_called_once_with(5, highest_price=new_close)
+
+    @patch("trading_engine.strategies.trend_non_forex.update_position_tracking")
+    def test_peak_not_updated_when_close_below_stored_highest(self, mock_update):
+        open_pos = {
+            "id": 5,
+            "direction": "BUY",
+            "entry_price": 5000.0,
+            "atr_at_entry": 50.0,
+            "highest_price_since_entry": 5200.0,
+        }
+        lower_close = 5100.0
+
+        candles = _make_candles(150, base_close=100.0, increment=0.5)
+        df = _candles_to_df(candles)
+
+        cache = MagicMock()
+        strat = NonForexTrendFollowingStrategy(cache)
+        with patch.object(strat, "_is_eval_window", return_value=True), \
+             patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(lower_close)):
+            strat.evaluate("SPX", TIMEFRAME, df, open_pos)
+
+        mock_update.assert_not_called()
+
+    @patch("trading_engine.strategies.trend_non_forex.update_position_tracking")
+    def test_peak_uses_entry_price_when_no_stored_highest(self, mock_update):
+        open_pos = {
+            "id": 7,
+            "direction": "BUY",
+            "entry_price": 5000.0,
+            "atr_at_entry": 50.0,
+            "highest_price_since_entry": None,
+        }
+        new_close = 5100.0
+
+        candles = _make_candles(150, base_close=100.0, increment=0.5)
+        df = _candles_to_df(candles)
+
+        cache = MagicMock()
+        strat = NonForexTrendFollowingStrategy(cache)
+        with patch.object(strat, "_is_eval_window", return_value=True), \
+             patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(new_close)):
+            strat.evaluate("SPX", TIMEFRAME, df, open_pos)
+
+        mock_update.assert_called_once_with(7, highest_price=new_close)
+
+
+class TestATRPersistence:
+    @patch("trading_engine.strategies.trend_non_forex.db_open_position")
+    @patch("trading_engine.strategies.trend_non_forex.insert_signal", return_value=42)
+    @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
+    def test_atr_saved_to_db_on_entry(self, mock_exists, mock_insert, mock_open_pos):
+        candles = _make_candles(150, base_close=100.0, increment=0.5)
+        closes = [c["close"] for c in candles]
+        highs = [c["high"] for c in candles]
+        lows = [c["low"] for c in candles]
+        atr_values = IndicatorEngine.atr(highs, lows, closes, ATR_PERIOD)
+        expected_atr = round(atr_values[-1], 6)
+
+        current_close = closes[-1]
+        df = _candles_to_df(candles)
+
+        cache = MagicMock()
+        strat = NonForexTrendFollowingStrategy(cache)
+        with patch.object(strat, "_is_eval_window", return_value=True), \
+             patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(current_close)):
+            result = strat.evaluate("SPX", TIMEFRAME, df, None)
+
+        if result.is_entry:
+            mock_open_pos.assert_called_once()
+            call_args = mock_open_pos.call_args[0][0]
+            assert call_args["atr_at_entry"] == expected_atr
+            assert result.atr_at_entry == expected_atr
+
+    def test_trailing_stop_uses_db_atr_not_recalculated(self):
+        entry_atr = 75.0
+        open_pos = {
+            "id": 10,
+            "direction": "BUY",
+            "entry_price": 5000.0,
+            "atr_at_entry": entry_atr,
+            "highest_price_since_entry": 5500.0,
+        }
+        current_close = 5400.0
+        expected_stop = 5500.0 - (entry_atr * TRAILING_STOP_ATR_MULT)
+
+        candles = _make_candles(150, base_close=100.0, increment=0.5)
+        df = _candles_to_df(candles)
+
+        cache = MagicMock()
+        strat = NonForexTrendFollowingStrategy(cache)
+        with patch.object(strat, "_is_eval_window", return_value=True), \
+             patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(current_close)), \
+             patch("trading_engine.strategies.trend_non_forex.update_position_tracking"):
+            result = strat.evaluate("SPX", TIMEFRAME, df, open_pos)
+
+        assert result.is_none
+        assert expected_stop == 5500.0 - (75.0 * 3.0)
+
+
 class TestIdempotency:
     def test_existing_long_blocks_entry(self):
         open_pos = {"id": 1, "direction": "BUY", "entry_price": 100.0, "atr_at_entry": 5.0, "highest_price_since_entry": 110.0}

@@ -177,21 +177,31 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
         )
 
         if open_position_data:
+            pos_id = open_position_data["id"]
             pos_atr = open_position_data.get("atr_at_entry")
-            pos_highest = open_position_data.get("highest_price_since_entry") or open_position_data["entry_price"]
-            pos_highest = max(pos_highest, current_close)
-            if pos_atr is not None:
-                trailing_stop = pos_highest - (pos_atr * TRAILING_STOP_ATR_MULT)
+            stored_highest = open_position_data.get("highest_price_since_entry") or open_position_data["entry_price"]
+            new_highest = max(stored_highest, current_close)
+
+            if new_highest > stored_highest:
+                update_position_tracking(pos_id, highest_price=new_highest)
                 logger.info(
-                    f"[TREND-NONFX] {asset} | ACTIVE TRADE #{open_position_data['id']} | "
+                    f"[TREND-NONFX] {asset} | PEAK UPDATE #{pos_id} | "
+                    f"prev_highest={stored_highest:.5f} → new_highest={new_highest:.5f} (persisted to DB)"
+                )
+
+            if pos_atr is not None:
+                trailing_stop = new_highest - (pos_atr * TRAILING_STOP_ATR_MULT)
+                logger.info(
+                    f"[TREND-NONFX] {asset} | ACTIVE TRADE #{pos_id} | "
                     f"direction={open_position_data['direction']} | entry={open_position_data['entry_price']:.5f} | "
-                    f"ATR_at_entry={pos_atr:.6f} (FIXED) | highest_since_entry={pos_highest:.5f} | "
+                    f"ATR_at_entry={pos_atr:.6f} (FIXED from DB, not recalculated) | "
+                    f"highest_since_entry={new_highest:.5f} | "
                     f"current_trailing_stop={trailing_stop:.5f}"
                 )
             else:
                 logger.warning(
-                    f"[TREND-NONFX] {asset} | ACTIVE TRADE #{open_position_data['id']} | "
-                    f"ATR_at_entry=MISSING — trailing stop cannot be calculated"
+                    f"[TREND-NONFX] {asset} | ACTIVE TRADE #{pos_id} | "
+                    f"ATR_at_entry=MISSING in DB — trailing stop cannot be calculated"
                 )
 
         now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
@@ -280,7 +290,7 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                 continue
 
             logger.info(
-                f"[TREND-NONFX-EXIT] Position #{pos_id} | ATR locked at entry: {atr_at_entry:.6f}"
+                f"[TREND-NONFX-EXIT] Position #{pos_id} | ATR locked at entry: {atr_at_entry:.6f} (read from DB, not recalculated)"
             )
 
             advance_quote = self._get_advance_price(asset)
