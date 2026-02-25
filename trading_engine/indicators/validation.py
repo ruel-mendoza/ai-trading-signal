@@ -1,7 +1,4 @@
-import logging
 import pandas as pd
-
-logger = logging.getLogger("trading_engine.indicators.validation")
 
 
 class InsufficientDataError(Exception):

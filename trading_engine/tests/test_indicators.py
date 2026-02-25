@@ -5,7 +5,7 @@ from trading_engine.indicators.ema import EMA
 from trading_engine.indicators.sma import SMA
 from trading_engine.indicators.atr import ATR
 from trading_engine.indicators.rsi import RSI
-from trading_engine.indicators.ema_slope import ema as ema_slope_fn, calculate_slope
+from trading_engine.indicators.ema_slope import ema as ema_slope_fn, calculate_slope, calculate_slope_series
 from trading_engine.indicators.validation import check_data_length, InsufficientDataError
 
 
@@ -83,7 +83,21 @@ class TestEMADeterminism:
         assert e1.equals(e2)
         s1 = calculate_slope(e1)
         s2 = calculate_slope(e2)
-        assert s1.equals(s2)
+        assert s1 == s2
+        assert isinstance(s1, float)
+
+    def test_calculate_slope_series_deterministic(self):
+        data = _known_series()
+        e1 = ema_slope_fn(data, 5)
+        ss1 = calculate_slope_series(e1)
+        ss2 = calculate_slope_series(e1)
+        assert ss1.equals(ss2)
+        assert isinstance(ss1, pd.Series)
+
+    def test_calculate_slope_returns_current_minus_previous(self):
+        s = pd.Series([10.0, 20.0, 35.0])
+        slope = calculate_slope(s)
+        assert slope == 15.0
 
     def test_sma_deterministic(self):
         data = _known_series()

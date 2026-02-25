@@ -1,9 +1,10 @@
 import logging
 import numpy as np
+import pandas as pd
 from typing import Optional
 
 from trading_engine.indicators.validation import check_data_length, InsufficientDataError
-from trading_engine.indicators.ema_slope import ema as ema_series, calculate_slope
+from trading_engine.indicators.ema_slope import ema as ema_series, calculate_slope, calculate_slope_series
 from trading_engine.indicators.sma import SMA
 from trading_engine.indicators.ema import EMA
 from trading_engine.indicators.atr import ATR
@@ -18,17 +19,11 @@ class IndicatorEngine:
         if len(closes) < period:
             return [None] * len(closes)
 
+        arr = pd.Series(closes, dtype=np.float64)
+        ema_vals = arr.ewm(span=period, adjust=False).mean()
+
         result: list[Optional[float]] = [None] * (period - 1)
-        multiplier = 2.0 / (period + 1)
-        sma_initial = float(np.mean(closes[:period]))
-        result.append(sma_initial)
-
-        prev = sma_initial
-        for i in range(period, len(closes)):
-            val = (closes[i] - prev) * multiplier + prev
-            result.append(val)
-            prev = val
-
+        result.extend(ema_vals.iloc[period - 1:].tolist())
         return result
 
     @staticmethod
@@ -36,14 +31,12 @@ class IndicatorEngine:
         if len(closes) < period:
             return [None] * len(closes)
 
-        result: list[Optional[float]] = [None] * (period - 1)
-        arr = np.array(closes, dtype=float)
+        arr = pd.Series(closes, dtype=np.float64)
+        sma_vals = arr.rolling(window=period).mean()
 
-        cumsum = np.cumsum(arr)
-        cumsum_shifted = np.concatenate(([0], cumsum[:-1]))
-        sma_values = (cumsum[period - 1:] - cumsum_shifted[:len(cumsum) - period + 1]) / period
-
-        result.extend(sma_values.tolist())
+        result: list[Optional[float]] = []
+        for v in sma_vals:
+            result.append(None if pd.isna(v) else float(v))
         return result
 
     @staticmethod
@@ -51,25 +44,28 @@ class IndicatorEngine:
         if len(closes) < 2 or len(closes) < period + 1:
             return [None] * len(closes)
 
-        true_ranges: list[float] = [highs[0] - lows[0]]
-        for i in range(1, len(closes)):
-            tr = max(
-                highs[i] - lows[i],
-                abs(highs[i] - closes[i - 1]),
-                abs(lows[i] - closes[i - 1]),
-            )
-            true_ranges.append(tr)
+        h = np.array(highs, dtype=np.float64)
+        l = np.array(lows, dtype=np.float64)
+        c = np.array(closes, dtype=np.float64)
 
-        result: list[Optional[float]] = [None] * (period)
-        first_atr = float(np.mean(true_ranges[:period]))
-        result.append(first_atr)
+        prev_c = np.empty_like(c)
+        prev_c[0] = np.nan
+        prev_c[1:] = c[:-1]
 
-        prev_atr = first_atr
-        for i in range(period + 1, len(true_ranges)):
-            atr_val = (prev_atr * (period - 1) + true_ranges[i]) / period
-            result.append(atr_val)
-            prev_atr = atr_val
+        tr = np.maximum(
+            h - l,
+            np.maximum(
+                np.abs(h - prev_c),
+                np.abs(l - prev_c),
+            ),
+        )
+        tr[0] = h[0] - l[0]
 
+        tr_series = pd.Series(tr, dtype=np.float64)
+        atr_vals = tr_series.ewm(alpha=1.0 / period, adjust=False).mean()
+
+        result: list[Optional[float]] = [None] * period
+        result.extend(atr_vals.iloc[period:].tolist())
         return result
 
     @staticmethod
@@ -77,31 +73,19 @@ class IndicatorEngine:
         if len(closes) < period + 1:
             return [None] * len(closes)
 
-        deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
-        gains = [max(d, 0) for d in deltas]
-        losses = [abs(min(d, 0)) for d in deltas]
+        arr = pd.Series(closes, dtype=np.float64)
+        delta = arr.diff()
+        gains = delta.clip(lower=0)
+        losses = (-delta).clip(lower=0)
 
-        avg_gain = float(np.mean(gains[:period]))
-        avg_loss = float(np.mean(losses[:period]))
+        avg_gain = gains.ewm(alpha=1.0 / period, adjust=False).mean()
+        avg_loss = losses.ewm(alpha=1.0 / period, adjust=False).mean()
+
+        rs = avg_gain / avg_loss
+        rsi = 100.0 - (100.0 / (1.0 + rs))
 
         result: list[Optional[float]] = [None] * period
-
-        if avg_loss == 0:
-            result.append(100.0)
-        else:
-            rs = avg_gain / avg_loss
-            result.append(100.0 - (100.0 / (1.0 + rs)))
-
-        for i in range(period, len(deltas)):
-            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-
-            if avg_loss == 0:
-                result.append(100.0)
-            else:
-                rs = avg_gain / avg_loss
-                result.append(100.0 - (100.0 / (1.0 + rs)))
-
+        result.extend(rsi.iloc[period:].tolist())
         return result
 
     @classmethod
