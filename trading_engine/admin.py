@@ -551,6 +551,247 @@ def _build_spx_momentum_html(spx_data: dict, spx_signal_rows: str, spx_signal_co
     """
 
 
+def _get_mtf_ema_data() -> dict:
+    from zoneinfo import ZoneInfo
+    et_zone = ZoneInfo("America/New_York")
+    et_now = datetime.now(et_zone)
+    ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
+
+    forex_symbols = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "NZD/USD", "USD/CAD", "USD/CHF", "EUR/GBP"]
+    symbols_data = []
+
+    for symbol in forex_symbols:
+        sym_info = {
+            "symbol": symbol,
+            "d1_ema200": None, "d1_ema50": None, "d1_close": None, "d1_count": 0,
+            "h4_ema200": None, "h4_ema50": None, "h4_atr100": None, "h4_ema200_slope": None, "h4_count": 0,
+            "h1_ema20": None, "h1_close": None, "h1_count": 0,
+            "cond_price_above_d1_emas": False, "cond_h4_ema200_rising": False,
+            "cond_dip_below_h4_50": False, "cond_dip_within_1_atr": False,
+            "cond_h1_above_ema20": False, "all_conditions": False,
+        }
+
+        d1_candles = get_candles(symbol, "D1", 300)
+        h4_candles = get_candles(symbol, "4H", 300)
+        h1_candles = get_candles(symbol, "1H", 300)
+        sym_info["d1_count"] = len(d1_candles)
+        sym_info["h4_count"] = len(h4_candles)
+        sym_info["h1_count"] = len(h1_candles)
+
+        if len(d1_candles) >= 200 and len(h4_candles) >= 200 and len(h1_candles) >= 20:
+            d1_closes = [c["close"] for c in d1_candles]
+            h4_closes = [c["close"] for c in h4_candles]
+            h4_highs = [c["high"] for c in h4_candles]
+            h4_lows = [c["low"] for c in h4_candles]
+            h1_closes = [c["close"] for c in h1_candles]
+
+            d1_ema200 = IndicatorEngine.ema(d1_closes, 200)
+            d1_ema50 = IndicatorEngine.ema(d1_closes, 50)
+            h4_ema200 = IndicatorEngine.ema(h4_closes, 200)
+            h4_ema50 = IndicatorEngine.ema(h4_closes, 50)
+            h4_atr100 = IndicatorEngine.atr(h4_highs, h4_lows, h4_closes, 100)
+            h1_ema20 = IndicatorEngine.ema(h1_closes, 20)
+
+            current_price = h1_closes[-1]
+            sym_info["d1_close"] = d1_closes[-1]
+            sym_info["d1_ema200"] = d1_ema200[-1]
+            sym_info["d1_ema50"] = d1_ema50[-1]
+            sym_info["h4_ema200"] = h4_ema200[-1]
+            sym_info["h4_ema50"] = h4_ema50[-1]
+            sym_info["h4_atr100"] = h4_atr100[-1]
+            sym_info["h1_ema20"] = h1_ema20[-1]
+            sym_info["h1_close"] = current_price
+
+            h4_ema200_prev = h4_ema200[-2] if len(h4_ema200) >= 2 else None
+            if h4_ema200[-1] is not None and h4_ema200_prev is not None:
+                sym_info["h4_ema200_slope"] = h4_ema200[-1] - h4_ema200_prev
+
+            if sym_info["d1_ema200"] is not None and sym_info["d1_ema50"] is not None:
+                sym_info["cond_price_above_d1_emas"] = current_price > sym_info["d1_ema200"] and current_price > sym_info["d1_ema50"]
+            if sym_info["h4_ema200_slope"] is not None:
+                sym_info["cond_h4_ema200_rising"] = sym_info["h4_ema200_slope"] > 0
+            if sym_info["h4_ema50"] is not None:
+                sym_info["cond_dip_below_h4_50"] = current_price < sym_info["h4_ema50"]
+            if sym_info["h4_atr100"] is not None and sym_info["h4_ema50"] is not None and sym_info["cond_dip_below_h4_50"]:
+                sym_info["cond_dip_within_1_atr"] = (sym_info["h4_ema50"] - current_price) < sym_info["h4_atr100"]
+            if sym_info["h1_ema20"] is not None:
+                sym_info["cond_h1_above_ema20"] = current_price > sym_info["h1_ema20"]
+
+            sym_info["all_conditions"] = all([
+                sym_info["cond_price_above_d1_emas"],
+                sym_info["cond_h4_ema200_rising"],
+                sym_info["cond_dip_below_h4_50"],
+                sym_info["cond_dip_within_1_atr"],
+                sym_info["cond_h1_above_ema20"],
+            ])
+
+        symbols_data.append(sym_info)
+
+    active_trades = get_active_signals(strategy_name="mtf_ema")
+    open_positions_list = get_all_open_positions(strategy_name="mtf_ema")
+    pos_by_asset = {p["asset"]: p for p in open_positions_list}
+    trade_details = []
+    for sig in active_trades:
+        atr_at_entry = sig.get("atr_at_entry")
+        entry_price = sig["entry_price"]
+        pos = pos_by_asset.get(sig["asset"])
+        stored_highest = (pos.get("highest_price_since_entry") if pos else None) or entry_price
+        sym_candles = get_candles(sig["asset"], "1H", 5)
+        cur_close = sym_candles[-1]["close"] if sym_candles else None
+        if cur_close:
+            stored_highest = max(stored_highest, cur_close)
+        trailing_stop = None
+        if atr_at_entry is not None:
+            trailing_stop = stored_highest - (atr_at_entry * 2.0)
+        trade_details.append({
+            "id": sig["id"],
+            "symbol": sig["asset"],
+            "direction": sig["direction"],
+            "entry_price": entry_price,
+            "atr_at_entry": atr_at_entry,
+            "highest_close": stored_highest,
+            "trailing_stop": trailing_stop,
+            "current_close": cur_close,
+            "created_at": sig.get("created_at"),
+        })
+
+    return {
+        "et_time": et_now.strftime(f"%Y-%m-%d %H:%M:%S {'EDT' if ny_dst else 'EST'}"),
+        "dst_active": ny_dst,
+        "symbols": symbols_data,
+        "active_trades": trade_details,
+    }
+
+
+def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: int) -> str:
+    def _fmt(val, decimals=5):
+        return f"{val:.{decimals}f}" if val is not None else "N/A"
+
+    def _cond(val):
+        return '<span style="color:#6ee7b7;">YES</span>' if val else '<span style="color:#fca5a5;">NO</span>'
+
+    symbols_html = ""
+    for sym in mtf_data["symbols"]:
+        data_status = ""
+        if sym["d1_count"] < 200 or sym["h4_count"] < 200 or sym["h1_count"] < 20:
+            data_status = f'<div style="color:#fbbf24;font-size:0.8rem;margin-top:6px;">D1: {sym["d1_count"]}/200, H4: {sym["h4_count"]}/200, H1: {sym["h1_count"]}/20</div>'
+        else:
+            slope_val = sym["h4_ema200_slope"]
+            slope_display = f"{slope_val:+.6f}" if slope_val is not None else "N/A"
+            slope_color = "#6ee7b7" if slope_val is not None and slope_val > 0 else "#fca5a5"
+
+            data_status = f"""
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.8rem;">
+                <div>D1 EMA200: {_fmt(sym["d1_ema200"])}</div>
+                <div>D1 EMA50: {_fmt(sym["d1_ema50"])}</div>
+                <div>H4 EMA200: {_fmt(sym["h4_ema200"])}</div>
+                <div>H4 EMA50: {_fmt(sym["h4_ema50"])}</div>
+                <div>H4 ATR100: {_fmt(sym["h4_atr100"], 6)}</div>
+                <div>H4 EMA200 Slope: <span style="color:{slope_color};">{slope_display}</span></div>
+                <div>H1 EMA20: {_fmt(sym["h1_ema20"])}</div>
+                <div>H1 Close: {_fmt(sym["h1_close"])}</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.8rem;border-top:1px solid #334155;padding-top:8px;">
+                <div>Price &gt; D1 EMAs: {_cond(sym["cond_price_above_d1_emas"])}</div>
+                <div>H4 EMA200 Rising: {_cond(sym["cond_h4_ema200_rising"])}</div>
+                <div>Dip Below H4 50: {_cond(sym["cond_dip_below_h4_50"])}</div>
+                <div>Within 1 ATR: {_cond(sym["cond_dip_within_1_atr"])}</div>
+                <div>H1 &gt; EMA20: {_cond(sym["cond_h1_above_ema20"])}</div>
+                <div><strong>All Met:</strong> {_cond(sym["all_conditions"])}</div>
+            </div>"""
+
+        all_badge = ""
+        if sym["all_conditions"]:
+            all_badge = ' <span class="badge status-active">READY</span>'
+
+        symbols_html += f"""
+        <div class="stat-card" style="min-width:250px;">
+            <div class="stat-label">{sym["symbol"]}{all_badge}</div>
+            {data_status}
+        </div>"""
+
+    active_html = ""
+    if mtf_data["active_trades"]:
+        for trade in mtf_data["active_trades"]:
+            entry = trade["entry_price"]
+            atr_e = trade["atr_at_entry"]
+            trail = trade["trailing_stop"]
+            highest = trade["highest_close"]
+            cur = trade["current_close"]
+            pnl = ""
+            if cur is not None and entry:
+                diff = cur - entry
+                pnl_pct = (diff / entry) * 100
+                pnl_color = "#6ee7b7" if diff >= 0 else "#fca5a5"
+                pnl = f'<span style="color:{pnl_color};font-weight:600;">{diff:+.5f} ({pnl_pct:+.2f}%)</span>'
+
+            active_html += f"""
+        <div class="settings-section" style="margin-top:12px;border-left:3px solid #3b82f6;">
+            <h3>{trade["symbol"]} - {trade["direction"]}</h3>
+            <div class="stats-grid" style="margin-top:8px;">
+                <div class="stat-card"><div class="stat-label">Entry</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(entry)}</div></div>
+                <div class="stat-card"><div class="stat-label">Fixed ATR</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(atr_e, 6)}</div></div>
+                <div class="stat-card"><div class="stat-label">Trail Stop</div><div class="stat-value" style="font-size:1.1rem;color:#fbbf24;">{_fmt(trail)}</div></div>
+                <div class="stat-card"><div class="stat-label">Highest</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(highest)}</div></div>
+                <div class="stat-card"><div class="stat-label">Current</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(cur)}</div></div>
+                <div class="stat-card"><div class="stat-label">P&L</div><div class="stat-value" style="font-size:1.1rem;">{pnl}</div></div>
+            </div>
+            <div class="stat-label" style="margin-top:6px;">Opened: {trade.get("created_at", "N/A")}</div>
+        </div>"""
+    else:
+        active_html = """
+        <div class="settings-section" style="margin-top:20px;">
+            <h3>Active Trades</h3>
+            <p style="color:#94a3b8;padding:16px 0;">No active MTF EMA trades.</p>
+        </div>"""
+
+    return f"""
+    <div class="stat-card" style="margin-bottom:16px;">
+        <div class="stat-label">Evaluation Time</div>
+        <div style="margin-top:4px;">{mtf_data['et_time']}</div>
+        <div class="stat-label" style="margin-top:4px;">DST: {'Active' if mtf_data['dst_active'] else 'Inactive'}</div>
+    </div>
+    <div class="settings-section">
+        <h3>Multi-Timeframe Conditions</h3>
+        <div class="stats-grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
+            {symbols_html}
+        </div>
+    </div>
+    {active_html}
+    <div class="settings-section" style="margin-top:20px;">
+        <h3>Signal History ({mtf_signal_count})</h3>
+        <div style="overflow-x:auto;margin-top:12px;">
+            <table class="data-table" data-testid="mtf-signals-table">
+                <thead>
+                    <tr>
+                        <th>Asset</th>
+                        <th>Direction</th>
+                        <th>Entry Price</th>
+                        <th>Stop Loss</th>
+                        <th>Take Profit</th>
+                        <th>Strategy</th>
+                        <th>Status</th>
+                        <th>Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody>{mtf_signal_rows}</tbody>
+            </table>
+        </div>
+    </div>
+    <div class="timezone-note" style="margin-top:16px;">
+        <strong>Strategy Rules (Multi-Timeframe EMA):</strong>
+        <ul>
+            <li><strong>Condition 1:</strong> Price &gt; D1 EMA(200) AND Price &gt; D1 EMA(50)</li>
+            <li><strong>Condition 2:</strong> H4 EMA(200) rising (slope &gt; 0)</li>
+            <li><strong>Condition 3:</strong> Price dips below H4 EMA(50)</li>
+            <li><strong>Condition 4:</strong> Dip is within 1 ATR(100) of H4 EMA(50)</li>
+            <li><strong>Condition 5:</strong> H1 candle closes above H1 EMA(20)</li>
+            <li><strong>Trailing Stop:</strong> Highest close - (Fixed ATR at entry &times; 2)</li>
+        </ul>
+    </div>
+    """
+
+
 def _get_forex_trend_data() -> dict:
     from zoneinfo import ZoneInfo
     et_zone = ZoneInfo("America/New_York")
@@ -1296,6 +1537,12 @@ def admin_dashboard(
     spx_signal_count = len(spx_signals)
     spx_html = _build_spx_momentum_html(spx_data, spx_signal_rows, spx_signal_count)
 
+    mtf_data = _get_mtf_ema_data()
+    mtf_signals = get_all_signals(strategy_name="mtf_ema", limit=200)
+    mtf_signal_rows = _signals_to_table_rows(mtf_signals)
+    mtf_signal_count = len(mtf_signals)
+    mtf_html = _build_mtf_ema_html(mtf_data, mtf_signal_rows, mtf_signal_count)
+
     fx_trend_data = _get_forex_trend_data()
     fx_trend_signals = get_all_signals(strategy_name="trend_forex", limit=200)
     fx_trend_signal_rows = _signals_to_table_rows(fx_trend_signals)
@@ -1354,7 +1601,7 @@ def admin_dashboard(
                 </div>
                 <div class="sidebar-group">
                     <div class="sidebar-group-label">Strategies</div>
-                    <a class="sidebar-link {'active' if tab == 'signals' and strategy_name == 'mtf_ema' else ''}" data-tab="signals" data-strategy="mtf_ema" onclick="showStrategyTab('mtf_ema')" data-testid="sidebar-mtf">
+                    <a class="sidebar-link {'active' if tab == 'mtf' else ''}" data-tab="mtf" onclick="showTab('mtf')" data-testid="sidebar-mtf">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/><path d="M22 4v16"/></svg>
                         MTF Algo
                     </a>
@@ -1444,6 +1691,13 @@ def admin_dashboard(
                         <tbody>{signal_rows}</tbody>
                     </table>
                 </div>
+            </div>
+        </div>
+
+        <div id="tab-mtf" class="tab-content {'hidden' if tab != 'mtf' else ''}">
+            <div class="section">
+                <h2>Multi-Timeframe EMA Strategy</h2>
+                {mtf_html}
             </div>
         </div>
 
