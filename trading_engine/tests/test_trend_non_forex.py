@@ -957,3 +957,342 @@ class TestCheckExits:
         strat = NonForexTrendFollowingStrategy(cache)
         exits = strat.check_exits()
         assert len(exits) == 0
+
+
+class TestBreakoutEntry:
+    """Breakout Test: Price exceeds the 50-day high with bullish SMAs → LONG ENTRY."""
+
+    @patch("trading_engine.strategies.trend_non_forex.db_open_position")
+    @patch("trading_engine.strategies.trend_non_forex.insert_signal", return_value=200)
+    @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
+    def test_breakout_generates_long_entry(self, mock_exists, mock_insert, mock_open_pos):
+        candles = _make_candles(200, base_close=5000.0, increment=5.0)
+
+        closes = [c["close"] for c in candles]
+        highs = [c["high"] for c in candles]
+        lows = [c["low"] for c in candles]
+
+        prior_closes = closes[-(LOOKBACK_DAYS + 1):-1]
+        highest_50d = max(prior_closes)
+        advance_close = closes[-1]
+        assert advance_close > highest_50d, (
+            f"Precondition: advance close ({advance_close}) must exceed "
+            f"50-day highest close ({highest_50d})"
+        )
+
+        sma50 = IndicatorEngine.sma(closes, SMA_FAST)
+        sma100 = IndicatorEngine.sma(closes, SMA_SLOW)
+        assert sma50[-1] > sma100[-1], (
+            f"Precondition: SMA50 ({sma50[-1]}) must be above SMA100 ({sma100[-1]})"
+        )
+
+        atr_values = IndicatorEngine.atr(highs, lows, closes, ATR_PERIOD)
+        expected_atr = round(atr_values[-1], 6)
+        expected_stop = advance_close - (TRAILING_STOP_ATR_MULT * atr_values[-1])
+
+        df = _candles_to_df(candles)
+        cache = MagicMock()
+        strat = NonForexTrendFollowingStrategy(cache)
+        with patch.object(strat, "_is_eval_window", return_value=True), \
+             patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(advance_close)):
+            result = strat.evaluate("SPX", TIMEFRAME, df, None)
+
+        assert result.is_entry, "Must generate ENTRY when close > 50-day high AND SMA50 > SMA100"
+        assert result.action == Action.ENTRY
+        assert result.direction == Direction.LONG
+        assert result.price == advance_close
+        assert result.atr_at_entry == expected_atr
+
+        signal = result.metadata["signal"]
+        assert signal["direction"] == "BUY"
+        assert signal["action"] == "ENTRY"
+        assert signal["entry_price"] == advance_close
+        assert signal["atr_at_entry"] == expected_atr
+        assert signal["strategy_name"] == STRATEGY_NAME
+        assert abs(signal["stop_loss"] - expected_stop) < 1e-6, (
+            f"Initial stop loss ({signal['stop_loss']}) must equal "
+            f"entry ({advance_close}) - {TRAILING_STOP_ATR_MULT} × ATR ({expected_stop})"
+        )
+
+        mock_insert.assert_called_once()
+        mock_open_pos.assert_called_once()
+        pos_args = mock_open_pos.call_args[0][0]
+        assert pos_args["atr_at_entry"] == expected_atr
+        assert pos_args["direction"] == "BUY"
+        assert pos_args["entry_price"] == advance_close
+
+
+class TestTrailingStopExit:
+    """Trailing Stop Test: Price drops > 3×ATR from peak → EXIT signal."""
+
+    @patch("trading_engine.strategies.trend_non_forex.close_position")
+    @patch("trading_engine.strategies.trend_non_forex.close_signal")
+    @patch("trading_engine.strategies.trend_non_forex.get_active_signals", return_value=[{"id": 10}])
+    @patch("trading_engine.strategies.trend_non_forex.update_position_tracking")
+    @patch("trading_engine.strategies.trend_non_forex.get_all_open_positions")
+    def test_exit_when_price_drops_beyond_3x_atr_from_peak(
+        self, mock_positions, mock_update, mock_active, mock_close_sig, mock_close_pos
+    ):
+        entry_price = 5000.0
+        atr_at_entry = 40.0
+        peak_price = 5500.0
+
+        trailing_stop = peak_price - (TRAILING_STOP_ATR_MULT * atr_at_entry)
+        assert trailing_stop == 5500.0 - (3.0 * 40.0)
+        assert trailing_stop == 5380.0
+
+        exit_close = 5370.0
+        assert exit_close < trailing_stop, (
+            f"Precondition: exit close ({exit_close}) must be below "
+            f"trailing stop ({trailing_stop})"
+        )
+
+        mock_positions.return_value = [{
+            "id": 10,
+            "asset": "NDX",
+            "strategy_name": STRATEGY_NAME,
+            "direction": "BUY",
+            "entry_price": entry_price,
+            "atr_at_entry": atr_at_entry,
+            "highest_price_since_entry": peak_price,
+        }]
+
+        cache = MagicMock()
+        strat = NonForexTrendFollowingStrategy(cache)
+        with patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(exit_close)):
+            exits = strat.check_exits()
+
+        assert len(exits) == 1, "Must generate exactly one exit"
+        assert exits[0]["exit_reason"] == "trailing_stop"
+        assert exits[0]["exit_price"] == exit_close
+        assert exits[0]["asset"] == "NDX"
+        assert exits[0]["atr_at_entry"] == atr_at_entry
+
+        mock_close_sig.assert_called_once_with(10, pytest.approx(
+            f"Trailing stop hit | close={exit_close:.5f}, "
+            f"stop={trailing_stop:.5f}, highest_since_entry={peak_price:.5f}, "
+            f"ATR_at_entry={atr_at_entry:.6f} (fixed)",
+            abs=0,
+        ))
+        mock_close_pos.assert_called_once_with(STRATEGY_NAME, "NDX")
+
+    @patch("trading_engine.strategies.trend_non_forex.update_position_tracking")
+    @patch("trading_engine.strategies.trend_non_forex.get_all_open_positions")
+    def test_no_exit_when_price_above_trailing_stop(self, mock_positions, mock_update):
+        entry_price = 5000.0
+        atr_at_entry = 40.0
+        peak_price = 5500.0
+
+        trailing_stop = peak_price - (TRAILING_STOP_ATR_MULT * atr_at_entry)
+        hold_close = trailing_stop + 5.0
+
+        mock_positions.return_value = [{
+            "id": 10,
+            "asset": "NDX",
+            "strategy_name": STRATEGY_NAME,
+            "direction": "BUY",
+            "entry_price": entry_price,
+            "atr_at_entry": atr_at_entry,
+            "highest_price_since_entry": peak_price,
+        }]
+
+        cache = MagicMock()
+        strat = NonForexTrendFollowingStrategy(cache)
+        with patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(hold_close)):
+            exits = strat.check_exits()
+
+        assert len(exits) == 0, (
+            f"No exit when close ({hold_close}) is above trailing stop ({trailing_stop})"
+        )
+
+
+class TestIdempotencySameTimestamp:
+    """Idempotency Test: Execute twice for the same 4PM timestamp → only one signal saved."""
+
+    @patch("trading_engine.strategies.trend_non_forex.db_open_position")
+    @patch("trading_engine.strategies.trend_non_forex.insert_signal")
+    @patch("trading_engine.strategies.trend_non_forex.signal_exists")
+    def test_second_run_same_timestamp_blocked(self, mock_exists, mock_insert, mock_open_pos):
+        candles = _make_candles(200, base_close=5000.0, increment=5.0)
+        closes = [c["close"] for c in candles]
+        advance_close = closes[-1]
+        df = _candles_to_df(candles)
+
+        sma50 = IndicatorEngine.sma(closes, SMA_FAST)
+        sma100 = IndicatorEngine.sma(closes, SMA_SLOW)
+        prior_closes = closes[-(LOOKBACK_DAYS + 1):-1]
+        highest_50d = max(prior_closes)
+        assert advance_close > highest_50d and sma50[-1] > sma100[-1], \
+            "Test data must satisfy entry conditions"
+
+        mock_exists.return_value = False
+        mock_insert.return_value = 300
+
+        cache = MagicMock()
+        strat = NonForexTrendFollowingStrategy(cache)
+
+        with patch.object(strat, "_is_eval_window", return_value=True), \
+             patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(advance_close)):
+            result1 = strat.evaluate("SPX", TIMEFRAME, df, None)
+
+        assert result1.is_entry, "First run must produce an ENTRY signal"
+        assert mock_insert.call_count == 1, "First run must call insert_signal exactly once"
+
+        first_signal = mock_insert.call_args[0][0]
+        first_timestamp = first_signal["signal_timestamp"]
+
+        mock_exists.return_value = True
+        mock_insert.reset_mock()
+
+        with patch.object(strat, "_is_eval_window", return_value=True), \
+             patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(advance_close)):
+            result2 = strat.evaluate("SPX", TIMEFRAME, df, None)
+
+        assert result2.is_none, (
+            f"Second run for same timestamp ({first_timestamp}) must be blocked by "
+            f"signal_exists idempotency check"
+        )
+        assert mock_insert.call_count == 0, (
+            "insert_signal must NOT be called on the second run — "
+            "signal_exists returned True, blocking the duplicate"
+        )
+
+    @patch("trading_engine.strategies.trend_non_forex.db_open_position")
+    @patch("trading_engine.strategies.trend_non_forex.insert_signal")
+    @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
+    def test_open_position_blocks_duplicate_even_without_timestamp_match(
+        self, mock_exists, mock_insert, mock_open_pos
+    ):
+        mock_insert.return_value = 301
+
+        candles = _make_candles(200, base_close=5000.0, increment=5.0)
+        closes = [c["close"] for c in candles]
+        advance_close = closes[-1]
+        df = _candles_to_df(candles)
+
+        cache = MagicMock()
+        strat = NonForexTrendFollowingStrategy(cache)
+
+        with patch.object(strat, "_is_eval_window", return_value=True), \
+             patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(advance_close)):
+            result1 = strat.evaluate("SPX", TIMEFRAME, df, None)
+
+        assert result1.is_entry
+
+        open_pos = {
+            "id": 301,
+            "direction": "BUY",
+            "entry_price": advance_close,
+            "atr_at_entry": result1.atr_at_entry,
+            "highest_price_since_entry": advance_close,
+        }
+        mock_insert.reset_mock()
+
+        with patch.object(strat, "_is_eval_window", return_value=True), \
+             patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(advance_close)), \
+             patch("trading_engine.strategies.trend_non_forex.update_position_tracking"):
+            result2 = strat.evaluate("SPX", TIMEFRAME, df, open_pos)
+
+        assert result2.is_none, "Must not generate a second signal when open position exists"
+        assert mock_insert.call_count == 0
+
+
+class TestATRConsistencyEntryToExit:
+    """ATR Consistency: The ATR used for exit must be identical to the ATR recorded at entry,
+    regardless of current market volatility."""
+
+    @patch("trading_engine.strategies.trend_non_forex.close_position")
+    @patch("trading_engine.strategies.trend_non_forex.close_signal")
+    @patch("trading_engine.strategies.trend_non_forex.get_active_signals", return_value=[{"id": 500}])
+    @patch("trading_engine.strategies.trend_non_forex.update_position_tracking")
+    @patch("trading_engine.strategies.trend_non_forex.get_all_open_positions")
+    @patch("trading_engine.strategies.trend_non_forex.db_open_position")
+    @patch("trading_engine.strategies.trend_non_forex.insert_signal", return_value=500)
+    @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
+    def test_entry_atr_equals_exit_atr_despite_volatility_change(
+        self,
+        mock_exists,
+        mock_insert,
+        mock_open_pos,
+        mock_all_positions,
+        mock_update,
+        mock_active,
+        mock_close_sig,
+        mock_close_pos,
+    ):
+        entry_candles = _make_candles(200, base_close=5000.0, increment=5.0)
+        closes = [c["close"] for c in entry_candles]
+        highs = [c["high"] for c in entry_candles]
+        lows = [c["low"] for c in entry_candles]
+        entry_close = closes[-1]
+        df_entry = _candles_to_df(entry_candles)
+
+        entry_atr_values = IndicatorEngine.atr(highs, lows, closes, ATR_PERIOD)
+        entry_atr = round(entry_atr_values[-1], 6)
+
+        cache = MagicMock()
+        strat = NonForexTrendFollowingStrategy(cache)
+        with patch.object(strat, "_is_eval_window", return_value=True), \
+             patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(entry_close)):
+            entry_result = strat.evaluate("SPX", TIMEFRAME, df_entry, None)
+
+        assert entry_result.is_entry, "Must produce an ENTRY signal"
+        assert entry_result.atr_at_entry == entry_atr
+
+        pos_args = mock_open_pos.call_args[0][0]
+        db_stored_atr = pos_args["atr_at_entry"]
+        assert db_stored_atr == entry_atr, (
+            f"ATR stored to DB ({db_stored_atr}) must equal calculated ATR ({entry_atr})"
+        )
+
+        peak_price = entry_close + 200.0
+        exit_close = peak_price - (db_stored_atr * TRAILING_STOP_ATR_MULT) - 1.0
+
+        volatile_candles = []
+        for i in range(200):
+            volatile_candles.append({
+                "timestamp": f"2025-09-{(i % 28) + 1:02d}T16:00:00",
+                "open": 5500.0,
+                "high": 5500.0 + 100.0,
+                "low": 5500.0 - 100.0,
+                "close": 5500.0,
+            })
+        volatile_closes = [c["close"] for c in volatile_candles]
+        volatile_highs = [c["high"] for c in volatile_candles]
+        volatile_lows = [c["low"] for c in volatile_candles]
+        new_atr_values = IndicatorEngine.atr(volatile_highs, volatile_lows, volatile_closes, ATR_PERIOD)
+        new_market_atr = new_atr_values[-1]
+        assert new_market_atr != entry_atr, (
+            f"Precondition: current market ATR ({new_market_atr}) must differ from "
+            f"entry ATR ({entry_atr}) to prove the strategy doesn't recalculate"
+        )
+
+        mock_all_positions.return_value = [{
+            "id": 500,
+            "asset": "SPX",
+            "strategy_name": STRATEGY_NAME,
+            "direction": "BUY",
+            "entry_price": entry_close,
+            "atr_at_entry": db_stored_atr,
+            "highest_price_since_entry": peak_price,
+        }]
+
+        with patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(exit_close)):
+            exits = strat.check_exits()
+
+        assert len(exits) == 1, "Must exit — price below trailing stop"
+
+        expected_trailing_stop = peak_price - (db_stored_atr * TRAILING_STOP_ATR_MULT)
+        wrong_trailing_stop = peak_price - (new_market_atr * TRAILING_STOP_ATR_MULT)
+
+        assert exit_close < expected_trailing_stop, (
+            f"Exit close ({exit_close}) must be below the correct trailing stop ({expected_trailing_stop}) "
+            f"computed from the ENTRY ATR ({db_stored_atr})"
+        )
+
+        assert exits[0]["atr_at_entry"] == db_stored_atr, (
+            f"Exit signal's atr_at_entry ({exits[0]['atr_at_entry']}) must equal "
+            f"the DB-stored entry ATR ({db_stored_atr}), NOT the current market ATR ({new_market_atr})"
+        )
+
+        assert db_stored_atr == entry_atr, "Full chain: computed → stored → used for exit — all identical"
