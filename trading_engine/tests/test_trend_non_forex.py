@@ -223,8 +223,9 @@ class TestBacktest400DaysSPX:
 
     @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal")
+    @patch("trading_engine.strategies.trend_non_forex.has_open_signal", return_value=False)
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
-    def test_backtest_entries_only_above_50d_high(self, mock_exists, mock_insert, mock_open):
+    def test_backtest_entries_only_above_50d_high(self, mock_exists, mock_open_sig, mock_insert, mock_open):
         mock_insert.side_effect = lambda sig: 1
 
         all_candles = _make_spx_backtest_candles(400, start_price=4000.0, trend_pct=0.0003)
@@ -283,8 +284,9 @@ class TestBacktest400DaysSPX:
 
     @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal")
+    @patch("trading_engine.strategies.trend_non_forex.has_open_signal", return_value=False)
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
-    def test_backtest_no_entry_in_flat_market(self, mock_exists, mock_insert, mock_open):
+    def test_backtest_no_entry_in_flat_market(self, mock_exists, mock_open_sig, mock_insert, mock_open):
         flat_candles = _make_flat_candles(200, price=5000.0)
         df = _candles_to_df(flat_candles)
 
@@ -299,8 +301,9 @@ class TestBacktest400DaysSPX:
 
     @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal")
+    @patch("trading_engine.strategies.trend_non_forex.has_open_signal", return_value=False)
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
-    def test_backtest_no_short_entries(self, mock_exists, mock_insert, mock_open):
+    def test_backtest_no_short_entries(self, mock_exists, mock_open_sig, mock_insert, mock_open):
         mock_insert.side_effect = lambda sig: 1
 
         downtrend_candles = _make_spx_backtest_candles(200, start_price=5000.0, trend_pct=-0.002)
@@ -321,8 +324,9 @@ class TestBacktest400DaysSPX:
 class TestEntryValidation50DayHigh:
     @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal", return_value=100)
+    @patch("trading_engine.strategies.trend_non_forex.has_open_signal", return_value=False)
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
-    def test_entry_when_close_exceeds_50d_high(self, mock_exists, mock_insert, mock_open):
+    def test_entry_when_close_exceeds_50d_high(self, mock_exists, mock_open_sig, mock_insert, mock_open):
         candles = _make_candles(150, base_close=100.0, increment=0.5)
 
         closes = [c["close"] for c in candles]
@@ -414,8 +418,9 @@ class TestEntryValidation50DayHigh:
 
     @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal", return_value=100)
+    @patch("trading_engine.strategies.trend_non_forex.has_open_signal", return_value=False)
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
-    def test_no_entry_when_advance_unavailable(self, mock_exists, mock_insert, mock_open):
+    def test_no_entry_when_advance_unavailable(self, mock_exists, mock_open_sig, mock_insert, mock_open):
         candles = _make_candles(150, base_close=100.0, increment=0.5)
         df = _candles_to_df(candles)
 
@@ -680,9 +685,10 @@ class TestTimezone4PMET:
 
     @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal", return_value=99)
+    @patch("trading_engine.strategies.trend_non_forex.has_open_signal", return_value=False)
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
     @patch("trading_engine.strategies.trend_non_forex.datetime")
-    def test_sunday_btc_entry_fires(self, mock_dt, mock_exists, mock_insert, mock_open):
+    def test_sunday_btc_entry_fires(self, mock_dt, mock_exists, mock_open_sig, mock_insert, mock_open):
         mock_now = datetime(2025, 1, 12, 21, 0, 0, tzinfo=pytz.utc)
         mock_dt.now.return_value = mock_now
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
@@ -808,8 +814,9 @@ class TestPeakTrackingInEvaluate:
 class TestATRPersistence:
     @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal", return_value=42)
+    @patch("trading_engine.strategies.trend_non_forex.has_open_signal", return_value=False)
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
-    def test_atr_saved_to_db_on_entry(self, mock_exists, mock_insert, mock_open_pos):
+    def test_atr_saved_to_db_on_entry(self, mock_exists, mock_open_sig, mock_insert, mock_open_pos):
         candles = _make_candles(150, base_close=100.0, increment=0.5)
         closes = [c["close"] for c in candles]
         highs = [c["high"] for c in candles]
@@ -874,8 +881,8 @@ class TestIdempotency:
 
         assert result.is_none
 
-    @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=True)
-    def test_duplicate_signal_blocked_by_timestamp(self, mock_exists):
+    @patch("trading_engine.strategies.trend_non_forex.has_open_signal", return_value=True)
+    def test_duplicate_signal_blocked_by_has_open_signal(self, mock_open_sig):
         candles = _make_candles(150, base_close=100.0, increment=0.5)
         last_close = candles[-1]["close"]
         df = _candles_to_df(candles)
@@ -890,8 +897,9 @@ class TestIdempotency:
 
     @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal", return_value=50)
+    @patch("trading_engine.strategies.trend_non_forex.has_open_signal", return_value=False)
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
-    def test_signal_timestamp_uses_current_et_time(self, mock_exists, mock_insert, mock_open):
+    def test_signal_timestamp_uses_current_et_time(self, mock_exists, mock_open_sig, mock_insert, mock_open):
         candles = _make_candles(150, base_close=100.0, increment=0.5)
         last_close = candles[-1]["close"]
         df = _candles_to_df(candles)
@@ -964,8 +972,9 @@ class TestBreakoutEntry:
 
     @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal", return_value=200)
+    @patch("trading_engine.strategies.trend_non_forex.has_open_signal", return_value=False)
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
-    def test_breakout_generates_long_entry(self, mock_exists, mock_insert, mock_open_pos):
+    def test_breakout_generates_long_entry(self, mock_exists, mock_open_sig, mock_insert, mock_open_pos):
         candles = _make_candles(200, base_close=5000.0, increment=5.0)
 
         closes = [c["close"] for c in candles]
@@ -1111,8 +1120,9 @@ class TestIdempotencySameTimestamp:
 
     @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal")
+    @patch("trading_engine.strategies.trend_non_forex.has_open_signal")
     @patch("trading_engine.strategies.trend_non_forex.signal_exists")
-    def test_second_run_same_timestamp_blocked(self, mock_exists, mock_insert, mock_open_pos):
+    def test_second_run_blocked_by_has_open_signal(self, mock_ts_exists, mock_open_sig, mock_insert, mock_open_pos):
         candles = _make_candles(200, base_close=5000.0, increment=5.0)
         closes = [c["close"] for c in candles]
         advance_close = closes[-1]
@@ -1125,7 +1135,8 @@ class TestIdempotencySameTimestamp:
         assert advance_close > highest_50d and sma50[-1] > sma100[-1], \
             "Test data must satisfy entry conditions"
 
-        mock_exists.return_value = False
+        mock_ts_exists.return_value = False
+        mock_open_sig.return_value = False
         mock_insert.return_value = 300
 
         cache = MagicMock()
@@ -1138,10 +1149,7 @@ class TestIdempotencySameTimestamp:
         assert result1.is_entry, "First run must produce an ENTRY signal"
         assert mock_insert.call_count == 1, "First run must call insert_signal exactly once"
 
-        first_signal = mock_insert.call_args[0][0]
-        first_timestamp = first_signal["signal_timestamp"]
-
-        mock_exists.return_value = True
+        mock_open_sig.return_value = True
         mock_insert.reset_mock()
 
         with patch.object(strat, "_is_eval_window", return_value=True), \
@@ -1149,19 +1157,20 @@ class TestIdempotencySameTimestamp:
             result2 = strat.evaluate("SPX", TIMEFRAME, df, None)
 
         assert result2.is_none, (
-            f"Second run for same timestamp ({first_timestamp}) must be blocked by "
-            f"signal_exists idempotency check"
+            "Second run must be blocked by has_open_signal — "
+            "an OPEN signal already exists for this strategy+asset"
         )
         assert mock_insert.call_count == 0, (
             "insert_signal must NOT be called on the second run — "
-            "signal_exists returned True, blocking the duplicate"
+            "has_open_signal returned True, blocking the duplicate"
         )
 
     @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal")
+    @patch("trading_engine.strategies.trend_non_forex.has_open_signal", return_value=False)
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
     def test_open_position_blocks_duplicate_even_without_timestamp_match(
-        self, mock_exists, mock_insert, mock_open_pos
+        self, mock_ts_exists, mock_open_sig, mock_insert, mock_open_pos
     ):
         mock_insert.return_value = 301
 
@@ -1208,10 +1217,12 @@ class TestATRConsistencyEntryToExit:
     @patch("trading_engine.strategies.trend_non_forex.get_all_open_positions")
     @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal", return_value=500)
+    @patch("trading_engine.strategies.trend_non_forex.has_open_signal", return_value=False)
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
     def test_entry_atr_equals_exit_atr_despite_volatility_change(
         self,
         mock_exists,
+        mock_open_sig,
         mock_insert,
         mock_open_pos,
         mock_all_positions,

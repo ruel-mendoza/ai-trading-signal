@@ -8,6 +8,7 @@ from trading_engine.indicators import IndicatorEngine
 from trading_engine.cache_layer import CacheLayer
 from trading_engine.database import (
     signal_exists,
+    has_open_signal,
     insert_signal,
     close_signal,
     open_position,
@@ -143,6 +144,13 @@ class ForexTrendFollowingStrategy:
                 logger.info(f"[TREND-FOREX] {asset} | IDEMPOTENCY: Existing open BUY trade - skipping duplicate entry")
                 return None
 
+            if has_open_signal(STRATEGY_NAME, asset):
+                logger.info(
+                    f"[TREND-FOREX] {asset} | IDEMPOTENCY: An OPEN signal already exists for "
+                    f"strategy={STRATEGY_NAME}, asset={asset} — duplicate blocked"
+                )
+                return None
+
             if signal_exists(STRATEGY_NAME, asset, signal_timestamp):
                 logger.info(
                     f"[TREND-FOREX] {asset} | IDEMPOTENCY: Signal already exists for candle {signal_timestamp} "
@@ -194,6 +202,13 @@ class ForexTrendFollowingStrategy:
         elif close_below_lowest and not sma50_above_sma100:
             if self._has_open_trade(asset, "SELL"):
                 logger.info(f"[TREND-FOREX] {asset} | IDEMPOTENCY: Existing open SELL trade - skipping duplicate entry")
+                return None
+
+            if has_open_signal(STRATEGY_NAME, asset):
+                logger.info(
+                    f"[TREND-FOREX] {asset} | IDEMPOTENCY: An OPEN signal already exists for "
+                    f"strategy={STRATEGY_NAME}, asset={asset} — duplicate blocked"
+                )
                 return None
 
             if signal_exists(STRATEGY_NAME, asset, signal_timestamp):

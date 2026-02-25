@@ -9,6 +9,7 @@ from trading_engine.indicators import IndicatorEngine
 from trading_engine.cache_layer import CacheLayer
 from trading_engine.database import (
     signal_exists,
+    has_open_signal,
     insert_signal,
     close_signal,
     open_position as db_open_position,
@@ -209,7 +210,14 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
 
         if close_above_highest and sma50_above_sma100:
             if open_position_data and open_position_data.get("direction") == "BUY":
-                logger.info(f"[TREND-NONFX] {asset} | IDEMPOTENCY: Existing open LONG trade - skipping")
+                logger.info(f"[TREND-NONFX] {asset} | IDEMPOTENCY: Existing open LONG position - skipping")
+                return SignalResult()
+
+            if has_open_signal(STRATEGY_NAME, asset):
+                logger.info(
+                    f"[TREND-NONFX] {asset} | IDEMPOTENCY: An OPEN signal already exists for "
+                    f"strategy={STRATEGY_NAME}, asset={asset} — duplicate blocked"
+                )
                 return SignalResult()
 
             if signal_exists(STRATEGY_NAME, asset, signal_timestamp):

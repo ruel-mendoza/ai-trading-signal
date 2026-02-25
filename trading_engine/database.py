@@ -268,6 +268,20 @@ def signal_exists(strategy_name: str, asset: str, signal_timestamp: str) -> bool
         return row is not None
 
 
+def has_open_signal(strategy_name: str, asset: str) -> bool:
+    with _get_session() as session:
+        row = (
+            session.query(Signal.id)
+            .filter_by(
+                strategy_name=strategy_name,
+                asset=asset,
+                status="OPEN",
+            )
+            .first()
+        )
+        return row is not None
+
+
 def insert_signal(signal: dict) -> Optional[int]:
     with _get_session() as session:
         try:

@@ -94,11 +94,12 @@ class TestIdempotency:
         self.strategy = ForexTrendFollowingStrategy(self.mock_cache)
 
     @patch("trading_engine.strategies.trend_forex.datetime")
+    @patch("trading_engine.strategies.trend_forex.has_open_signal", return_value=False)
     @patch("trading_engine.strategies.trend_forex.signal_exists")
     @patch("trading_engine.strategies.trend_forex.get_open_position")
     @patch("trading_engine.strategies.trend_forex.open_position")
     @patch("trading_engine.strategies.trend_forex.insert_signal")
-    def test_first_run_generates_signal(self, mock_insert, mock_open_pos, mock_get_pos, mock_exists, mock_dt):
+    def test_first_run_generates_signal(self, mock_insert, mock_open_pos, mock_get_pos, mock_exists, mock_open_sig, mock_dt):
         et_now = ET.localize(datetime(2026, 3, 10, 17, 5))
         mock_dt.now.return_value = et_now
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
@@ -117,10 +118,11 @@ class TestIdempotency:
         mock_insert.assert_called_once()
 
     @patch("trading_engine.strategies.trend_forex.datetime")
+    @patch("trading_engine.strategies.trend_forex.has_open_signal", return_value=False)
     @patch("trading_engine.strategies.trend_forex.signal_exists")
     @patch("trading_engine.strategies.trend_forex.get_open_position")
     @patch("trading_engine.strategies.trend_forex.insert_signal")
-    def test_rerun_at_515pm_blocked_by_signal_exists(self, mock_insert, mock_get_pos, mock_exists, mock_dt):
+    def test_rerun_at_515pm_blocked_by_signal_exists(self, mock_insert, mock_get_pos, mock_exists, mock_open_sig, mock_dt):
         et_now = ET.localize(datetime(2026, 3, 10, 17, 15))
         mock_dt.now.return_value = et_now
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
