@@ -1,13 +1,17 @@
 import os
 import logging
+from datetime import datetime
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 from contextlib import asynccontextmanager
+import pytz
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+
+ET_ZONE = pytz.timezone("America/New_York")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,7 +67,14 @@ def _scheduled_trend_non_forex_evaluate():
     import pandas as pd
     from trading_engine.database import get_open_position
     from trading_engine.strategies.trend_non_forex import TIMEFRAME as TNF_TIMEFRAME
-    logger.info("[SCHEDULER] ====== Triggered trend_non_forex daily evaluation at 4:00 PM ET ======")
+    now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
+    is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
+    tz_label = "EDT" if is_dst else "EST"
+    logger.info(
+        f"[SCHEDULER] ====== Triggered trend_non_forex daily evaluation at 4:00 PM ET | "
+        f"system_time={now_et.strftime('%Y-%m-%d %H:%M:%S')} {tz_label} | "
+        f"DST={'active' if is_dst else 'inactive'} ======"
+    )
     for asset in TREND_NON_FOREX_SYMBOLS:
         try:
             candles = cache.get_candles(asset, TNF_TIMEFRAME, 300)
@@ -95,21 +106,25 @@ def _scheduled_trend_non_forex_evaluate():
 async def lifespan(app: FastAPI):
     scheduler.add_job(
         _scheduled_trend_forex_evaluate,
-        trigger=CronTrigger(hour=17, minute=0, timezone="US/Eastern"),
+        trigger=CronTrigger(hour=17, minute=0, timezone=ET_ZONE),
         id="trend_forex_daily",
         name="Forex Trend Daily Evaluation (5:00 PM ET)",
         replace_existing=True,
     )
     scheduler.add_job(
         _scheduled_trend_non_forex_evaluate,
-        trigger=CronTrigger(hour=16, minute=0, timezone="US/Eastern"),
+        trigger=CronTrigger(hour=16, minute=0, timezone=ET_ZONE),
         id="trend_non_forex_daily",
         name="Non-Forex Trend Daily Evaluation (4:00 PM ET)",
         replace_existing=True,
     )
     scheduler.start()
+    now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
+    is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
+    tz_label = "EDT" if is_dst else "EST"
     logger.info(
-        "[SCHEDULER] APScheduler started | trend_forex at 17:00, trend_non_forex at 16:00 US/Eastern daily"
+        f"[SCHEDULER] APScheduler started | trend_forex at 17:00, trend_non_forex at 16:00 "
+        f"America/New_York (currently {tz_label}, DST={'active' if is_dst else 'inactive'})"
     )
     yield
     scheduler.shutdown(wait=False)
