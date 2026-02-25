@@ -3,6 +3,7 @@ import math
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock, call, PropertyMock
 import pytz
+import pandas as pd
 
 @pytest.fixture(autouse=True)
 def _allow_all_symbols():
@@ -25,6 +26,7 @@ from trading_engine.strategies.trend_non_forex import (
     EVAL_WINDOW_MINUTES,
     ET_ZONE,
 )
+from trading_engine.strategies.base import Action, Direction, SignalResult
 from trading_engine.indicators import IndicatorEngine
 
 
@@ -94,6 +96,33 @@ def _make_advance_quote(close_price, timestamp="2026-02-24T16:00:00"):
         "timestamp": timestamp,
         "update_time": timestamp,
     }
+
+
+def _candles_to_df(candles):
+    return pd.DataFrame(candles)
+
+
+class TestBaseStrategyInterface:
+    def test_extends_base_strategy(self):
+        from trading_engine.strategies.base import BaseStrategy
+        cache = MagicMock()
+        strat = NonForexTrendFollowingStrategy(cache)
+        assert isinstance(strat, BaseStrategy)
+
+    def test_name_property(self):
+        cache = MagicMock()
+        strat = NonForexTrendFollowingStrategy(cache)
+        assert strat.name == "trend_non_forex"
+
+    def test_evaluate_returns_signal_result(self):
+        candles = _make_flat_candles(150, price=100.0)
+        df = _candles_to_df(candles)
+        cache = MagicMock()
+        strat = NonForexTrendFollowingStrategy(cache)
+        with patch.object(strat, "_is_eval_window", return_value=True), \
+             patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(100.0)):
+            result = strat.evaluate("SPX", TIMEFRAME, df, None)
+        assert isinstance(result, SignalResult)
 
 
 class TestTargetSymbols:
@@ -192,11 +221,10 @@ class TestBacktest400DaysSPX:
         atr100 = IndicatorEngine.atr(highs, lows, closes, ATR_PERIOD)
         return closes, sma50, sma100, atr100
 
-    @patch("trading_engine.strategies.trend_non_forex.open_position")
+    @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal")
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
-    @patch("trading_engine.strategies.trend_non_forex.get_open_position", return_value=None)
-    def test_backtest_entries_only_above_50d_high(self, mock_pos, mock_exists, mock_insert, mock_open):
+    def test_backtest_entries_only_above_50d_high(self, mock_exists, mock_insert, mock_open):
         mock_insert.side_effect = lambda sig: 1
 
         all_candles = _make_spx_backtest_candles(400, start_price=4000.0, trend_pct=0.0003)
@@ -223,29 +251,28 @@ class TestBacktest400DaysSPX:
             should_entry = current_close > highest_50d and sma50_val > sma100_val
 
             cache = MagicMock()
-            cache.get_candles.return_value = window
+            df = _candles_to_df(window)
 
             strat = NonForexTrendFollowingStrategy(cache)
             with patch.object(strat, "_is_eval_window", return_value=True), \
                  patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(current_close)):
-                result = strat.evaluate("SPX")
+                result = strat.evaluate("SPX", TIMEFRAME, df, None)
 
             if should_entry:
-                assert result is not None, (
+                assert result.is_entry, (
                     f"Day {day_idx}: Expected ENTRY | close={current_close:.2f} > "
                     f"50d_high={highest_50d:.2f}, SMA50={sma50_val:.2f} > SMA100={sma100_val:.2f}"
                 )
-                assert result["direction"] == "BUY"
-                assert result["atr_at_entry"] is not None
+                assert result.direction == Direction.LONG
+                assert result.atr_at_entry is not None
                 entries.append(day_idx)
             else:
-                assert result is None, (
+                assert result.is_none, (
                     f"Day {day_idx}: Expected NO ENTRY | close={current_close:.2f}, "
                     f"50d_high={highest_50d:.2f}, SMA50={sma50_val:.2f}, SMA100={sma100_val:.2f}"
                 )
                 no_entries.append(day_idx)
 
-            mock_pos.reset_mock()
             mock_exists.reset_mock()
             mock_insert.reset_mock()
             mock_open.reset_mock()
@@ -254,51 +281,48 @@ class TestBacktest400DaysSPX:
         assert len(entries) > 0, "Uptrending data should produce at least one entry"
         assert len(no_entries) > 0, "Not every day should trigger an entry"
 
-    @patch("trading_engine.strategies.trend_non_forex.open_position")
+    @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal")
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
-    @patch("trading_engine.strategies.trend_non_forex.get_open_position", return_value=None)
-    def test_backtest_no_entry_in_flat_market(self, mock_pos, mock_exists, mock_insert, mock_open):
+    def test_backtest_no_entry_in_flat_market(self, mock_exists, mock_insert, mock_open):
         flat_candles = _make_flat_candles(200, price=5000.0)
+        df = _candles_to_df(flat_candles)
 
         cache = MagicMock()
-        cache.get_candles.return_value = flat_candles
 
         strat = NonForexTrendFollowingStrategy(cache)
         with patch.object(strat, "_is_eval_window", return_value=True), \
              patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(5000.0)):
-            result = strat.evaluate("SPX")
+            result = strat.evaluate("SPX", TIMEFRAME, df, None)
 
-        assert result is None, "Flat market should never trigger an entry"
+        assert result.is_none, "Flat market should never trigger an entry"
 
-    @patch("trading_engine.strategies.trend_non_forex.open_position")
+    @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal")
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
-    @patch("trading_engine.strategies.trend_non_forex.get_open_position", return_value=None)
-    def test_backtest_no_short_entries(self, mock_pos, mock_exists, mock_insert, mock_open):
+    def test_backtest_no_short_entries(self, mock_exists, mock_insert, mock_open):
         mock_insert.side_effect = lambda sig: 1
 
         downtrend_candles = _make_spx_backtest_candles(200, start_price=5000.0, trend_pct=-0.002)
         last_close = downtrend_candles[-1]["close"]
+        df = _candles_to_df(downtrend_candles)
 
         cache = MagicMock()
-        cache.get_candles.return_value = downtrend_candles
 
         strat = NonForexTrendFollowingStrategy(cache)
         with patch.object(strat, "_is_eval_window", return_value=True), \
              patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(last_close)):
-            result = strat.evaluate("SPX")
+            result = strat.evaluate("SPX", TIMEFRAME, df, None)
 
-        if result is not None:
-            assert result["direction"] == "BUY", "Strategy must never produce SHORT signals"
+        if result.is_entry:
+            assert result.direction == Direction.LONG, "Strategy must never produce SHORT signals"
 
 
 class TestEntryValidation50DayHigh:
-    @patch("trading_engine.strategies.trend_non_forex.open_position")
+    @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal", return_value=100)
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
-    @patch("trading_engine.strategies.trend_non_forex.get_open_position", return_value=None)
-    def test_entry_when_close_exceeds_50d_high(self, mock_pos, mock_exists, mock_insert, mock_open):
+    def test_entry_when_close_exceeds_50d_high(self, mock_exists, mock_insert, mock_open):
         candles = _make_candles(150, base_close=100.0, increment=0.5)
 
         closes = [c["close"] for c in candles]
@@ -311,21 +335,22 @@ class TestEntryValidation50DayHigh:
         sma100 = IndicatorEngine.sma(closes, SMA_SLOW)
         assert sma50[-1] > sma100[-1], "Test data must have SMA50 > SMA100"
 
+        df = _candles_to_df(candles)
         cache = MagicMock()
-        cache.get_candles.return_value = candles
         strat = NonForexTrendFollowingStrategy(cache)
         with patch.object(strat, "_is_eval_window", return_value=True), \
              patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(current_close)):
-            result = strat.evaluate("SPX")
+            result = strat.evaluate("SPX", TIMEFRAME, df, None)
 
-        assert result is not None
-        assert result["direction"] == "BUY"
-        assert result["entry_price"] == current_close
-        assert result["atr_at_entry"] is not None
-        assert result["action"] == "ENTRY"
+        assert result.is_entry
+        assert result.direction == Direction.LONG
+        assert result.price == current_close
+        assert result.atr_at_entry is not None
+        signal = result.metadata.get("signal")
+        assert signal is not None
+        assert signal["action"] == "ENTRY"
 
-    @patch("trading_engine.strategies.trend_non_forex.get_open_position", return_value=None)
-    def test_no_entry_when_close_equals_50d_high(self, mock_pos):
+    def test_no_entry_when_close_equals_50d_high(self):
         n = 150
         candles = []
         for i in range(n):
@@ -342,18 +367,17 @@ class TestEntryValidation50DayHigh:
         highest_50d = max(prior_closes)
 
         advance_close = highest_50d
+        df = _candles_to_df(candles)
 
         cache = MagicMock()
-        cache.get_candles.return_value = candles
         strat = NonForexTrendFollowingStrategy(cache)
         with patch.object(strat, "_is_eval_window", return_value=True), \
              patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(advance_close)):
-            result = strat.evaluate("SPX")
+            result = strat.evaluate("SPX", TIMEFRAME, df, None)
 
-        assert result is None, "Entry requires close > highest_50d (strict), not >="
+        assert result.is_none, "Entry requires close > highest_50d (strict), not >="
 
-    @patch("trading_engine.strategies.trend_non_forex.get_open_position", return_value=None)
-    def test_no_entry_when_sma50_below_sma100(self, mock_pos):
+    def test_no_entry_when_sma50_below_sma100(self):
         n = 150
         candles = []
         for i in range(n):
@@ -377,32 +401,31 @@ class TestEntryValidation50DayHigh:
         closes = [c["close"] for c in candles]
         sma50 = IndicatorEngine.sma(closes, SMA_FAST)
         sma100 = IndicatorEngine.sma(closes, SMA_SLOW)
+        df = _candles_to_df(candles)
 
         cache = MagicMock()
-        cache.get_candles.return_value = candles
         strat = NonForexTrendFollowingStrategy(cache)
         with patch.object(strat, "_is_eval_window", return_value=True), \
              patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(closes[-1])):
-            result = strat.evaluate("SPX")
+            result = strat.evaluate("SPX", TIMEFRAME, df, None)
 
         if sma50[-1] is not None and sma100[-1] is not None and sma50[-1] <= sma100[-1]:
-            assert result is None, "No entry when SMA50 <= SMA100 even if close > 50d high"
+            assert result.is_none, "No entry when SMA50 <= SMA100 even if close > 50d high"
 
-    @patch("trading_engine.strategies.trend_non_forex.open_position")
+    @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal", return_value=100)
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
-    @patch("trading_engine.strategies.trend_non_forex.get_open_position", return_value=None)
-    def test_no_entry_when_advance_unavailable(self, mock_pos, mock_exists, mock_insert, mock_open):
+    def test_no_entry_when_advance_unavailable(self, mock_exists, mock_insert, mock_open):
         candles = _make_candles(150, base_close=100.0, increment=0.5)
+        df = _candles_to_df(candles)
 
         cache = MagicMock()
-        cache.get_candles.return_value = candles
         strat = NonForexTrendFollowingStrategy(cache)
         with patch.object(strat, "_is_eval_window", return_value=True), \
              patch.object(strat, "_get_advance_price", return_value=None):
-            result = strat.evaluate("SPX")
+            result = strat.evaluate("SPX", TIMEFRAME, df, None)
 
-        assert result is None, "Should skip when advance price is unavailable"
+        assert result.is_none, "Should skip when advance price is unavailable"
 
 
 class TestTrailingStopPrecision:
@@ -655,24 +678,23 @@ class TestTimezone4PMET:
         strat = NonForexTrendFollowingStrategy(cache)
         assert strat._is_eval_window() is True
 
-    @patch("trading_engine.strategies.trend_non_forex.open_position")
+    @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal", return_value=99)
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
-    @patch("trading_engine.strategies.trend_non_forex.get_open_position", return_value=None)
     @patch("trading_engine.strategies.trend_non_forex.datetime")
-    def test_sunday_btc_entry_fires(self, mock_dt, mock_pos, mock_exists, mock_insert, mock_open):
+    def test_sunday_btc_entry_fires(self, mock_dt, mock_exists, mock_insert, mock_open):
         mock_now = datetime(2025, 1, 12, 21, 0, 0, tzinfo=pytz.utc)
         mock_dt.now.return_value = mock_now
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
 
         candles = _make_candles(150, base_close=60000.0, increment=100.0)
         last_close = candles[-1]["close"]
+        df = _candles_to_df(candles)
 
         cache = MagicMock()
-        cache.get_candles.return_value = candles
         strat = NonForexTrendFollowingStrategy(cache)
         with patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(last_close)):
-            result = strat.evaluate("BTC/USD")
+            result = strat.evaluate("BTC/USD", TIMEFRAME, df, None)
 
         closes = [c["close"] for c in candles]
         prior_closes = closes[-(LOOKBACK_DAYS + 1):-1]
@@ -681,10 +703,11 @@ class TestTimezone4PMET:
         sma100 = IndicatorEngine.sma(closes, SMA_SLOW)
 
         if last_close > highest_50d and sma50[-1] > sma100[-1]:
-            assert result is not None
-            assert result["direction"] == "BUY"
+            assert result.is_entry
+            signal = result.metadata.get("signal")
+            assert signal["direction"] == "BUY"
         else:
-            assert result is None
+            assert result.is_none
 
     @patch("trading_engine.strategies.trend_non_forex.datetime")
     def test_saturday_4pm_et_no_window_issue(self, mock_dt):
@@ -715,55 +738,53 @@ class TestTimezone4PMET:
 
 
 class TestIdempotency:
-    @patch("trading_engine.strategies.trend_non_forex.get_open_position")
-    def test_existing_long_blocks_entry(self, mock_pos):
-        mock_pos.return_value = {"id": 1, "direction": "BUY", "entry_price": 100.0, "atr_at_entry": 5.0, "highest_price_since_entry": 110.0}
+    def test_existing_long_blocks_entry(self):
+        open_pos = {"id": 1, "direction": "BUY", "entry_price": 100.0, "atr_at_entry": 5.0, "highest_price_since_entry": 110.0}
 
         candles = _make_candles(150, base_close=100.0, increment=0.5)
         last_close = candles[-1]["close"]
+        df = _candles_to_df(candles)
 
         cache = MagicMock()
-        cache.get_candles.return_value = candles
         strat = NonForexTrendFollowingStrategy(cache)
         with patch.object(strat, "_is_eval_window", return_value=True), \
              patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(last_close)):
-            result = strat.evaluate("SPX")
+            result = strat.evaluate("SPX", TIMEFRAME, df, open_pos)
 
-        assert result is None
+        assert result.is_none
 
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=True)
-    @patch("trading_engine.strategies.trend_non_forex.get_open_position", return_value=None)
-    def test_duplicate_signal_blocked_by_timestamp(self, mock_pos, mock_exists):
+    def test_duplicate_signal_blocked_by_timestamp(self, mock_exists):
         candles = _make_candles(150, base_close=100.0, increment=0.5)
         last_close = candles[-1]["close"]
+        df = _candles_to_df(candles)
 
         cache = MagicMock()
-        cache.get_candles.return_value = candles
         strat = NonForexTrendFollowingStrategy(cache)
         with patch.object(strat, "_is_eval_window", return_value=True), \
              patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(last_close)):
-            result = strat.evaluate("SPX")
+            result = strat.evaluate("SPX", TIMEFRAME, df, None)
 
-        assert result is None
+        assert result.is_none
 
-    @patch("trading_engine.strategies.trend_non_forex.open_position")
+    @patch("trading_engine.strategies.trend_non_forex.db_open_position")
     @patch("trading_engine.strategies.trend_non_forex.insert_signal", return_value=50)
     @patch("trading_engine.strategies.trend_non_forex.signal_exists", return_value=False)
-    @patch("trading_engine.strategies.trend_non_forex.get_open_position", return_value=None)
-    def test_signal_timestamp_uses_current_et_time(self, mock_pos, mock_exists, mock_insert, mock_open):
+    def test_signal_timestamp_uses_current_et_time(self, mock_exists, mock_insert, mock_open):
         candles = _make_candles(150, base_close=100.0, increment=0.5)
         last_close = candles[-1]["close"]
+        df = _candles_to_df(candles)
 
         cache = MagicMock()
-        cache.get_candles.return_value = candles
         strat = NonForexTrendFollowingStrategy(cache)
         with patch.object(strat, "_is_eval_window", return_value=True), \
              patch.object(strat, "_get_advance_price", return_value=_make_advance_quote(last_close)):
-            result = strat.evaluate("SPX")
+            result = strat.evaluate("SPX", TIMEFRAME, df, None)
 
-        if result is not None:
-            assert "T" in result["signal_timestamp"], "Signal timestamp should be ISO format with T separator"
-            assert result["action"] == "ENTRY"
+        if result.is_entry:
+            signal = result.metadata.get("signal")
+            assert "T" in signal["signal_timestamp"], "Signal timestamp should be ISO format with T separator"
+            assert signal["action"] == "ENTRY"
 
 
 class TestCheckExits:

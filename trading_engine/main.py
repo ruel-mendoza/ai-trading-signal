@@ -60,12 +60,22 @@ def _scheduled_trend_forex_evaluate():
 
 
 def _scheduled_trend_non_forex_evaluate():
+    import pandas as pd
+    from trading_engine.database import get_open_position
+    from trading_engine.strategies.trend_non_forex import TIMEFRAME as TNF_TIMEFRAME
     logger.info("[SCHEDULER] ====== Triggered trend_non_forex daily evaluation at 4:00 PM ET ======")
     for asset in TREND_NON_FOREX_SYMBOLS:
         try:
-            result = strategy_engine.trend_non_forex_strategy.evaluate(asset)
-            if result:
-                logger.info(f"[SCHEDULER] trend_non_forex | {asset} | NEW SIGNAL generated: {result.get('direction', '')} id={result.get('id')}")
+            candles = cache.get_candles(asset, TNF_TIMEFRAME, 300)
+            if not candles:
+                logger.warning(f"[SCHEDULER] trend_non_forex | {asset} | No candles available")
+                continue
+            df = pd.DataFrame(candles)
+            open_pos = get_open_position("trend_non_forex", asset)
+            result = strategy_engine.trend_non_forex_strategy.evaluate(asset, TNF_TIMEFRAME, df, open_pos)
+            if result.is_entry:
+                signal = result.metadata.get("signal", {})
+                logger.info(f"[SCHEDULER] trend_non_forex | {asset} | NEW SIGNAL generated: {signal.get('direction', '')} id={signal.get('id')}")
             else:
                 logger.info(f"[SCHEDULER] trend_non_forex | {asset} | No signal triggered")
         except Exception as e:

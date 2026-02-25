@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Optional
+import pandas as pd
 
 from trading_engine.indicators import IndicatorEngine
 from trading_engine.cache_layer import CacheLayer
@@ -68,11 +69,21 @@ class StrategyEngine:
             if tf_forex_result:
                 results.append(tf_forex_result)
 
-        from trading_engine.strategies.trend_non_forex import TARGET_SYMBOLS as TREND_NON_FOREX_SYMBOLS
+        from trading_engine.strategies.trend_non_forex import TARGET_SYMBOLS as TREND_NON_FOREX_SYMBOLS, TIMEFRAME as TNF_TIMEFRAME
         for asset in TREND_NON_FOREX_SYMBOLS:
-            tnf_result = self.trend_non_forex_strategy.evaluate(asset)
-            if tnf_result:
-                results.append(tnf_result)
+            try:
+                candles = self.cache.get_candles(asset, TNF_TIMEFRAME, 300)
+            except Exception:
+                continue
+            if not candles:
+                continue
+            df = pd.DataFrame(candles)
+            open_pos = get_open_position(STRATEGY_TREND_NON_FOREX, asset)
+            tnf_result = self.trend_non_forex_strategy.evaluate(asset, TNF_TIMEFRAME, df, open_pos)
+            if tnf_result.is_entry:
+                signal = tnf_result.metadata.get("signal")
+                if signal:
+                    results.append(signal)
 
         return results
 

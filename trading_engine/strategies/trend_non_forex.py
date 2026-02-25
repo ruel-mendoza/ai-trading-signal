@@ -1,20 +1,21 @@
 import logging
 from datetime import datetime
-import pytz
 from typing import Optional
+import pytz
+import pandas as pd
 
+from trading_engine.strategies.base import BaseStrategy, SignalResult, Action, Direction
 from trading_engine.indicators import IndicatorEngine
 from trading_engine.cache_layer import CacheLayer
 from trading_engine.database import (
     signal_exists,
     insert_signal,
     close_signal,
-    open_position,
+    open_position as db_open_position,
     get_open_position,
     get_all_open_positions,
     update_position_tracking,
     close_position,
-    has_open_position,
     get_active_signals,
 )
 
@@ -45,9 +46,13 @@ EVAL_WINDOW_MINUTES = 30
 ET_ZONE = pytz.timezone("America/New_York")
 
 
-class NonForexTrendFollowingStrategy:
+class NonForexTrendFollowingStrategy(BaseStrategy):
     def __init__(self, cache: CacheLayer):
         self.cache = cache
+
+    @property
+    def name(self) -> str:
+        return STRATEGY_NAME
 
     def _is_eval_window(self) -> bool:
         now_utc = datetime.now(pytz.utc)
@@ -67,15 +72,6 @@ class NonForexTrendFollowingStrategy:
             f"DST={'active' if is_dst else 'inactive'}"
         )
         return in_window
-
-    def _has_open_long(self, asset: str) -> bool:
-        pos = get_open_position(STRATEGY_NAME, asset)
-        if pos and pos["direction"] == "BUY":
-            logger.info(
-                f"[TREND-NONFX] {asset} | Existing open LONG trade found (position #{pos['id']})"
-            )
-            return True
-        return False
 
     def _get_advance_price(self, asset: str) -> Optional[dict]:
         try:
@@ -111,43 +107,43 @@ class NonForexTrendFollowingStrategy:
             logger.error(f"[TREND-NONFX] {asset} | v4 advance request failed: {e}")
         return None
 
-    def evaluate(self, asset: str) -> Optional[dict]:
+    def evaluate(
+        self,
+        asset: str,
+        timeframe: str,
+        df: pd.DataFrame,
+        open_position_data: Optional[dict],
+    ) -> SignalResult:
         logger.info(f"[TREND-NONFX] ====== Evaluating {asset} ======")
 
         if asset not in TARGET_SYMBOLS:
             logger.info(f"[TREND-NONFX] {asset} | Not a target asset - skipping")
-            return None
+            return SignalResult()
 
         from trading_engine.fcsapi_client import is_symbol_supported
         if not is_symbol_supported(asset):
             logger.warning(f"[TREND-NONFX] {asset} | Symbol not supported by current data provider plan - skipping")
-            return None
+            return SignalResult()
 
         if not self._is_eval_window():
             logger.info(f"[TREND-NONFX] {asset} | Outside 4:00 PM ET window - skipping")
-            return None
+            return SignalResult()
 
         advance_quote = self._get_advance_price(asset)
         if advance_quote is None:
             logger.warning(f"[TREND-NONFX] {asset} | Cannot get real-time price from v4 advance - skipping")
-            return None
+            return SignalResult()
 
-        try:
-            candles = self.cache.get_candles(asset, TIMEFRAME, 300)
-        except Exception as e:
-            logger.error(f"[TREND-NONFX] {asset} | Exception fetching candles: {e}")
-            return None
-
-        logger.info(f"[TREND-NONFX] {asset} | Daily candles: {len(candles)} (need {MIN_BARS_REQUIRED})")
-        if len(candles) < MIN_BARS_REQUIRED:
+        logger.info(f"[TREND-NONFX] {asset} | Daily candles: {len(df)} (need {MIN_BARS_REQUIRED})")
+        if len(df) < MIN_BARS_REQUIRED:
             logger.warning(
-                f"[TREND-NONFX] {asset} | INSUFFICIENT DATA - have {len(candles)}, need {MIN_BARS_REQUIRED}"
+                f"[TREND-NONFX] {asset} | INSUFFICIENT DATA - have {len(df)}, need {MIN_BARS_REQUIRED}"
             )
-            return None
+            return SignalResult()
 
-        closes = [c["close"] for c in candles]
-        highs = [c["high"] for c in candles]
-        lows = [c["low"] for c in candles]
+        closes = df["close"].tolist()
+        highs = df["high"].tolist()
+        lows = df["low"].tolist()
 
         sma50_values = IndicatorEngine.sma(closes, SMA_FAST)
         sma100_values = IndicatorEngine.sma(closes, SMA_SLOW)
@@ -164,7 +160,7 @@ class NonForexTrendFollowingStrategy:
             if sma100_val is None: none_list.append("SMA100")
             if atr_val is None: none_list.append("ATR100")
             logger.warning(f"[TREND-NONFX] {asset} | Indicators returned None: {none_list}")
-            return None
+            return SignalResult()
 
         prior_closes = closes[-(LOOKBACK_DAYS + 1):-1]
         highest_50d = max(prior_closes)
@@ -180,22 +176,21 @@ class NonForexTrendFollowingStrategy:
             f"AND SMA50 ({sma50_val:.5f}) > SMA100 ({sma100_val:.5f}) = {sma50_above_sma100}"
         )
 
-        existing_pos = get_open_position(STRATEGY_NAME, asset)
-        if existing_pos:
-            pos_atr = existing_pos.get("atr_at_entry")
-            pos_highest = existing_pos.get("highest_price_since_entry") or existing_pos["entry_price"]
+        if open_position_data:
+            pos_atr = open_position_data.get("atr_at_entry")
+            pos_highest = open_position_data.get("highest_price_since_entry") or open_position_data["entry_price"]
             pos_highest = max(pos_highest, current_close)
             if pos_atr is not None:
                 trailing_stop = pos_highest - (pos_atr * TRAILING_STOP_ATR_MULT)
                 logger.info(
-                    f"[TREND-NONFX] {asset} | ACTIVE TRADE #{existing_pos['id']} | "
-                    f"direction={existing_pos['direction']} | entry={existing_pos['entry_price']:.5f} | "
+                    f"[TREND-NONFX] {asset} | ACTIVE TRADE #{open_position_data['id']} | "
+                    f"direction={open_position_data['direction']} | entry={open_position_data['entry_price']:.5f} | "
                     f"ATR_at_entry={pos_atr:.6f} (FIXED) | highest_since_entry={pos_highest:.5f} | "
                     f"current_trailing_stop={trailing_stop:.5f}"
                 )
             else:
                 logger.warning(
-                    f"[TREND-NONFX] {asset} | ACTIVE TRADE #{existing_pos['id']} | "
+                    f"[TREND-NONFX] {asset} | ACTIVE TRADE #{open_position_data['id']} | "
                     f"ATR_at_entry=MISSING — trailing stop cannot be calculated"
                 )
 
@@ -203,9 +198,9 @@ class NonForexTrendFollowingStrategy:
         signal_timestamp = now_et.strftime("%Y-%m-%dT%H:%M:%S")
 
         if close_above_highest and sma50_above_sma100:
-            if self._has_open_long(asset):
+            if open_position_data and open_position_data.get("direction") == "BUY":
                 logger.info(f"[TREND-NONFX] {asset} | IDEMPOTENCY: Existing open LONG trade - skipping")
-                return None
+                return SignalResult()
 
             if signal_exists(STRATEGY_NAME, asset, signal_timestamp):
                 logger.info(
@@ -213,7 +208,7 @@ class NonForexTrendFollowingStrategy:
                     f"signal_timestamp={signal_timestamp} (unique constraint: strategy+asset+timestamp) "
                     f"- duplicate blocked on re-run"
                 )
-                return None
+                return SignalResult()
 
             stop_loss_distance = TRAILING_STOP_ATR_MULT * atr_val
             stop_loss = current_close - stop_loss_distance
@@ -241,7 +236,7 @@ class NonForexTrendFollowingStrategy:
             }
             signal_id = insert_signal(signal)
             if signal_id:
-                open_position({
+                db_open_position({
                     "asset": asset,
                     "strategy_name": STRATEGY_NAME,
                     "direction": "BUY",
@@ -251,11 +246,18 @@ class NonForexTrendFollowingStrategy:
                 signal["id"] = signal_id
                 signal["status"] = "OPEN"
                 logger.info(f"[TREND-NONFX] {asset} | Signal stored with id={signal_id}")
-                return signal
+                return SignalResult(
+                    action=Action.ENTRY,
+                    direction=Direction.LONG,
+                    price=current_close,
+                    stop_loss=stop_loss,
+                    atr_at_entry=round(atr_val, 6),
+                    metadata={"signal": signal},
+                )
         else:
             logger.info(f"[TREND-NONFX] {asset} | LONG conditions not met — no action")
 
-        return None
+        return SignalResult()
 
     def check_exits(self) -> list[dict]:
         closed_signals = []
