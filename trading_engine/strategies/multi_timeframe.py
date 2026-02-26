@@ -42,9 +42,11 @@ MIN_D1_BARS = 200
 MIN_H4_BARS = 200
 MIN_H1_BARS = 20
 
-SL_ATR_MULT = 2.0
+SL_ATR_MULT = 0.5
 TP_ATR_MULT = 3.0
 TRAILING_STOP_ATR_MULT = 2.0
+STRUCTURAL_LOOKBACK_H1 = 24
+STRUCTURAL_PIP_BUFFER = 0.0002
 
 
 @dataclass
@@ -385,12 +387,110 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
         logger.info(f"[MTF-EMA] {asset} | SHORT ALL CONDITIONS MET: {all_met}")
         return all_met
 
-    def _check_entry_conditions(self, asset: str, current_price: float, ind: MTFIndicators) -> Optional[SignalResult]:
+    def _compute_structural_stop_long(
+        self, asset: str, h1_lows: list[float], h4_ema50: float, entry_price: float
+    ) -> Optional[float]:
+        recent_lows = h1_lows[-STRUCTURAL_LOOKBACK_H1:]
+        lows_below_ema = [lo for lo in recent_lows if lo < h4_ema50]
+
+        if not lows_below_ema:
+            logger.info(
+                f"[MTF-EMA] {asset} | LONG structural stop: "
+                f"no H1 lows below H4 EMA50 ({h4_ema50:.5f}) in last {STRUCTURAL_LOOKBACK_H1}h"
+            )
+            return None
+
+        lowest = min(lows_below_ema)
+        structural_sl = lowest - STRUCTURAL_PIP_BUFFER
+        logger.info(
+            f"[MTF-EMA] {asset} | LONG structural stop: "
+            f"lowest H1 low below H4 EMA50 = {lowest:.5f} - {STRUCTURAL_PIP_BUFFER} pip buffer = {structural_sl:.5f} | "
+            f"distance from entry = {entry_price - structural_sl:.5f}"
+        )
+        return structural_sl
+
+    def _compute_structural_stop_short(
+        self, asset: str, h1_highs: list[float], h4_ema50: float, entry_price: float
+    ) -> Optional[float]:
+        recent_highs = h1_highs[-STRUCTURAL_LOOKBACK_H1:]
+        highs_above_ema = [hi for hi in recent_highs if hi > h4_ema50]
+
+        if not highs_above_ema:
+            logger.info(
+                f"[MTF-EMA] {asset} | SHORT structural stop: "
+                f"no H1 highs above H4 EMA50 ({h4_ema50:.5f}) in last {STRUCTURAL_LOOKBACK_H1}h"
+            )
+            return None
+
+        highest = max(highs_above_ema)
+        structural_sl = highest + STRUCTURAL_PIP_BUFFER
+        logger.info(
+            f"[MTF-EMA] {asset} | SHORT structural stop: "
+            f"highest H1 high above H4 EMA50 = {highest:.5f} + {STRUCTURAL_PIP_BUFFER} pip buffer = {structural_sl:.5f} | "
+            f"distance from entry = {structural_sl - entry_price:.5f}"
+        )
+        return structural_sl
+
+    def _select_stop_loss(
+        self, asset: str, direction: str, entry_price: float,
+        structural_sl: Optional[float], atr_sl: float, atr_distance: float
+    ) -> tuple[float, str]:
+        if structural_sl is None:
+            logger.info(
+                f"[MTF-EMA] {asset} | {direction} SL selection: "
+                f"no structural stop available — using ATR stop = {atr_sl:.5f} "
+                f"(distance = {atr_distance:.5f})"
+            )
+            return atr_sl, "atr"
+
+        if direction == "LONG":
+            structural_distance = entry_price - structural_sl
+        else:
+            structural_distance = structural_sl - entry_price
+
+        if structural_distance <= 0:
+            logger.warning(
+                f"[MTF-EMA] {asset} | {direction} SL selection: "
+                f"structural stop on wrong side of entry (distance={structural_distance:.5f}) "
+                f"— falling back to ATR stop = {atr_sl:.5f}"
+            )
+            return atr_sl, "atr"
+
+        if structural_distance > atr_distance:
+            logger.info(
+                f"[MTF-EMA] {asset} | {direction} SL selection: "
+                f"STRUCTURAL wins — structural={structural_sl:.5f} (dist={structural_distance:.5f}) "
+                f"> ATR={atr_sl:.5f} (dist={atr_distance:.5f})"
+            )
+            return structural_sl, "structural"
+        else:
+            logger.info(
+                f"[MTF-EMA] {asset} | {direction} SL selection: "
+                f"ATR wins — ATR={atr_sl:.5f} (dist={atr_distance:.5f}) "
+                f">= structural={structural_sl:.5f} (dist={structural_distance:.5f})"
+            )
+            return atr_sl, "atr"
+
+    def _check_entry_conditions(
+        self, asset: str, current_price: float, ind: MTFIndicators, tf_data: dict
+    ) -> Optional[SignalResult]:
         logger.info(f"[MTF-EMA] {asset} | Checking entry conditions | price={current_price:.5f}")
+
+        h1 = tf_data["h1"]
 
         long_triggered = self._check_long_conditions(asset, ind)
         if long_triggered:
-            stop_loss = current_price - (SL_ATR_MULT * ind.h4_atr100)
+            atr_distance = SL_ATR_MULT * ind.h4_atr100
+            atr_sl = current_price - atr_distance
+
+            structural_sl = self._compute_structural_stop_long(
+                asset, h1.lows, ind.h4_ema50, current_price
+            )
+
+            stop_loss, sl_method = self._select_stop_loss(
+                asset, "LONG", current_price, structural_sl, atr_sl, atr_distance
+            )
+
             take_profit = current_price + (TP_ATR_MULT * ind.h4_atr100)
             h4_accel = (ind.h4_ema200 - ind.h4_ema200_prev) - (ind.h4_ema200_prev - ind.h4_ema200_earlier)
 
@@ -402,6 +502,9 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
                 atr_at_entry=ind.h4_atr100,
                 metadata={
                     "take_profit": take_profit,
+                    "sl_method": sl_method,
+                    "sl_atr_value": round(atr_sl, 6),
+                    "sl_structural_value": round(structural_sl, 6) if structural_sl else None,
                     "sl_atr_mult": SL_ATR_MULT,
                     "tp_atr_mult": TP_ATR_MULT,
                     "h4_atr100": round(ind.h4_atr100, 6),
@@ -417,7 +520,17 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
 
         short_triggered = self._check_short_conditions(asset, ind)
         if short_triggered:
-            stop_loss = current_price + (SL_ATR_MULT * ind.h4_atr100)
+            atr_distance = SL_ATR_MULT * ind.h4_atr100
+            atr_sl = current_price + atr_distance
+
+            structural_sl = self._compute_structural_stop_short(
+                asset, h1.highs, ind.h4_ema50, current_price
+            )
+
+            stop_loss, sl_method = self._select_stop_loss(
+                asset, "SHORT", current_price, structural_sl, atr_sl, atr_distance
+            )
+
             take_profit = current_price - (TP_ATR_MULT * ind.h4_atr100)
             h4_accel = (ind.h4_ema200_prev - ind.h4_ema200) - (ind.h4_ema200_earlier - ind.h4_ema200_prev)
 
@@ -429,6 +542,9 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
                 atr_at_entry=ind.h4_atr100,
                 metadata={
                     "take_profit": take_profit,
+                    "sl_method": sl_method,
+                    "sl_atr_value": round(atr_sl, 6),
+                    "sl_structural_value": round(structural_sl, 6) if structural_sl else None,
                     "sl_atr_mult": SL_ATR_MULT,
                     "tp_atr_mult": TP_ATR_MULT,
                     "h4_atr100": round(ind.h4_atr100, 6),
@@ -570,7 +686,7 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             logger.info(f"[MTF-EMA] {asset} | Active signal exists — skipping entry check")
             return SignalResult()
 
-        entry_result = self._check_entry_conditions(asset, current_price, indicators)
+        entry_result = self._check_entry_conditions(asset, current_price, indicators, tf_data)
         if entry_result:
             return entry_result
 
