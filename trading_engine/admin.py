@@ -1788,6 +1788,8 @@ function showTab(tabName) {
     if (mobileEl) mobileEl.classList.add('active');
     if (tabName === 'settings') loadCreditMeter();
     if (tabName === 'notifications') loadNotifConfig();
+    if (tabName === 'scheduler') loadSchedulerData();
+    if (tabName === 'system') loadSystemStatus();
 }
 
 function showStrategyTab(strategyName) {
@@ -2001,6 +2003,179 @@ async function deleteAdmin(id, username) {
     }
 }
 
+async function loadSchedulerData() {
+    try {
+        var [healthRes, jobsRes, sysRes] = await Promise.all([
+            fetch(BASE + '/admin/api/scheduler/health'),
+            fetch(BASE + '/admin/api/scheduler/jobs?limit=50'),
+            fetch(BASE + '/health')
+        ]);
+        var health = await healthRes.json();
+        var jobsData = await jobsRes.json();
+        var sysHealth = await sysRes.json();
+
+        document.getElementById('sched-loading').style.display = 'none';
+        document.getElementById('sched-content').style.display = 'block';
+
+        var statusEl = document.getElementById('sched-status');
+        var schedRunning = sysHealth.scheduler && sysHealth.scheduler.running;
+        if (!schedRunning) {
+            statusEl.textContent = 'Stopped';
+            statusEl.style.color = '#ef4444';
+        } else if (health.last_24h_failures > 0) {
+            statusEl.textContent = 'Running (with errors)';
+            statusEl.style.color = '#f59e0b';
+        } else {
+            statusEl.textContent = 'Running';
+            statusEl.style.color = '#22c55e';
+        }
+
+        document.getElementById('sched-jobs').textContent = sysHealth.scheduler ? sysHealth.scheduler.jobs_registered : '--';
+        document.getElementById('sched-success').textContent = health.last_24h_success || 0;
+        document.getElementById('sched-failures').textContent = health.last_24h_failures || 0;
+        document.getElementById('sched-total-logged').textContent = health.total_jobs_logged || 0;
+
+        var wdEl = document.getElementById('sched-watchdog');
+        if (sysHealth.watchdog && sysHealth.watchdog.last_heartbeat) {
+            wdEl.textContent = sysHealth.watchdog.last_heartbeat.replace('T', ' ').slice(0, 19) + ' UTC';
+        } else {
+            wdEl.textContent = 'Waiting for first tick...';
+            wdEl.style.color = '#94a3b8';
+        }
+
+        var tbody = document.getElementById('sched-job-rows');
+        var jobs = jobsData.logs || [];
+        if (jobs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#64748b;">No job logs recorded yet</td></tr>';
+        } else {
+            var rows = '';
+            jobs.forEach(function(j) {
+                var statusClass = j.status === 'SUCCESS' ? 'status-open' : j.status === 'FAILED' ? 'status-closed' : j.status === 'PARTIAL' ? 'status-expired' : '';
+                var startTime = j.started_at ? j.started_at.replace('T', ' ').slice(0, 19) : '--';
+                var duration = j.duration_seconds !== null && j.duration_seconds !== undefined ? j.duration_seconds.toFixed(1) + 's' : '--';
+                rows += '<tr>';
+                rows += '<td style="font-weight:500;">' + (j.strategy_name || '--') + '</td>';
+                rows += '<td><span class="badge ' + statusClass + '">' + (j.status || '--') + '</span></td>';
+                rows += '<td style="font-size:13px;color:#94a3b8;">' + startTime + '</td>';
+                rows += '<td>' + duration + '</td>';
+                rows += '<td>' + (j.assets_evaluated !== null ? j.assets_evaluated : '--') + '</td>';
+                rows += '<td>' + (j.signals_generated !== null ? j.signals_generated : '0') + '</td>';
+                rows += '<td style="color:' + (j.errors > 0 ? '#ef4444' : '#94a3b8') + ';">' + (j.errors || 0) + (j.error_detail ? ' - ' + j.error_detail.slice(0, 60) : '') + '</td>';
+                rows += '</tr>';
+            });
+            tbody.innerHTML = rows;
+        }
+    } catch (e) {
+        document.getElementById('sched-loading').textContent = 'Failed to load scheduler data.';
+    }
+}
+
+async function loadSystemStatus() {
+    try {
+        var [healthRes, notifRes, creditRes] = await Promise.all([
+            fetch(BASE + '/health'),
+            fetch(BASE + '/admin/api/notifications').catch(function() { return null; }),
+            fetch(BASE + '/admin/api/usage').catch(function() { return null; })
+        ]);
+        var health = await healthRes.json();
+        var notif = notifRes ? await notifRes.json().catch(function() { return {}; }) : {};
+        var credit = creditRes ? await creditRes.json().catch(function() { return {}; }) : {};
+
+        document.getElementById('sys-loading').style.display = 'none';
+        document.getElementById('sys-content').style.display = 'block';
+
+        var banner = document.getElementById('sys-health-banner');
+        var dot = document.getElementById('sys-health-dot');
+        var label = document.getElementById('sys-health-label');
+        var checks = document.getElementById('sys-health-checks');
+
+        if (health.status === 'healthy') {
+            banner.style.background = 'rgba(34,197,94,0.08)';
+            banner.style.border = '1px solid rgba(34,197,94,0.2)';
+            dot.style.background = '#22c55e';
+            label.textContent = 'All Systems Healthy';
+            label.style.color = '#22c55e';
+            checks.textContent = 'All monitoring checks passed';
+        } else {
+            banner.style.background = 'rgba(239,68,68,0.08)';
+            banner.style.border = '1px solid rgba(239,68,68,0.2)';
+            dot.style.background = '#ef4444';
+            label.textContent = 'System Degraded';
+            label.style.color = '#ef4444';
+            checks.textContent = 'Failed checks: ' + (health.checks_failed || []).join(', ');
+        }
+
+        var dbBadge = document.getElementById('sys-db-badge');
+        if (health.database && health.database.connected) {
+            dbBadge.textContent = 'Connected';
+            dbBadge.className = 'badge status-open';
+        } else {
+            dbBadge.textContent = 'Error';
+            dbBadge.className = 'badge status-closed';
+        }
+
+        var wdBadge = document.getElementById('sys-watchdog-badge');
+        var wdTime = document.getElementById('sys-watchdog-time');
+        if (health.watchdog && health.watchdog.last_heartbeat) {
+            wdBadge.textContent = 'Active';
+            wdBadge.className = 'badge status-open';
+            wdTime.textContent = 'Last tick: ' + health.watchdog.last_heartbeat.replace('T', ' ').slice(0, 19) + ' UTC';
+        } else {
+            wdBadge.textContent = 'Pending';
+            wdBadge.className = 'badge status-expired';
+            wdTime.textContent = 'Waiting for first heartbeat (300s interval)';
+        }
+
+        var apiBadge = document.getElementById('sys-apikey-badge');
+        if (health.api_key_configured) {
+            apiBadge.textContent = 'Configured';
+            apiBadge.className = 'badge status-open';
+        } else {
+            apiBadge.textContent = 'Not Set';
+            apiBadge.className = 'badge status-closed';
+        }
+
+        var killBadge = document.getElementById('sys-killswitch-badge');
+        if (credit.kill_switch_active) {
+            killBadge.textContent = 'TRIGGERED';
+            killBadge.className = 'badge status-closed';
+        } else {
+            killBadge.textContent = 'Standby';
+            killBadge.className = 'badge status-open';
+        }
+
+        var webhookBadge = document.getElementById('sys-webhook-badge');
+        if (notif.enabled && notif.webhook_configured) {
+            webhookBadge.textContent = 'Active';
+            webhookBadge.className = 'badge status-open';
+        } else if (notif.webhook_configured && !notif.enabled) {
+            webhookBadge.textContent = 'Disabled';
+            webhookBadge.className = 'badge status-expired';
+        } else {
+            webhookBadge.textContent = 'Not Configured';
+            webhookBadge.className = 'badge status-closed';
+        }
+
+        var schedStatus = document.getElementById('sys-sched-status');
+        if (health.scheduler && health.scheduler.running) {
+            schedStatus.innerHTML = '<span style="color:#22c55e;">Running</span>';
+        } else {
+            schedStatus.innerHTML = '<span style="color:#ef4444;">Stopped</span>';
+        }
+        document.getElementById('sys-sched-jobs').textContent = health.scheduler ? health.scheduler.jobs_registered : '--';
+
+        var s24 = health.last_24h || {};
+        document.getElementById('sys-24h-stats').innerHTML =
+            '<span style="color:#22c55e;">' + (s24.success || 0) + '</span> / <span style="color:#ef4444;">' + (s24.failures || 0) + '</span>';
+
+        var ts = health.timestamp || '';
+        document.getElementById('sys-timestamp').textContent = ts ? ts.replace('T', ' ').slice(0, 19) + ' UTC' : '--';
+
+    } catch (e) {
+        document.getElementById('sys-loading').textContent = 'Failed to load system status.';
+    }
+}
+
 async function loadNotifConfig() {
     try {
         const res = await fetch(BASE + '/admin/api/notifications');
@@ -2133,6 +2308,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const activeTab = document.querySelector('.tab.active');
     if (activeTab && activeTab.getAttribute('data-tab') === 'settings') loadCreditMeter();
     if (activeTab && activeTab.getAttribute('data-tab') === 'notifications') loadNotifConfig();
+    if (activeTab && activeTab.getAttribute('data-tab') === 'scheduler') loadSchedulerData();
+    if (activeTab && activeTab.getAttribute('data-tab') === 'system') loadSystemStatus();
 });
 """
 
@@ -2326,6 +2503,14 @@ def admin_dashboard(
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
                         Notifications
                     </a>
+                    <a class="sidebar-link {'active' if tab == 'scheduler' else ''}" data-tab="scheduler" onclick="showTab('scheduler')" data-testid="sidebar-scheduler">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+                        Scheduler Health
+                    </a>
+                    <a class="sidebar-link {'active' if tab == 'system' else ''}" data-tab="system" onclick="showTab('system')" data-testid="sidebar-system">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                        System Status
+                    </a>
                 </div>
             </nav>
             <div class="sidebar-footer">
@@ -2345,6 +2530,8 @@ def admin_dashboard(
                 <a class="tab {'active' if tab == 'settings' else ''}" data-tab="settings" onclick="showTab('settings')">Settings</a>
                 <a class="tab {'active' if tab == 'users' else ''}" data-tab="users" onclick="showTab('users')">Users</a>
                 <a class="tab {'active' if tab == 'notifications' else ''}" data-tab="notifications" onclick="showTab('notifications')">Alerts</a>
+                <a class="tab {'active' if tab == 'scheduler' else ''}" data-tab="scheduler" onclick="showTab('scheduler')">Scheduler</a>
+                <a class="tab {'active' if tab == 'system' else ''}" data-tab="system" onclick="showTab('system')">System</a>
             </div>
 
             <div id="tab-signals" class="tab-content {'hidden' if tab != 'signals' else ''}">
@@ -2524,6 +2711,195 @@ def admin_dashboard(
                 <div id="notif-disabled-overlay" style="display:none;padding:16px 20px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:10px;margin-bottom:16px;">
                     <div style="color:#ef4444;font-weight:500;font-size:14px;">Notifications are currently disabled</div>
                     <div style="color:#94a3b8;font-size:13px;margin-top:4px;">Turn on the master toggle above to enable webhook notifications.</div>
+                </div>
+
+                </div>
+            </div>
+        </div>
+        <div id="tab-scheduler" class="tab-content {'hidden' if tab != 'scheduler' else ''}">
+            <div class="section">
+                <h2>Scheduler Health</h2>
+                <p style="color:#94a3b8;margin-bottom:20px;">Monitor APScheduler status, job execution history, and watchdog heartbeat.</p>
+
+                <div id="sched-loading" style="text-align:center;padding:40px;color:#94a3b8;">Loading scheduler data...</div>
+                <div id="sched-content" style="display:none;">
+
+                <div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px;">
+                    <div style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;">Status</div>
+                        <div id="sched-status" style="font-size:22px;font-weight:700;margin-top:4px;" data-testid="text-scheduler-status">--</div>
+                    </div>
+                    <div style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;">Jobs Registered</div>
+                        <div id="sched-jobs" style="font-size:22px;font-weight:700;color:#f1f5f9;margin-top:4px;" data-testid="text-scheduler-jobs">--</div>
+                    </div>
+                    <div style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;">24h Successes</div>
+                        <div id="sched-success" style="font-size:22px;font-weight:700;color:#22c55e;margin-top:4px;" data-testid="text-scheduler-success">--</div>
+                    </div>
+                    <div style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;">24h Failures</div>
+                        <div id="sched-failures" style="font-size:22px;font-weight:700;color:#ef4444;margin-top:4px;" data-testid="text-scheduler-failures">--</div>
+                    </div>
+                    <div style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;">Watchdog Heartbeat</div>
+                        <div id="sched-watchdog" style="font-size:14px;font-weight:500;color:#f1f5f9;margin-top:4px;" data-testid="text-scheduler-watchdog">--</div>
+                    </div>
+                    <div style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;">Total Jobs Logged</div>
+                        <div id="sched-total-logged" style="font-size:22px;font-weight:700;color:#f1f5f9;margin-top:4px;" data-testid="text-scheduler-total">--</div>
+                    </div>
+                </div>
+
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                    <div style="font-weight:600;color:#f1f5f9;font-size:15px;">Recent Job Logs</div>
+                    <button class="btn" onclick="loadSchedulerData()" data-testid="button-refresh-scheduler" style="font-size:13px;padding:6px 14px;">Refresh</button>
+                </div>
+                <div style="overflow-x:auto;">
+                    <table class="data-table" data-testid="table-scheduler-jobs">
+                        <thead>
+                            <tr>
+                                <th>Strategy</th>
+                                <th>Status</th>
+                                <th>Started</th>
+                                <th>Duration</th>
+                                <th>Assets</th>
+                                <th>Signals</th>
+                                <th>Errors</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sched-job-rows">
+                            <tr><td colspan="7" style="text-align:center;color:#64748b;">No job logs yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                </div>
+            </div>
+        </div>
+        <div id="tab-system" class="tab-content {'hidden' if tab != 'system' else ''}">
+            <div class="section">
+                <h2>System Status</h2>
+                <p style="color:#94a3b8;margin-bottom:20px;">Overview of all monitoring, alerting, and production hardening layers.</p>
+
+                <div id="sys-loading" style="text-align:center;padding:40px;color:#94a3b8;">Loading system status...</div>
+                <div id="sys-content" style="display:none;">
+
+                <div id="sys-health-banner" style="padding:16px 20px;border-radius:10px;margin-bottom:24px;display:flex;align-items:center;gap:12px;" data-testid="banner-system-health">
+                    <div id="sys-health-dot" style="width:14px;height:14px;border-radius:50%;flex-shrink:0;"></div>
+                    <div>
+                        <div id="sys-health-label" style="font-weight:700;font-size:18px;"></div>
+                        <div id="sys-health-checks" style="font-size:13px;color:#94a3b8;margin-top:2px;"></div>
+                    </div>
+                    <button class="btn" onclick="loadSystemStatus()" data-testid="button-refresh-system" style="margin-left:auto;font-size:13px;padding:6px 14px;">Refresh</button>
+                </div>
+
+                <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:12px;">Production Hardening Features</div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-bottom:24px;">
+
+                    <div class="sys-card" style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <div style="font-weight:600;color:#f1f5f9;font-size:14px;">Rate Limiting</div>
+                            <span class="badge status-open" data-testid="status-rate-limiting">Active</span>
+                        </div>
+                        <div style="color:#94a3b8;font-size:13px;">slowapi middleware enforcing <strong style="color:#f1f5f9;">120 requests/minute</strong> per IP on all FastAPI endpoints.</div>
+                    </div>
+
+                    <div class="sys-card" style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <div style="font-weight:600;color:#f1f5f9;font-size:14px;">Security Headers</div>
+                            <span class="badge status-open" data-testid="status-security-headers">Active</span>
+                        </div>
+                        <div style="color:#94a3b8;font-size:13px;">Helmet middleware providing HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, and CORP headers.</div>
+                    </div>
+
+                    <div class="sys-card" style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <div style="font-weight:600;color:#f1f5f9;font-size:14px;">Error Handler</div>
+                            <span class="badge status-open" data-testid="status-error-handler">Active</span>
+                        </div>
+                        <div style="color:#94a3b8;font-size:13px;">Global exception handler catches unhandled errors, logs full traceback, and returns structured JSON responses.</div>
+                    </div>
+
+                    <div class="sys-card" style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <div style="font-weight:600;color:#f1f5f9;font-size:14px;">Database</div>
+                            <span id="sys-db-badge" class="badge" data-testid="status-database">--</span>
+                        </div>
+                        <div style="color:#94a3b8;font-size:13px;">SQLite database connectivity verified via health check. Pool size: 5 connections.</div>
+                    </div>
+
+                    <div class="sys-card" style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <div style="font-weight:600;color:#f1f5f9;font-size:14px;">Scheduler Watchdog</div>
+                            <span id="sys-watchdog-badge" class="badge" data-testid="status-watchdog">--</span>
+                        </div>
+                        <div style="color:#94a3b8;font-size:13px;">Background thread monitors scheduler every <strong style="color:#f1f5f9;">300 seconds</strong>. Auto-restarts on failure.</div>
+                        <div id="sys-watchdog-time" style="color:#64748b;font-size:12px;margin-top:4px;"></div>
+                    </div>
+
+                    <div class="sys-card" style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <div style="font-weight:600;color:#f1f5f9;font-size:14px;">API Key</div>
+                            <span id="sys-apikey-badge" class="badge" data-testid="status-api-key">--</span>
+                        </div>
+                        <div style="color:#94a3b8;font-size:13px;">FCSAPI v4 access key required for live market data. Managed in Settings tab.</div>
+                    </div>
+
+                    <div class="sys-card" style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <div style="font-weight:600;color:#f1f5f9;font-size:14px;">Credit Kill Switch</div>
+                            <span id="sys-killswitch-badge" class="badge" data-testid="status-kill-switch">--</span>
+                        </div>
+                        <div style="color:#94a3b8;font-size:13px;">Hard limit at <strong style="color:#f1f5f9;">495,000</strong> credits. Blocks outbound API calls when exceeded.</div>
+                    </div>
+
+                    <div class="sys-card" style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <div style="font-weight:600;color:#f1f5f9;font-size:14px;">Webhook Notifications</div>
+                            <span id="sys-webhook-badge" class="badge" data-testid="status-webhook">--</span>
+                        </div>
+                        <div style="color:#94a3b8;font-size:13px;">External alerting via Discord, Slack, or generic webhooks. Configured in Notifications tab.</div>
+                    </div>
+
+                    <div class="sys-card" style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <div style="font-weight:600;color:#f1f5f9;font-size:14px;">Process Auto-Restart</div>
+                            <span class="badge status-open" data-testid="status-auto-restart">Active</span>
+                        </div>
+                        <div style="color:#94a3b8;font-size:13px;">Node.js server automatically restarts the Python engine on crash. Graceful shutdown on SIGTERM.</div>
+                    </div>
+
+                    <div class="sys-card" style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <div style="font-weight:600;color:#f1f5f9;font-size:14px;">Misfire Recovery</div>
+                            <span class="badge status-open" data-testid="status-misfire">Active</span>
+                        </div>
+                        <div style="color:#94a3b8;font-size:13px;">All scheduled jobs have <strong style="color:#f1f5f9;">120s misfire_grace_time</strong>. Per-asset retry: 2 attempts with 5s delay.</div>
+                    </div>
+
+                </div>
+
+                <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:12px;">Live Status</div>
+                <div style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
+                        <div>
+                            <div style="font-size:12px;color:#64748b;text-transform:uppercase;">Scheduler</div>
+                            <div id="sys-sched-status" style="font-size:14px;font-weight:500;color:#f1f5f9;margin-top:2px;" data-testid="text-sys-scheduler">--</div>
+                        </div>
+                        <div>
+                            <div style="font-size:12px;color:#64748b;text-transform:uppercase;">Jobs Registered</div>
+                            <div id="sys-sched-jobs" style="font-size:14px;font-weight:500;color:#f1f5f9;margin-top:2px;" data-testid="text-sys-jobs">--</div>
+                        </div>
+                        <div>
+                            <div style="font-size:12px;color:#64748b;text-transform:uppercase;">24h Success / Failures</div>
+                            <div id="sys-24h-stats" style="font-size:14px;font-weight:500;color:#f1f5f9;margin-top:2px;" data-testid="text-sys-24h">--</div>
+                        </div>
+                        <div>
+                            <div style="font-size:12px;color:#64748b;text-transform:uppercase;">Last Health Check</div>
+                            <div id="sys-timestamp" style="font-size:14px;font-weight:500;color:#f1f5f9;margin-top:2px;" data-testid="text-sys-timestamp">--</div>
+                        </div>
+                    </div>
                 </div>
 
                 </div>
