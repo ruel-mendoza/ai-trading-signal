@@ -493,7 +493,17 @@ def evaluate_single_strategy(
 ):
     result = None
     if strategy_name == "mtf_ema":
-        result = strategy_engine.evaluate_mtf_ema(symbol)
+        from trading_engine.strategies.multi_timeframe import MultiTimeframeEMAStrategy
+        from trading_engine.database import get_candles as db_get_candles_mtf, get_open_position as db_get_open_pos_mtf
+        mtf_strat = MultiTimeframeEMAStrategy(strategy_engine.cache)
+        h1_candles_mtf = db_get_candles_mtf(symbol, "1H", 300)
+        mtf_df = pd.DataFrame(h1_candles_mtf) if h1_candles_mtf else pd.DataFrame()
+        for col in ("open", "high", "low", "close"):
+            if col in mtf_df.columns:
+                mtf_df[col] = pd.to_numeric(mtf_df[col], errors="coerce")
+        mtf_pos = db_get_open_pos_mtf("mtf_ema", symbol)
+        sr = mtf_strat.evaluate(symbol, "1H", mtf_df, mtf_pos)
+        result = sr.to_dict() if (sr.is_entry or sr.is_exit) else None
     elif strategy_name == "trend_following":
         result = strategy_engine.evaluate_trend_following(symbol)
     elif strategy_name == "sp500_momentum":

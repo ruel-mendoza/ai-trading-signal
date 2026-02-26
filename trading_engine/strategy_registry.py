@@ -3,10 +3,11 @@ from trading_engine.strategies.sp500_momentum import SP500MomentumStrategy
 from trading_engine.strategies.highest_lowest import HighestLowestFXStrategy
 from trading_engine.strategies.trend_forex import ForexTrendFollowingStrategy
 from trading_engine.strategies.trend_non_forex import NonForexTrendFollowingStrategy
+from trading_engine.strategies.multi_timeframe import MultiTimeframeEMAStrategy
 from trading_engine.strategy_engine import StrategyEngine
 
 STRATEGY_REGISTRY: dict[str, type] = {
-    "mtf_ema": StrategyEngine,
+    "mtf_ema": MultiTimeframeEMAStrategy,
     "trend_following": StrategyEngine,
     "sp500_momentum": SP500MomentumStrategy,
     "highest_lowest_fx": HighestLowestFXStrategy,

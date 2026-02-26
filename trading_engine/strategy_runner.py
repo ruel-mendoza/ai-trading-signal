@@ -22,7 +22,12 @@ logger = logging.getLogger("trading_engine.strategy_runner")
 
 STRATEGY_ASSET_CONFIG: dict[str, dict] = {
     "mtf_ema": {
-        "assets": ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "NZD/USD", "USD/CAD", "USD/CHF", "EUR/GBP"],
+        "assets": [
+            "SPX", "NDX", "RUT",
+            "XAU/USD", "XAG/USD", "WTI/USD",
+            "BTC/USD", "ETH/USD",
+            "EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD",
+        ],
         "timeframe": "1H",
     },
     "trend_following": {
