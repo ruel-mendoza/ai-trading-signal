@@ -28,7 +28,7 @@ Key architectural decisions include:
 
 ## External Dependencies
 - **OpenAI:** Used for AI-powered signal generation.
-- **FCSAPI v4:** Provides OHLC (Open-High-Low-Close) data and real-time quotes for forex, crypto, commodities, and stock indices.
+- **FCSAPI v4:** Provides OHLC (Open-High-Low-Close) data and real-time quotes for forex, crypto, commodities (with `type=commodity`), and stock indices (with `type=index`). Commodity symbols (XAU/USD, XAG/USD, XPT/USD, XPD/USD, XCU/USD, NATGAS/USD, CORN/USD, SOYBEAN/USD, WHEAT/USD, SUGAR/USD) use the forex endpoint with `type=commodity`. Stock indices (SPX, NDX, DJI, RUT) use the stock endpoint with `type=index` and plain symbols (no exchange prefix). WTI/USD and BRENT/USD are not available on FCSAPI and are marked unsupported.
 - **PostgreSQL:** Primary database for storing trading signals and user-related data.
 - **SQLite:** Used for storing OHLC candle data, strategy-specific signals, API usage statistics, and internal engine data.
 - **`holidays` Python package:** Utilized for detecting US and Japanese public holidays to inform strategy execution.

@@ -44,7 +44,20 @@ STOCK_SYMBOL_MAP = {
     "RUT": "RUT",
 }
 
-COMMODITY_SYMBOLS = {"XAU/USD", "XAG/USD", "WTI/USD", "BRENT/USD"}
+COMMODITY_SYMBOLS = {"XAU/USD", "XAG/USD", "XPT/USD", "XPD/USD", "XCU/USD", "NATGAS/USD", "CORN/USD", "SOYBEAN/USD", "WHEAT/USD", "SUGAR/USD"}
+
+COMMODITY_SYMBOL_MAP = {
+    "XAU/USD": "XAUUSD",
+    "XAG/USD": "XAGUSD",
+    "XPT/USD": "XPTUSD",
+    "XPD/USD": "XPDUSD",
+    "XCU/USD": "XCUUSD",
+    "NATGAS/USD": "NATGASUSD",
+    "CORN/USD": "CORNUSD",
+    "SOYBEAN/USD": "SOYBNUSD",
+    "WHEAT/USD": "WHEATUSD",
+    "SUGAR/USD": "SUGARUSD",
+}
 
 UNSUPPORTED_SYMBOLS: set[str] = {"WTI/USD", "BRENT/USD"}
 
@@ -57,10 +70,16 @@ ADVANCE_SYMBOL_MAP = {
     "NZD/USD": "FX:NZDUSD",
     "USD/CHF": "FX:USDCHF",
     "EUR/GBP": "FX:EURGBP",
-    "XAU/USD": "FX:XAUUSD",
-    "XAG/USD": "FX:XAGUSD",
-    "WTI/USD": "FX:WTIUSD",
-    "BRENT/USD": "FX:BRENTUSD",
+    "XAU/USD": "GMC:XAUUSD",
+    "XAG/USD": "GMC:XAGUSD",
+    "XPT/USD": "GMC:XPTUSD",
+    "XPD/USD": "GMC:XPDUSD",
+    "XCU/USD": "GMC:XCUUSD",
+    "NATGAS/USD": "ONA:NATGASUSD",
+    "CORN/USD": "ONA:CORNUSD",
+    "SOYBEAN/USD": "ONA:SOYBNUSD",
+    "WHEAT/USD": "ONA:WHEATUSD",
+    "SUGAR/USD": "ONA:SUGARUSD",
     "BTC/USD": "COINBASE:BTCUSD",
     "ETH/USD": "COINBASE:ETHUSD",
     "LTC/USD": "COINBASE:LTCUSD",
@@ -69,6 +88,7 @@ ADVANCE_SYMBOL_MAP = {
     "SPX": "CBOE:SPX",
     "NDX": "CBOE:NDX",
     "DJI": "CBOE:DJI",
+    "RUT": "GMC:RUT",
 }
 
 
@@ -85,6 +105,8 @@ def get_asset_class(symbol: str) -> str:
         return "crypto"
     if symbol in STOCK_INDEX_SYMBOLS:
         return "stock"
+    if symbol in COMMODITY_SYMBOLS:
+        return "commodity"
     return "forex"
 
 
@@ -100,6 +122,8 @@ def get_v4_base_url(symbol: str) -> str:
 def get_v4_history_symbol(symbol: str) -> str:
     if symbol in STOCK_SYMBOL_MAP:
         return STOCK_SYMBOL_MAP[symbol]
+    if symbol in COMMODITY_SYMBOL_MAP:
+        return COMMODITY_SYMBOL_MAP[symbol]
     return symbol.replace("/", "")
 
 
@@ -299,6 +323,8 @@ class FCSAPIClient:
 
         if asset_class == "stock":
             params["type"] = "index"
+        elif asset_class == "commodity":
+            params["type"] = "commodity"
 
         if from_timestamp:
             params["from"] = from_timestamp
@@ -343,7 +369,7 @@ class FCSAPIClient:
         return [s for s in symbols if s]
 
     def get_advance_data(self, symbols: list[str], period: str = "1h", merge: str = "latest,profile") -> list[dict]:
-        grouped: dict[str, list[tuple[str, str]]] = {"forex": [], "crypto": [], "stock": []}
+        grouped: dict[str, list[tuple[str, str]]] = {"forex": [], "crypto": [], "stock": [], "commodity": []}
         for sym in symbols:
             asset_class = get_asset_class(sym)
             adv_sym = get_advance_symbol(sym)
@@ -366,6 +392,8 @@ class FCSAPIClient:
             }
             if asset_class == "stock":
                 params["type"] = "index"
+            elif asset_class == "commodity":
+                params["type"] = "commodity"
 
             logger.info(f"[ADVANCE] Fetching {asset_class} quotes: {api_symbols} | period={tf_api} | merge={merge}")
             try:
