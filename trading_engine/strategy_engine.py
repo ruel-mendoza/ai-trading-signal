@@ -20,6 +20,7 @@ from trading_engine.database import (
     has_open_position,
 )
 from trading_engine.strategies.sp500_momentum import SP500MomentumStrategy
+from trading_engine.strategies.highest_lowest import HighestLowestFXStrategy
 from trading_engine.strategies.trend_forex import ForexTrendFollowingStrategy
 from trading_engine.strategies.trend_non_forex import NonForexTrendFollowingStrategy
 
@@ -37,6 +38,7 @@ class StrategyEngine:
     def __init__(self, cache: CacheLayer):
         self.cache = cache
         self.sp500_strategy = SP500MomentumStrategy(cache)
+        self.highest_lowest_strategy = HighestLowestFXStrategy(cache)
         self.trend_forex_strategy = ForexTrendFollowingStrategy(cache)
         self.trend_non_forex_strategy = NonForexTrendFollowingStrategy(cache)
 
@@ -67,9 +69,17 @@ class StrategyEngine:
         if sp500_result.is_entry:
             results.append(sp500_result.metadata.get("signal", {}))
 
-        hlc_result = self.evaluate_highest_lowest_fx("EUR/USD")
-        if hlc_result:
-            results.append(hlc_result)
+        try:
+            h1_candles = self.cache.get_candles("EUR/USD", "1H", 300)
+            hlc_df = pd.DataFrame(h1_candles) if h1_candles else pd.DataFrame()
+        except Exception as e:
+            logger.error(f"[STRATEGY-ENGINE] Failed to fetch EUR/USD 1H candles for HLC: {e}")
+            hlc_df = pd.DataFrame()
+
+        hlc_open_pos = get_open_position(STRATEGY_HIGHEST_LOWEST_FX, "EUR/USD")
+        hlc_result = self.highest_lowest_strategy.evaluate("EUR/USD", "1H", hlc_df, hlc_open_pos)
+        if hlc_result.is_entry:
+            results.append(hlc_result.metadata.get("signal", {}))
 
         from trading_engine.strategies.trend_forex import TARGET_SYMBOLS as TREND_FOREX_SYMBOLS
         for asset in TREND_FOREX_SYMBOLS:
@@ -521,6 +531,9 @@ class StrategyEngine:
 
         sp500_exits = self.sp500_strategy.check_exits()
         closed_signals.extend(sp500_exits)
+
+        hlc_exits = self.highest_lowest_strategy.check_exits()
+        closed_signals.extend(hlc_exits)
 
         trend_forex_exits = self.trend_forex_strategy.check_exits()
         closed_signals.extend(trend_forex_exits)

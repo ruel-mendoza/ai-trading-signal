@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from typing import Optional
 from contextlib import asynccontextmanager
 import pytz
+import pandas as pd
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -102,6 +103,58 @@ def _scheduled_trend_non_forex_evaluate():
     logger.info("[SCHEDULER] ====== trend_non_forex daily evaluation complete ======")
 
 
+def _scheduled_highest_lowest_fx():
+    from trading_engine.database import get_candles, get_open_position
+    from trading_engine.utils.holiday_manager import is_trading_holiday
+
+    now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
+    is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
+    tz_label = "EDT" if is_dst else "EST"
+
+    logger.info(
+        f"[SCHEDULER] ====== highest_lowest_fx hourly tick | "
+        f"time={now_et.strftime('%Y-%m-%d %H:%M:%S')} {tz_label} ======"
+    )
+
+    if is_trading_holiday(now_et):
+        logger.info(f"[SCHEDULER] highest_lowest_fx | Trading holiday — skipping")
+        return
+
+    if now_et.hour not in (9, 10):
+        logger.info(
+            f"[SCHEDULER] highest_lowest_fx | ET hour {now_et.hour}:00 not in (9, 10) — skipping"
+        )
+        return
+
+    asset = "EUR/USD"
+    try:
+        candles = get_candles(asset, "1H", 300)
+        hlc_df = pd.DataFrame(candles) if candles else pd.DataFrame()
+        open_pos = get_open_position("highest_lowest_fx", asset)
+        result = strategy_engine.highest_lowest_strategy.evaluate(asset, "1H", hlc_df, open_pos)
+        if result.is_entry:
+            signal = result.metadata.get("signal", {})
+            logger.info(
+                f"[SCHEDULER] highest_lowest_fx | {asset} | NEW SIGNAL: "
+                f"{signal.get('direction', '')} @ {signal.get('entry_price', 0):.5f}"
+            )
+        else:
+            logger.info(f"[SCHEDULER] highest_lowest_fx | {asset} | No signal triggered")
+    except Exception as e:
+        logger.error(f"[SCHEDULER] highest_lowest_fx | {asset} | Exception: {e}", exc_info=True)
+
+    try:
+        exits = strategy_engine.highest_lowest_strategy.check_exits()
+        if exits:
+            logger.info(f"[SCHEDULER] highest_lowest_fx | {len(exits)} exit(s) triggered")
+        else:
+            logger.info("[SCHEDULER] highest_lowest_fx | No exits triggered")
+    except Exception as e:
+        logger.error(f"[SCHEDULER] highest_lowest_fx | Exit check exception: {e}")
+
+    logger.info("[SCHEDULER] ====== highest_lowest_fx hourly tick complete ======")
+
+
 def _scheduled_sp500_momentum_30m():
     import pandas as pd
     from trading_engine.database import get_open_position
@@ -180,6 +233,13 @@ async def lifespan(app: FastAPI):
         name="SP500 Momentum 30m Evaluation (:00 and :30 ET)",
         replace_existing=True,
     )
+    scheduler.add_job(
+        _scheduled_highest_lowest_fx,
+        trigger=CronTrigger(hour="9,10", minute=0, timezone=ET_ZONE),
+        id="highest_lowest_fx_hourly",
+        name="Highest/Lowest FX Evaluation (9:00 & 10:00 AM ET)",
+        replace_existing=True,
+    )
     scheduler.start()
     now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
     is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
@@ -187,6 +247,7 @@ async def lifespan(app: FastAPI):
     logger.info(
         f"[SCHEDULER] APScheduler started | "
         f"sp500_momentum every 30m (:00/:30), "
+        f"highest_lowest_fx at 09:00 & 10:00, "
         f"trend_non_forex at 16:00, trend_forex at 17:00 "
         f"America/New_York (currently {tz_label}, DST={'active' if is_dst else 'inactive'})"
     )
@@ -438,7 +499,12 @@ def evaluate_single_strategy(
     elif strategy_name == "sp500_momentum":
         result = strategy_engine.evaluate_sp500_momentum(symbol)
     elif strategy_name == "highest_lowest_fx":
-        result = strategy_engine.evaluate_highest_lowest_fx(symbol)
+        from trading_engine.database import get_candles as db_get_candles, get_open_position as db_get_open_pos
+        h1_candles = db_get_candles(symbol, "1H", 300)
+        hlc_df = pd.DataFrame(h1_candles) if h1_candles else pd.DataFrame()
+        hlc_pos = db_get_open_pos("highest_lowest_fx", symbol)
+        sr = strategy_engine.highest_lowest_strategy.evaluate(symbol, "1H", hlc_df, hlc_pos)
+        result = sr.metadata.get("signal") if sr.is_entry else None
     elif strategy_name == "trend_forex":
         result = strategy_engine.trend_forex_strategy.evaluate(symbol)
     else:

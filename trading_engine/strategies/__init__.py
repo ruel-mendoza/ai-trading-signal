@@ -1,1 +1,2 @@
 from trading_engine.strategies.sp500_momentum import SP500MomentumStrategy
+from trading_engine.strategies.highest_lowest import HighestLowestFXStrategy
