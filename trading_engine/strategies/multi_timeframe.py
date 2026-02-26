@@ -54,6 +54,7 @@ class TimeframeData:
     closes: list[float]
     highs: list[float]
     lows: list[float]
+    opens: list[float]
 
 
 @dataclass
@@ -61,28 +62,41 @@ class MTFIndicators:
     d1_ema20: Optional[float] = None
     d1_ema50: Optional[float] = None
     d1_ema200: Optional[float] = None
+    d1_ema200_prev: Optional[float] = None
     d1_atr100: Optional[float] = None
 
     h4_ema20: Optional[float] = None
     h4_ema50: Optional[float] = None
     h4_ema200: Optional[float] = None
     h4_ema200_prev: Optional[float] = None
+    h4_ema200_earlier: Optional[float] = None
     h4_atr100: Optional[float] = None
 
     h1_ema20: Optional[float] = None
+    h1_ema20_prev: Optional[float] = None
     h1_ema50: Optional[float] = None
     h1_ema200: Optional[float] = None
     h1_atr100: Optional[float] = None
+
+    h1_close_current: Optional[float] = None
+    h1_close_prev: Optional[float] = None
+    h1_open_current: Optional[float] = None
 
     def all_required_present(self) -> bool:
         required = [
             self.d1_ema50,
             self.d1_ema200,
+            self.d1_ema200_prev,
             self.h4_ema50,
             self.h4_ema200,
             self.h4_ema200_prev,
+            self.h4_ema200_earlier,
             self.h4_atr100,
             self.h1_ema20,
+            self.h1_ema20_prev,
+            self.h1_close_current,
+            self.h1_close_prev,
+            self.h1_open_current,
         ]
         return all(v is not None for v in required)
 
@@ -90,11 +104,17 @@ class MTFIndicators:
         checks = {
             "D1_EMA50": self.d1_ema50,
             "D1_EMA200": self.d1_ema200,
+            "D1_EMA200_prev": self.d1_ema200_prev,
             "H4_EMA50": self.h4_ema50,
             "H4_EMA200": self.h4_ema200,
             "H4_EMA200_prev": self.h4_ema200_prev,
+            "H4_EMA200_earlier": self.h4_ema200_earlier,
             "H4_ATR100": self.h4_atr100,
             "H1_EMA20": self.h1_ema20,
+            "H1_EMA20_prev": self.h1_ema20_prev,
+            "H1_close_current": self.h1_close_current,
+            "H1_close_prev": self.h1_close_prev,
+            "H1_open_current": self.h1_open_current,
         }
         return [name for name, val in checks.items() if val is None]
 
@@ -106,11 +126,12 @@ def _safe_last(values: list, offset: int = 0) -> Optional[float]:
     return None
 
 
-def _candles_to_lists(candles: list[dict]) -> tuple[list[float], list[float], list[float]]:
+def _candles_to_lists(candles: list[dict]) -> tuple[list[float], list[float], list[float], list[float]]:
     closes = [float(c["close"]) for c in candles]
     highs = [float(c["high"]) for c in candles]
     lows = [float(c["low"]) for c in candles]
-    return closes, highs, lows
+    opens = [float(c["open"]) for c in candles]
+    return closes, highs, lows, opens
 
 
 class MultiTimeframeEMAStrategy(BaseStrategy):
@@ -132,7 +153,7 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             logger.warning(f"[MTF-EMA] {asset} | No {timeframe} candles returned")
             return None
 
-        closes, highs, lows = _candles_to_lists(candles)
+        closes, highs, lows, opens = _candles_to_lists(candles)
         df = pd.DataFrame(candles)
         for col in ("open", "high", "low", "close"):
             if col in df.columns:
@@ -144,6 +165,7 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             closes=closes,
             highs=highs,
             lows=lows,
+            opens=opens,
         )
 
     def _fetch_all_timeframes(self, asset: str, h1_df: pd.DataFrame) -> Optional[dict]:
@@ -157,12 +179,14 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
         h1_closes = h1_df["close"].tolist()
         h1_highs = h1_df["high"].tolist()
         h1_lows = h1_df["low"].tolist()
+        h1_opens = h1_df["open"].tolist() if "open" in h1_df.columns else [0.0] * len(h1_closes)
         h1 = TimeframeData(
             timeframe=TIMEFRAME_H1,
             df=h1_df,
             closes=h1_closes,
             highs=h1_highs,
             lows=h1_lows,
+            opens=h1_opens,
         )
 
         bar_status = (
@@ -218,33 +242,46 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             d1_ema20=_safe_last(d1_ema20_vals),
             d1_ema50=_safe_last(d1_ema50_vals),
             d1_ema200=_safe_last(d1_ema200_vals),
+            d1_ema200_prev=_safe_last(d1_ema200_vals, offset=1),
             d1_atr100=_safe_last(d1_atr100_vals),
             h4_ema20=_safe_last(h4_ema20_vals),
             h4_ema50=_safe_last(h4_ema50_vals),
             h4_ema200=_safe_last(h4_ema200_vals),
             h4_ema200_prev=_safe_last(h4_ema200_vals, offset=1),
+            h4_ema200_earlier=_safe_last(h4_ema200_vals, offset=2),
             h4_atr100=_safe_last(h4_atr100_vals),
             h1_ema20=_safe_last(h1_ema20_vals),
+            h1_ema20_prev=_safe_last(h1_ema20_vals, offset=1),
             h1_ema50=_safe_last(h1_ema50_vals),
             h1_ema200=_safe_last(h1_ema200_vals),
             h1_atr100=_safe_last(h1_atr100_vals),
+            h1_close_current=_safe_last(h1.closes),
+            h1_close_prev=_safe_last(h1.closes, offset=1),
+            h1_open_current=_safe_last(h1.opens),
         )
 
         logger.info(
             f"[MTF-EMA] {asset} | D1 indicators: "
             f"EMA20={indicators.d1_ema20}, EMA50={indicators.d1_ema50}, "
-            f"EMA200={indicators.d1_ema200}, ATR100={indicators.d1_atr100}"
+            f"EMA200={indicators.d1_ema200}, EMA200_prev={indicators.d1_ema200_prev}, "
+            f"ATR100={indicators.d1_atr100}"
         )
         logger.info(
             f"[MTF-EMA] {asset} | H4 indicators: "
             f"EMA20={indicators.h4_ema20}, EMA50={indicators.h4_ema50}, "
             f"EMA200={indicators.h4_ema200}, EMA200_prev={indicators.h4_ema200_prev}, "
-            f"ATR100={indicators.h4_atr100}"
+            f"EMA200_earlier={indicators.h4_ema200_earlier}, ATR100={indicators.h4_atr100}"
         )
         logger.info(
             f"[MTF-EMA] {asset} | H1 indicators: "
-            f"EMA20={indicators.h1_ema20}, EMA50={indicators.h1_ema50}, "
-            f"EMA200={indicators.h1_ema200}, ATR100={indicators.h1_atr100}"
+            f"EMA20={indicators.h1_ema20}, EMA20_prev={indicators.h1_ema20_prev}, "
+            f"EMA50={indicators.h1_ema50}, EMA200={indicators.h1_ema200}, "
+            f"ATR100={indicators.h1_atr100}"
+        )
+        logger.info(
+            f"[MTF-EMA] {asset} | H1 candle: "
+            f"close_curr={indicators.h1_close_current}, close_prev={indicators.h1_close_prev}, "
+            f"open_curr={indicators.h1_open_current}"
         )
 
         if not indicators.all_required_present():
@@ -254,59 +291,158 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
 
         return indicators
 
+    def _check_long_conditions(self, asset: str, ind: MTFIndicators) -> bool:
+        price = ind.h1_close_current
+
+        cond1 = price > ind.d1_ema200 and price > ind.d1_ema50
+        logger.info(
+            f"[MTF-EMA] {asset} | LONG Cond 1 — D1 Trend: Price {price:.5f} > "
+            f"D1 EMA200 ({ind.d1_ema200:.5f}) AND D1 EMA50 ({ind.d1_ema50:.5f}): {cond1}"
+        )
+
+        d1_rising = ind.d1_ema200 > ind.d1_ema200_prev
+        h4_accel_now = ind.h4_ema200 - ind.h4_ema200_prev
+        h4_accel_prev = ind.h4_ema200_prev - ind.h4_ema200_earlier
+        h4_accelerating = h4_accel_now > h4_accel_prev
+        cond2 = d1_rising and h4_accelerating
+        logger.info(
+            f"[MTF-EMA] {asset} | LONG Cond 2 — Slope Acceleration: "
+            f"D1 EMA200 rising ({ind.d1_ema200:.5f} > {ind.d1_ema200_prev:.5f}): {d1_rising} | "
+            f"H4 EMA200 accel ({h4_accel_now:.6f} > {h4_accel_prev:.6f}): {h4_accelerating} | "
+            f"combined: {cond2}"
+        )
+
+        dip_below = price < ind.h4_ema50
+        within_atr = (ind.h4_ema50 - price) < ind.h4_atr100
+        cond3 = dip_below and within_atr
+        logger.info(
+            f"[MTF-EMA] {asset} | LONG Cond 3 — Pullback: "
+            f"Price ({price:.5f}) < H4 EMA50 ({ind.h4_ema50:.5f}): {dip_below} | "
+            f"Within 1× ATR ({ind.h4_atr100:.5f}): {within_atr} | "
+            f"combined: {cond3}"
+        )
+
+        prev_below_ema20 = ind.h1_close_prev < ind.h1_ema20_prev
+        curr_above_ema20 = ind.h1_close_current > ind.h1_ema20
+        bullish_body = ind.h1_close_current > ind.h1_open_current
+        cond4 = prev_below_ema20 and curr_above_ema20 and bullish_body
+        logger.info(
+            f"[MTF-EMA] {asset} | LONG Cond 4 — H1 Confirmation: "
+            f"prev H1 close ({ind.h1_close_prev:.5f}) < prev EMA20 ({ind.h1_ema20_prev:.5f}): {prev_below_ema20} | "
+            f"curr H1 close ({ind.h1_close_current:.5f}) > curr EMA20 ({ind.h1_ema20:.5f}): {curr_above_ema20} | "
+            f"bullish body (C {ind.h1_close_current:.5f} > O {ind.h1_open_current:.5f}): {bullish_body} | "
+            f"combined: {cond4}"
+        )
+
+        all_met = cond1 and cond2 and cond3 and cond4
+        logger.info(f"[MTF-EMA] {asset} | LONG ALL CONDITIONS MET: {all_met}")
+        return all_met
+
+    def _check_short_conditions(self, asset: str, ind: MTFIndicators) -> bool:
+        price = ind.h1_close_current
+
+        cond1 = price < ind.d1_ema200 and price < ind.d1_ema50
+        logger.info(
+            f"[MTF-EMA] {asset} | SHORT Cond 1 — D1 Trend: Price {price:.5f} < "
+            f"D1 EMA200 ({ind.d1_ema200:.5f}) AND D1 EMA50 ({ind.d1_ema50:.5f}): {cond1}"
+        )
+
+        d1_falling = ind.d1_ema200 < ind.d1_ema200_prev
+        h4_accel_now = ind.h4_ema200_prev - ind.h4_ema200
+        h4_accel_prev = ind.h4_ema200_earlier - ind.h4_ema200_prev
+        h4_accelerating = h4_accel_now > h4_accel_prev
+        cond2 = d1_falling and h4_accelerating
+        logger.info(
+            f"[MTF-EMA] {asset} | SHORT Cond 2 — Slope Acceleration: "
+            f"D1 EMA200 falling ({ind.d1_ema200:.5f} < {ind.d1_ema200_prev:.5f}): {d1_falling} | "
+            f"H4 EMA200 accel downward ({h4_accel_now:.6f} > {h4_accel_prev:.6f}): {h4_accelerating} | "
+            f"combined: {cond2}"
+        )
+
+        dip_above = price > ind.h4_ema50
+        within_atr = (price - ind.h4_ema50) < ind.h4_atr100
+        cond3 = dip_above and within_atr
+        logger.info(
+            f"[MTF-EMA] {asset} | SHORT Cond 3 — Pullback: "
+            f"Price ({price:.5f}) > H4 EMA50 ({ind.h4_ema50:.5f}): {dip_above} | "
+            f"Within 1× ATR ({ind.h4_atr100:.5f}): {within_atr} | "
+            f"combined: {cond3}"
+        )
+
+        prev_above_ema20 = ind.h1_close_prev > ind.h1_ema20_prev
+        curr_below_ema20 = ind.h1_close_current < ind.h1_ema20
+        bearish_body = ind.h1_close_current < ind.h1_open_current
+        cond4 = prev_above_ema20 and curr_below_ema20 and bearish_body
+        logger.info(
+            f"[MTF-EMA] {asset} | SHORT Cond 4 — H1 Confirmation: "
+            f"prev H1 close ({ind.h1_close_prev:.5f}) > prev EMA20 ({ind.h1_ema20_prev:.5f}): {prev_above_ema20} | "
+            f"curr H1 close ({ind.h1_close_current:.5f}) < curr EMA20 ({ind.h1_ema20:.5f}): {curr_below_ema20} | "
+            f"bearish body (C {ind.h1_close_current:.5f} < O {ind.h1_open_current:.5f}): {bearish_body} | "
+            f"combined: {cond4}"
+        )
+
+        all_met = cond1 and cond2 and cond3 and cond4
+        logger.info(f"[MTF-EMA] {asset} | SHORT ALL CONDITIONS MET: {all_met}")
+        return all_met
+
     def _check_entry_conditions(self, asset: str, current_price: float, ind: MTFIndicators) -> Optional[SignalResult]:
-        cond1 = current_price > ind.d1_ema200 and current_price > ind.d1_ema50
-        cond2 = ind.h4_ema200 > ind.h4_ema200_prev
-        cond3 = current_price < ind.h4_ema50
-        cond4 = (ind.h4_ema50 - current_price) < ind.h4_atr100
-        cond5 = current_price > ind.h1_ema20
+        logger.info(f"[MTF-EMA] {asset} | Checking entry conditions | price={current_price:.5f}")
 
-        logger.info(f"[MTF-EMA] {asset} | price={current_price:.5f}")
-        logger.info(
-            f"[MTF-EMA] {asset} | Cond 1 — Price > D1 EMA200 ({ind.d1_ema200:.5f}) "
-            f"AND D1 EMA50 ({ind.d1_ema50:.5f}): {cond1}"
-        )
-        logger.info(
-            f"[MTF-EMA] {asset} | Cond 2 — H4 EMA200 rising "
-            f"({ind.h4_ema200:.5f} > {ind.h4_ema200_prev:.5f}): {cond2}"
-        )
-        logger.info(
-            f"[MTF-EMA] {asset} | Cond 3 — Price dips below H4 EMA50 ({ind.h4_ema50:.5f}): {cond3}"
-        )
-        logger.info(
-            f"[MTF-EMA] {asset} | Cond 4 — Dip within 1× H4 ATR ({ind.h4_atr100:.5f}): {cond4}"
-        )
-        logger.info(
-            f"[MTF-EMA] {asset} | Cond 5 — H1 closes above EMA20 ({ind.h1_ema20:.5f}): {cond5}"
-        )
+        long_triggered = self._check_long_conditions(asset, ind)
+        if long_triggered:
+            stop_loss = current_price - (SL_ATR_MULT * ind.h4_atr100)
+            take_profit = current_price + (TP_ATR_MULT * ind.h4_atr100)
+            h4_accel = (ind.h4_ema200 - ind.h4_ema200_prev) - (ind.h4_ema200_prev - ind.h4_ema200_earlier)
 
-        all_met = cond1 and cond2 and cond3 and cond4 and cond5
-        logger.info(f"[MTF-EMA] {asset} | ALL ENTRY CONDITIONS MET: {all_met}")
+            return SignalResult(
+                action=Action.ENTRY,
+                direction=Direction.LONG,
+                price=current_price,
+                stop_loss=stop_loss,
+                atr_at_entry=ind.h4_atr100,
+                metadata={
+                    "take_profit": take_profit,
+                    "sl_atr_mult": SL_ATR_MULT,
+                    "tp_atr_mult": TP_ATR_MULT,
+                    "h4_atr100": round(ind.h4_atr100, 6),
+                    "d1_ema200": round(ind.d1_ema200, 6),
+                    "d1_ema50": round(ind.d1_ema50, 6),
+                    "h4_ema50": round(ind.h4_ema50, 6),
+                    "h4_ema200": round(ind.h4_ema200, 6),
+                    "h4_ema200_acceleration": round(h4_accel, 8),
+                    "h1_ema20": round(ind.h1_ema20, 6),
+                    "h1_crossover": "prev_below_curr_above",
+                },
+            )
 
-        if not all_met:
-            return None
+        short_triggered = self._check_short_conditions(asset, ind)
+        if short_triggered:
+            stop_loss = current_price + (SL_ATR_MULT * ind.h4_atr100)
+            take_profit = current_price - (TP_ATR_MULT * ind.h4_atr100)
+            h4_accel = (ind.h4_ema200_prev - ind.h4_ema200) - (ind.h4_ema200_earlier - ind.h4_ema200_prev)
 
-        stop_loss = current_price - (SL_ATR_MULT * ind.h4_atr100)
-        take_profit = current_price + (TP_ATR_MULT * ind.h4_atr100)
+            return SignalResult(
+                action=Action.ENTRY,
+                direction=Direction.SHORT,
+                price=current_price,
+                stop_loss=stop_loss,
+                atr_at_entry=ind.h4_atr100,
+                metadata={
+                    "take_profit": take_profit,
+                    "sl_atr_mult": SL_ATR_MULT,
+                    "tp_atr_mult": TP_ATR_MULT,
+                    "h4_atr100": round(ind.h4_atr100, 6),
+                    "d1_ema200": round(ind.d1_ema200, 6),
+                    "d1_ema50": round(ind.d1_ema50, 6),
+                    "h4_ema50": round(ind.h4_ema50, 6),
+                    "h4_ema200": round(ind.h4_ema200, 6),
+                    "h4_ema200_acceleration": round(h4_accel, 8),
+                    "h1_ema20": round(ind.h1_ema20, 6),
+                    "h1_crossover": "prev_above_curr_below",
+                },
+            )
 
-        return SignalResult(
-            action=Action.ENTRY,
-            direction=Direction.LONG,
-            price=current_price,
-            stop_loss=stop_loss,
-            atr_at_entry=ind.h4_atr100,
-            metadata={
-                "take_profit": take_profit,
-                "sl_atr_mult": SL_ATR_MULT,
-                "tp_atr_mult": TP_ATR_MULT,
-                "h4_atr100": round(ind.h4_atr100, 6),
-                "d1_ema200": round(ind.d1_ema200, 6),
-                "d1_ema50": round(ind.d1_ema50, 6),
-                "h4_ema50": round(ind.h4_ema50, 6),
-                "h4_ema200": round(ind.h4_ema200, 6),
-                "h1_ema20": round(ind.h1_ema20, 6),
-            },
-        )
+        return None
 
     def _check_exit_conditions(
         self, asset: str, current_price: float, pos: dict, ind: MTFIndicators
@@ -354,6 +490,42 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
                             f"Trailing stop hit: price {current_price:.5f} < "
                             f"stop {trailing_stop:.5f} "
                             f"(peak {new_highest:.5f} - {TRAILING_STOP_ATR_MULT}×ATR)"
+                        ),
+                    },
+                )
+
+        elif direction == "SELL":
+            stored_lowest = pos.get("lowest_price_since_entry") or pos.get("entry_price", current_price)
+            new_lowest = min(stored_lowest, current_price)
+            if new_lowest < stored_lowest:
+                update_position_tracking(pos_id, lowest_price=new_lowest)
+                logger.info(
+                    f"[MTF-EMA] {asset} | SHORT #{pos_id} | Trough updated: "
+                    f"{stored_lowest:.5f} → {new_lowest:.5f}"
+                )
+
+            trailing_stop = new_lowest + (TRAILING_STOP_ATR_MULT * atr_at_entry)
+            logger.info(
+                f"[MTF-EMA] {asset} | SHORT #{pos_id} | "
+                f"trailing_stop={trailing_stop:.5f} (trough {new_lowest:.5f} + "
+                f"{TRAILING_STOP_ATR_MULT}×ATR {atr_at_entry:.5f}) | "
+                f"price={current_price:.5f}"
+            )
+
+            if current_price > trailing_stop:
+                logger.info(
+                    f"[MTF-EMA] {asset} | EXIT SHORT #{pos_id} — price {current_price:.5f} "
+                    f"> trailing stop {trailing_stop:.5f}"
+                )
+                return SignalResult(
+                    action=Action.EXIT,
+                    direction=Direction.SHORT,
+                    price=current_price,
+                    metadata={
+                        "exit_reason": (
+                            f"Trailing stop hit: price {current_price:.5f} > "
+                            f"stop {trailing_stop:.5f} "
+                            f"(trough {new_lowest:.5f} + {TRAILING_STOP_ATR_MULT}×ATR)"
                         ),
                     },
                 )
