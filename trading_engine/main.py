@@ -160,6 +160,9 @@ def _watchdog_thread():
 
 
 def _scheduled_trend_forex_evaluate():
+    from trading_engine.database import get_open_position
+    from trading_engine.strategies.trend_forex import TIMEFRAME as TF_TIMEFRAME
+
     et = _get_et_context()
     log_id = create_job_log("trend_forex_daily", "trend_forex")
     logger.info(f"[SCHEDULER] ====== Triggered trend_forex daily evaluation at 5:00 PM ET | {et['time_str']} {et['label']} ======")
@@ -172,14 +175,22 @@ def _scheduled_trend_forex_evaluate():
     for asset in TREND_FOREX_SYMBOLS:
         assets_eval += 1
         def _eval(a):
-            return strategy_engine.trend_forex_strategy.evaluate(a)
+            candles = cache.get_candles(a, TF_TIMEFRAME, 300)
+            if not candles:
+                logger.warning(f"[SCHEDULER] trend_forex | {a} | No candles available")
+                return None
+            df = pd.DataFrame(candles)
+            open_pos = get_open_position("trend_forex", a)
+            return strategy_engine.trend_forex_strategy.evaluate(a, TF_TIMEFRAME, df, open_pos)
+
         result, err = _retry_asset_eval(_eval, asset)
         if err:
             error_count += 1
             error_details.append(f"{asset}: {err}")
-        elif result:
+        elif result and result.is_entry:
             signals_gen += 1
-            logger.info(f"[SCHEDULER] trend_forex | {asset} | NEW SIGNAL generated: {result.get('direction', '')} id={result.get('id')}")
+            signal = result.metadata.get("signal", {})
+            logger.info(f"[SCHEDULER] trend_forex | {asset} | NEW SIGNAL generated: {signal.get('direction', '')} id={signal.get('id')}")
         else:
             logger.info(f"[SCHEDULER] trend_forex | {asset} | No signal triggered")
 
@@ -866,7 +877,12 @@ def evaluate_single_strategy(
         sr = strategy_engine.highest_lowest_strategy.evaluate(symbol, "1H", hlc_df, hlc_pos)
         result = sr.metadata.get("signal") if sr.is_entry else None
     elif strategy_name == "trend_forex":
-        result = strategy_engine.trend_forex_strategy.evaluate(symbol)
+        from trading_engine.database import get_candles as db_get_candles_tf, get_open_position as db_get_open_pos_tf
+        tf_candles = db_get_candles_tf(symbol, "D1", 300)
+        tf_df = pd.DataFrame(tf_candles) if tf_candles else pd.DataFrame()
+        tf_pos = db_get_open_pos_tf("trend_forex", symbol)
+        sr = strategy_engine.trend_forex_strategy.evaluate(symbol, "D1", tf_df, tf_pos)
+        result = sr.metadata.get("signal") if sr.is_entry else None
     else:
         raise HTTPException(
             status_code=400,

@@ -83,11 +83,21 @@ class StrategyEngine:
         if hlc_result.is_entry:
             results.append(hlc_result.metadata.get("signal", {}))
 
-        from trading_engine.strategies.trend_forex import TARGET_SYMBOLS as TREND_FOREX_SYMBOLS
+        from trading_engine.strategies.trend_forex import TARGET_SYMBOLS as TREND_FOREX_SYMBOLS, TIMEFRAME as TF_TIMEFRAME
         for asset in TREND_FOREX_SYMBOLS:
-            tf_forex_result = self.trend_forex_strategy.evaluate(asset)
-            if tf_forex_result:
-                results.append(tf_forex_result)
+            try:
+                candles = self.cache.get_candles(asset, TF_TIMEFRAME, 300)
+            except Exception:
+                continue
+            if not candles:
+                continue
+            df = pd.DataFrame(candles)
+            open_pos = get_open_position(STRATEGY_TREND_FOREX, asset)
+            tf_forex_result = self.trend_forex_strategy.evaluate(asset, TF_TIMEFRAME, df, open_pos)
+            if tf_forex_result.is_entry:
+                signal = tf_forex_result.metadata.get("signal")
+                if signal:
+                    results.append(signal)
 
         from trading_engine.strategies.trend_non_forex import TARGET_SYMBOLS as TREND_NON_FOREX_SYMBOLS, TIMEFRAME as TNF_TIMEFRAME
         for asset in TREND_NON_FOREX_SYMBOLS:

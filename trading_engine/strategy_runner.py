@@ -43,7 +43,7 @@ STRATEGY_ASSET_CONFIG: dict[str, dict] = {
         "timeframe": "1H",
     },
     "trend_forex": {
-        "assets": ["EUR/USD", "USD/JPY", "GBP/USD"],
+        "assets": ["EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD", "NZD/USD", "USD/CAD", "USD/CHF", "EUR/GBP"],
         "timeframe": "D1",
     },
     "trend_non_forex": {
