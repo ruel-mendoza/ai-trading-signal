@@ -62,33 +62,33 @@ COMMODITY_SYMBOL_MAP = {
 UNSUPPORTED_SYMBOLS: set[str] = {"WTI/USD", "BRENT/USD"}
 
 ADVANCE_SYMBOL_MAP = {
-    "EUR/USD": "FX:EURUSD",
-    "GBP/USD": "FX:GBPUSD",
-    "USD/JPY": "FX:USDJPY",
-    "USD/CAD": "FX:USDCAD",
-    "AUD/USD": "FX:AUDUSD",
-    "NZD/USD": "FX:NZDUSD",
-    "USD/CHF": "FX:USDCHF",
-    "EUR/GBP": "FX:EURGBP",
-    "XAU/USD": "GMC:XAUUSD",
-    "XAG/USD": "GMC:XAGUSD",
-    "XPT/USD": "GMC:XPTUSD",
-    "XPD/USD": "GMC:XPDUSD",
-    "XCU/USD": "GMC:XCUUSD",
-    "NATGAS/USD": "ONA:NATGASUSD",
-    "CORN/USD": "ONA:CORNUSD",
-    "SOYBEAN/USD": "ONA:SOYBNUSD",
-    "WHEAT/USD": "ONA:WHEATUSD",
-    "SUGAR/USD": "ONA:SUGARUSD",
-    "BTC/USD": "COINBASE:BTCUSD",
-    "ETH/USD": "COINBASE:ETHUSD",
-    "LTC/USD": "COINBASE:LTCUSD",
-    "XRP/USD": "COINBASE:XRPUSD",
-    "BNB/USD": "COINBASE:BNBUSD",
-    "SPX": "CBOE:SPX",
-    "NDX": "CBOE:NDX",
-    "DJI": "CBOE:DJI",
-    "RUT": "GMC:RUT",
+    "EUR/USD": "EURUSD",
+    "GBP/USD": "GBPUSD",
+    "USD/JPY": "USDJPY",
+    "USD/CAD": "USDCAD",
+    "AUD/USD": "AUDUSD",
+    "NZD/USD": "NZDUSD",
+    "USD/CHF": "USDCHF",
+    "EUR/GBP": "EURGBP",
+    "XAU/USD": "XAUUSD",
+    "XAG/USD": "XAGUSD",
+    "XPT/USD": "XPTUSD",
+    "XPD/USD": "XPDUSD",
+    "XCU/USD": "XCUUSD",
+    "NATGAS/USD": "NATGASUSD",
+    "CORN/USD": "CORNUSD",
+    "SOYBEAN/USD": "SOYBNUSD",
+    "WHEAT/USD": "WHEATUSD",
+    "SUGAR/USD": "SUGARUSD",
+    "BTC/USD": "BTCUSD",
+    "ETH/USD": "ETHUSD",
+    "LTC/USD": "LTCUSD",
+    "XRP/USD": "XRPUSD",
+    "BNB/USD": "BNBUSD",
+    "SPX": "SPX",
+    "NDX": "NDX",
+    "DJI": "DJI",
+    "RUT": "RUT",
 }
 
 
@@ -96,7 +96,7 @@ def get_advance_symbol(symbol: str) -> str:
     mapped = ADVANCE_SYMBOL_MAP.get(symbol)
     if mapped is None:
         logger.warning(f"[ADVANCE] No v4 symbol mapping for '{symbol}', using as-is")
-        return symbol
+        return symbol.replace("/", "")
     return mapped
 
 
@@ -371,6 +371,8 @@ class FCSAPIClient:
     def get_advance_data(self, symbols: list[str], period: str = "1h", merge: str = "latest,profile") -> list[dict]:
         grouped: dict[str, list[tuple[str, str]]] = {"forex": [], "crypto": [], "stock": [], "commodity": []}
         for sym in symbols:
+            if not is_symbol_supported(sym):
+                continue
             asset_class = get_asset_class(sym)
             adv_sym = get_advance_symbol(sym)
             grouped[asset_class].append((sym, adv_sym))
@@ -380,7 +382,7 @@ class FCSAPIClient:
             if not sym_pairs:
                 continue
             api_symbols = ",".join(adv_sym for _, adv_sym in sym_pairs)
-            original_map = {adv_sym: orig for orig, adv_sym in sym_pairs}
+            symbol_to_original = {adv_sym: orig for orig, adv_sym in sym_pairs}
 
             base_url = get_v4_base_url(sym_pairs[0][0])
 
@@ -406,12 +408,19 @@ class FCSAPIClient:
                 logger.warning(f"[ADVANCE] {asset_class} | No data returned: {data.get('msg', '')}")
                 continue
 
+            seen_symbols: set[str] = set()
             for item in data["response"]:
                 ticker = item.get("ticker", "")
-                original_symbol = original_map.get(ticker, ticker)
+                profile = item.get("profile", {})
+                api_sym = profile.get("symbol", ticker.split(":")[-1] if ":" in ticker else ticker)
+                original_symbol = symbol_to_original.get(api_sym, api_sym)
+
+                if original_symbol in seen_symbols:
+                    continue
+                seen_symbols.add(original_symbol)
+
                 active = item.get("active", {})
                 previous = item.get("previous", {})
-                profile = item.get("profile", {})
 
                 quote = {
                     "symbol": original_symbol,
@@ -422,6 +431,8 @@ class FCSAPIClient:
                         "high": _safe_float(active.get("h")),
                         "low": _safe_float(active.get("l")),
                         "close": _safe_float(active.get("c")),
+                        "ask": _safe_float(active.get("a")),
+                        "bid": _safe_float(active.get("b")),
                         "volume": active.get("v"),
                         "vwap": _safe_float(active.get("vw")),
                         "change": _safe_float(active.get("ch")),
