@@ -23,6 +23,7 @@ from trading_engine.strategies.sp500_momentum import SP500MomentumStrategy
 from trading_engine.strategies.highest_lowest import HighestLowestFXStrategy
 from trading_engine.strategies.trend_forex import ForexTrendFollowingStrategy
 from trading_engine.strategies.trend_non_forex import NonForexTrendFollowingStrategy
+from trading_engine.strategies.multi_timeframe import MultiTimeframeEMAStrategy
 
 logger = logging.getLogger("trading_engine.strategy")
 
@@ -41,6 +42,7 @@ class StrategyEngine:
         self.highest_lowest_strategy = HighestLowestFXStrategy(cache)
         self.trend_forex_strategy = ForexTrendFollowingStrategy(cache)
         self.trend_non_forex_strategy = NonForexTrendFollowingStrategy(cache)
+        self.mtf_ema_strategy = MultiTimeframeEMAStrategy(cache)
 
     def evaluate_all(self, symbols: Optional[list[str]] = None) -> list[dict]:
         results = []

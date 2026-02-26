@@ -1,6 +1,10 @@
 import os
+import time
 import logging
+import threading
+import traceback
 from datetime import datetime
+from functools import wraps
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -11,8 +15,14 @@ import pandas as pd
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 
 ET_ZONE = pytz.timezone("America/New_York")
+
+MISFIRE_GRACE_SECONDS = 120
+MAX_RETRIES = 2
+RETRY_DELAY_SECONDS = 5
+WATCHDOG_INTERVAL_SECONDS = 300
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,7 +33,10 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("apscheduler").setLevel(logging.INFO)
 logger = logging.getLogger("trading_engine")
 
-from trading_engine.database import init_db, get_candles, get_candle_count, get_all_signals, get_active_signals
+from trading_engine.database import (
+    init_db, get_candles, get_candle_count, get_all_signals, get_active_signals,
+    create_job_log, finish_job_log, get_scheduler_health_summary,
+)
 from trading_engine.models import VALID_TIMEFRAMES
 from trading_engine.fcsapi_client import FCSAPIClient
 from trading_engine.cache_layer import CacheLayer
@@ -32,8 +45,12 @@ from trading_engine.strategy_engine import StrategyEngine
 from trading_engine.admin import router as admin_router
 from trading_engine.strategies.trend_forex import TARGET_SYMBOLS as TREND_FOREX_SYMBOLS
 from trading_engine.strategies.trend_non_forex import TARGET_SYMBOLS as TREND_NON_FOREX_SYMBOLS
+from trading_engine.strategies.multi_timeframe import ALL_ASSETS as MTF_EMA_ASSETS
 
 scheduler = BackgroundScheduler()
+
+_watchdog_stop = threading.Event()
+_scheduler_heartbeat = {"last_tick": None}
 
 init_db()
 
@@ -42,17 +59,123 @@ cache = CacheLayer(api_client)
 strategy_engine = StrategyEngine(cache)
 
 
-def _scheduled_trend_forex_evaluate():
-    logger.info("[SCHEDULER] ====== Triggered trend_forex daily evaluation at 5:00 PM ET ======")
-    for asset in TREND_FOREX_SYMBOLS:
+def _get_et_context() -> dict:
+    now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
+    is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
+    return {
+        "now": now_et,
+        "label": "EDT" if is_dst else "EST",
+        "dst": is_dst,
+        "time_str": now_et.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def _retry_asset_eval(func, asset, max_retries=MAX_RETRIES, delay=RETRY_DELAY_SECONDS):
+    last_err = None
+    for attempt in range(1, max_retries + 1):
         try:
-            result = strategy_engine.trend_forex_strategy.evaluate(asset)
-            if result:
-                logger.info(f"[SCHEDULER] trend_forex | {asset} | NEW SIGNAL generated: {result.get('direction', '')} id={result.get('id')}")
-            else:
-                logger.info(f"[SCHEDULER] trend_forex | {asset} | No signal triggered")
+            return func(asset), None
         except Exception as e:
-            logger.error(f"[SCHEDULER] trend_forex | {asset} | Exception: {e}")
+            last_err = e
+            if attempt < max_retries:
+                logger.warning(
+                    f"[SCHEDULER] Retry {attempt}/{max_retries} for {asset} "
+                    f"after error: {e} — waiting {delay}s"
+                )
+                time.sleep(delay)
+            else:
+                logger.error(
+                    f"[SCHEDULER] All {max_retries} attempts failed for {asset}: {e}"
+                )
+    return None, last_err
+
+
+def _scheduler_event_listener(event):
+    if event.exception:
+        logger.error(
+            f"[SCHEDULER-WATCHDOG] Job {event.job_id} raised exception: {event.exception}",
+            exc_info=event.exception,
+        )
+
+
+def _scheduler_missed_listener(event):
+    logger.warning(
+        f"[SCHEDULER-WATCHDOG] Job {event.job_id} MISSED its scheduled run "
+        f"(misfire_grace_time={MISFIRE_GRACE_SECONDS}s)"
+    )
+
+
+def _watchdog_thread():
+    logger.info("[SCHEDULER-WATCHDOG] Watchdog thread started")
+    while not _watchdog_stop.is_set():
+        _watchdog_stop.wait(WATCHDOG_INTERVAL_SECONDS)
+        if _watchdog_stop.is_set():
+            break
+        try:
+            _scheduler_heartbeat["last_tick"] = datetime.utcnow().isoformat()
+            try:
+                running = scheduler.running
+                jobs = scheduler.get_jobs()
+            except Exception:
+                running = False
+                jobs = []
+            if not running:
+                logger.critical(
+                    "[SCHEDULER-WATCHDOG] Scheduler is NOT running — attempting restart"
+                )
+                try:
+                    if hasattr(scheduler, '_event') and scheduler._event is not None:
+                        scheduler.start()
+                        logger.info("[SCHEDULER-WATCHDOG] Scheduler restarted successfully")
+                        jobs = scheduler.get_jobs()
+                        if not jobs:
+                            logger.warning(
+                                "[SCHEDULER-WATCHDOG] Scheduler restarted but has NO jobs — "
+                                "manual intervention may be needed"
+                            )
+                    else:
+                        logger.critical(
+                            "[SCHEDULER-WATCHDOG] Scheduler in unrecoverable state — "
+                            "cannot restart (already shut down)"
+                        )
+                except Exception as restart_err:
+                    logger.critical(
+                        f"[SCHEDULER-WATCHDOG] Scheduler restart FAILED: {restart_err}"
+                    )
+            else:
+                logger.debug(
+                    f"[SCHEDULER-WATCHDOG] Heartbeat OK — {len(jobs)} jobs registered, "
+                    f"scheduler running"
+                )
+        except Exception as e:
+            logger.error(f"[SCHEDULER-WATCHDOG] Watchdog check error: {e}")
+    logger.info("[SCHEDULER-WATCHDOG] Watchdog thread stopped")
+
+
+def _scheduled_trend_forex_evaluate():
+    et = _get_et_context()
+    log_id = create_job_log("trend_forex_daily", "trend_forex")
+    logger.info(f"[SCHEDULER] ====== Triggered trend_forex daily evaluation at 5:00 PM ET | {et['time_str']} {et['label']} ======")
+
+    assets_eval = 0
+    signals_gen = 0
+    error_count = 0
+    error_details = []
+
+    for asset in TREND_FOREX_SYMBOLS:
+        assets_eval += 1
+        def _eval(a):
+            return strategy_engine.trend_forex_strategy.evaluate(a)
+        result, err = _retry_asset_eval(_eval, asset)
+        if err:
+            error_count += 1
+            error_details.append(f"{asset}: {err}")
+        elif result:
+            signals_gen += 1
+            logger.info(f"[SCHEDULER] trend_forex | {asset} | NEW SIGNAL generated: {result.get('direction', '')} id={result.get('id')}")
+        else:
+            logger.info(f"[SCHEDULER] trend_forex | {asset} | No signal triggered")
+
     try:
         exits = strategy_engine.trend_forex_strategy.check_exits()
         if exits:
@@ -60,38 +183,55 @@ def _scheduled_trend_forex_evaluate():
         else:
             logger.info("[SCHEDULER] trend_forex | No exits triggered")
     except Exception as e:
+        error_count += 1
+        error_details.append(f"exit_check: {e}")
         logger.error(f"[SCHEDULER] trend_forex | Exit check exception: {e}")
-    logger.info("[SCHEDULER] ====== trend_forex daily evaluation complete ======")
+
+    asset_errors = sum(1 for d in error_details if not d.startswith("exit_check"))
+    status = "FAILED" if asset_errors == assets_eval else ("PARTIAL" if error_count > 0 else "SUCCESS")
+    finish_job_log(log_id, status, assets_eval, signals_gen, error_count,
+                   "; ".join(error_details) if error_details else None)
+    logger.info(f"[SCHEDULER] ====== trend_forex complete | {status} | {assets_eval} assets, {signals_gen} signals, {error_count} errors ======")
 
 
 def _scheduled_trend_non_forex_evaluate():
-    import pandas as pd
     from trading_engine.database import get_open_position
     from trading_engine.strategies.trend_non_forex import TIMEFRAME as TNF_TIMEFRAME
-    now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
-    is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
-    tz_label = "EDT" if is_dst else "EST"
+
+    et = _get_et_context()
+    log_id = create_job_log("trend_non_forex_daily", "trend_non_forex")
     logger.info(
         f"[SCHEDULER] ====== Triggered trend_non_forex daily evaluation at 4:00 PM ET | "
-        f"system_time={now_et.strftime('%Y-%m-%d %H:%M:%S')} {tz_label} | "
-        f"DST={'active' if is_dst else 'inactive'} ======"
+        f"{et['time_str']} {et['label']} | DST={'active' if et['dst'] else 'inactive'} ======"
     )
+
+    assets_eval = 0
+    signals_gen = 0
+    error_count = 0
+    error_details = []
+
     for asset in TREND_NON_FOREX_SYMBOLS:
-        try:
-            candles = cache.get_candles(asset, TNF_TIMEFRAME, 300)
+        assets_eval += 1
+        def _eval(a):
+            candles = cache.get_candles(a, TNF_TIMEFRAME, 300)
             if not candles:
-                logger.warning(f"[SCHEDULER] trend_non_forex | {asset} | No candles available")
-                continue
+                logger.warning(f"[SCHEDULER] trend_non_forex | {a} | No candles available")
+                return None
             df = pd.DataFrame(candles)
-            open_pos = get_open_position("trend_non_forex", asset)
-            result = strategy_engine.trend_non_forex_strategy.evaluate(asset, TNF_TIMEFRAME, df, open_pos)
-            if result.is_entry:
-                signal = result.metadata.get("signal", {})
-                logger.info(f"[SCHEDULER] trend_non_forex | {asset} | NEW SIGNAL generated: {signal.get('direction', '')} id={signal.get('id')}")
-            else:
-                logger.info(f"[SCHEDULER] trend_non_forex | {asset} | No signal triggered")
-        except Exception as e:
-            logger.error(f"[SCHEDULER] trend_non_forex | {asset} | Exception: {e}")
+            open_pos = get_open_position("trend_non_forex", a)
+            return strategy_engine.trend_non_forex_strategy.evaluate(a, TNF_TIMEFRAME, df, open_pos)
+
+        result, err = _retry_asset_eval(_eval, asset)
+        if err:
+            error_count += 1
+            error_details.append(f"{asset}: {err}")
+        elif result and result.is_entry:
+            signals_gen += 1
+            signal = result.metadata.get("signal", {})
+            logger.info(f"[SCHEDULER] trend_non_forex | {asset} | NEW SIGNAL generated: {signal.get('direction', '')} id={signal.get('id')}")
+        else:
+            logger.info(f"[SCHEDULER] trend_non_forex | {asset} | No signal triggered")
+
     try:
         exits = strategy_engine.trend_non_forex_strategy.check_exits()
         if exits:
@@ -99,49 +239,61 @@ def _scheduled_trend_non_forex_evaluate():
         else:
             logger.info("[SCHEDULER] trend_non_forex | No exits triggered")
     except Exception as e:
+        error_count += 1
+        error_details.append(f"exit_check: {e}")
         logger.error(f"[SCHEDULER] trend_non_forex | Exit check exception: {e}")
-    logger.info("[SCHEDULER] ====== trend_non_forex daily evaluation complete ======")
+
+    asset_errors = sum(1 for d in error_details if not d.startswith("exit_check"))
+    status = "FAILED" if asset_errors == assets_eval else ("PARTIAL" if error_count > 0 else "SUCCESS")
+    finish_job_log(log_id, status, assets_eval, signals_gen, error_count,
+                   "; ".join(error_details) if error_details else None)
+    logger.info(f"[SCHEDULER] ====== trend_non_forex complete | {status} | {assets_eval} assets, {signals_gen} signals, {error_count} errors ======")
 
 
 def _scheduled_highest_lowest_fx():
-    from trading_engine.database import get_candles, get_open_position
+    from trading_engine.database import get_open_position as db_get_open_pos
     from trading_engine.utils.holiday_manager import is_trading_holiday
 
-    now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
-    is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
-    tz_label = "EDT" if is_dst else "EST"
-
+    et = _get_et_context()
     logger.info(
-        f"[SCHEDULER] ====== highest_lowest_fx hourly tick | "
-        f"time={now_et.strftime('%Y-%m-%d %H:%M:%S')} {tz_label} ======"
+        f"[SCHEDULER] ====== highest_lowest_fx hourly tick | {et['time_str']} {et['label']} ======"
     )
 
-    if is_trading_holiday(now_et):
-        logger.info(f"[SCHEDULER] highest_lowest_fx | Trading holiday — skipping")
+    if is_trading_holiday(et["now"]):
+        logger.info("[SCHEDULER] highest_lowest_fx | Trading holiday — skipping")
         return
 
-    if now_et.hour not in (9, 10):
+    if et["now"].hour not in (9, 10):
         logger.info(
-            f"[SCHEDULER] highest_lowest_fx | ET hour {now_et.hour}:00 not in (9, 10) — skipping"
+            f"[SCHEDULER] highest_lowest_fx | ET hour {et['now'].hour}:00 not in (9, 10) — skipping"
         )
         return
 
+    log_id = create_job_log("highest_lowest_fx_hourly", "highest_lowest_fx")
     asset = "EUR/USD"
-    try:
-        candles = get_candles(asset, "1H", 300)
+    signals_gen = 0
+    error_count = 0
+    error_details = []
+
+    def _eval(a):
+        candles = get_candles(a, "1H", 300)
         hlc_df = pd.DataFrame(candles) if candles else pd.DataFrame()
-        open_pos = get_open_position("highest_lowest_fx", asset)
-        result = strategy_engine.highest_lowest_strategy.evaluate(asset, "1H", hlc_df, open_pos)
-        if result.is_entry:
-            signal = result.metadata.get("signal", {})
-            logger.info(
-                f"[SCHEDULER] highest_lowest_fx | {asset} | NEW SIGNAL: "
-                f"{signal.get('direction', '')} @ {signal.get('entry_price', 0):.5f}"
-            )
-        else:
-            logger.info(f"[SCHEDULER] highest_lowest_fx | {asset} | No signal triggered")
-    except Exception as e:
-        logger.error(f"[SCHEDULER] highest_lowest_fx | {asset} | Exception: {e}", exc_info=True)
+        open_pos = db_get_open_pos("highest_lowest_fx", a)
+        return strategy_engine.highest_lowest_strategy.evaluate(a, "1H", hlc_df, open_pos)
+
+    result, err = _retry_asset_eval(_eval, asset)
+    if err:
+        error_count += 1
+        error_details.append(f"{asset}: {err}")
+    elif result and result.is_entry:
+        signals_gen += 1
+        signal = result.metadata.get("signal", {})
+        logger.info(
+            f"[SCHEDULER] highest_lowest_fx | {asset} | NEW SIGNAL: "
+            f"{signal.get('direction', '')} @ {signal.get('entry_price', 0):.5f}"
+        )
+    else:
+        logger.info(f"[SCHEDULER] highest_lowest_fx | {asset} | No signal triggered")
 
     try:
         exits = strategy_engine.highest_lowest_strategy.check_exits()
@@ -150,37 +302,42 @@ def _scheduled_highest_lowest_fx():
         else:
             logger.info("[SCHEDULER] highest_lowest_fx | No exits triggered")
     except Exception as e:
+        error_count += 1
+        error_details.append(f"exit_check: {e}")
         logger.error(f"[SCHEDULER] highest_lowest_fx | Exit check exception: {e}")
 
-    logger.info("[SCHEDULER] ====== highest_lowest_fx hourly tick complete ======")
+    status = "FAILED" if error_count > 0 and signals_gen == 0 else ("PARTIAL" if error_count > 0 else "SUCCESS")
+    finish_job_log(log_id, status, 1, signals_gen, error_count,
+                   "; ".join(error_details) if error_details else None)
+    logger.info(f"[SCHEDULER] ====== highest_lowest_fx complete | {status} ======")
 
 
 def _scheduled_sp500_momentum_30m():
-    import pandas as pd
-    from trading_engine.database import get_open_position
-    now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
-    is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
-    tz_label = "EDT" if is_dst else "EST"
-    et_minutes = now_et.hour * 60 + now_et.minute
+    et = _get_et_context()
+    et_minutes = et["now"].hour * 60 + et["now"].minute
     arca_start = 9 * 60 + 30
     arca_end = 15 * 60 + 30
 
     logger.info(
         f"[SCHEDULER] ====== SP500 Momentum 30m tick | "
-        f"time={now_et.strftime('%Y-%m-%d %H:%M:%S')} {tz_label} | "
-        f"DST={'active' if is_dst else 'inactive'} ======"
+        f"{et['time_str']} {et['label']} | DST={'active' if et['dst'] else 'inactive'} ======"
     )
 
     if et_minutes < arca_start or et_minutes > arca_end:
         logger.info(
             f"[SCHEDULER] sp500_momentum | Outside ARCA session "
-            f"({now_et.strftime('%H:%M')} {tz_label} not in 09:30-15:30 ET) — skipping"
+            f"({et['now'].strftime('%H:%M')} {et['label']} not in 09:30-15:30 ET) — skipping"
         )
         return
 
+    log_id = create_job_log("sp500_momentum_30m", "sp500_momentum")
+    signals_gen = 0
+    error_count = 0
+    error_details = []
+
     logger.info(
         f"[SCHEDULER] sp500_momentum | Inside ARCA session "
-        f"({now_et.strftime('%H:%M')} {tz_label}) — running intraday cycle"
+        f"({et['now'].strftime('%H:%M')} {et['label']}) — running intraday cycle"
     )
 
     try:
@@ -190,6 +347,7 @@ def _scheduled_sp500_momentum_30m():
         state_updated = result.get("state_updated", False)
 
         if entry:
+            signals_gen += 1
             logger.info(
                 f"[SCHEDULER] sp500_momentum | NEW SIGNAL: BUY @ {entry.get('entry_price', 0):.2f} | "
                 f"atr_at_entry={entry.get('atr_at_entry', 0):.6f} | "
@@ -205,19 +363,78 @@ def _scheduled_sp500_momentum_30m():
         if not entry and not exits and not state_updated:
             logger.info("[SCHEDULER] sp500_momentum | No action taken this tick")
     except Exception as e:
+        error_count += 1
+        error_details.append(f"SPX: {e}")
         logger.error(f"[SCHEDULER] sp500_momentum | Exception: {e}", exc_info=True)
 
-    logger.info("[SCHEDULER] ====== SP500 Momentum 30m tick complete ======")
+    status = "FAILED" if error_count > 0 else "SUCCESS"
+    finish_job_log(log_id, status, 1, signals_gen, error_count,
+                   "; ".join(error_details) if error_details else None)
+    logger.info(f"[SCHEDULER] ====== SP500 Momentum 30m tick complete | {status} ======")
+
+
+def _scheduled_mtf_ema_evaluate():
+    from trading_engine.database import get_open_position as db_get_open_pos
+    from trading_engine.strategies.multi_timeframe import PRIMARY_TIMEFRAME
+
+    et = _get_et_context()
+    log_id = create_job_log("mtf_ema_hourly", "mtf_ema")
+    logger.info(
+        f"[SCHEDULER] ====== MTF EMA hourly evaluation | "
+        f"{et['time_str']} {et['label']} | DST={'active' if et['dst'] else 'inactive'} ======"
+    )
+
+    assets_eval = 0
+    signals_gen = 0
+    error_count = 0
+    error_details = []
+
+    for asset in MTF_EMA_ASSETS:
+        assets_eval += 1
+        def _eval(a):
+            candles = cache.get_candles(a, PRIMARY_TIMEFRAME, 300)
+            if not candles:
+                logger.warning(f"[SCHEDULER] mtf_ema | {a} | No candles available for {PRIMARY_TIMEFRAME}")
+                return None
+            df = pd.DataFrame(candles)
+            open_pos = db_get_open_pos("mtf_ema", a)
+            return strategy_engine.mtf_ema_strategy.evaluate(a, PRIMARY_TIMEFRAME, df, open_pos)
+
+        result, err = _retry_asset_eval(_eval, asset)
+        if err:
+            error_count += 1
+            error_details.append(f"{asset}: {err}")
+        elif result and (result.is_entry or result.is_exit):
+            if result.is_entry:
+                signals_gen += 1
+                signal = result.metadata.get("signal", {})
+                logger.info(f"[SCHEDULER] mtf_ema | {asset} | NEW SIGNAL: {signal.get('direction', '')} id={signal.get('id')}")
+            if result.is_exit:
+                logger.info(f"[SCHEDULER] mtf_ema | {asset} | EXIT triggered: {result.metadata.get('exit_reason', '')}")
+        else:
+            logger.info(f"[SCHEDULER] mtf_ema | {asset} | No action")
+
+    status = "FAILED" if error_count == assets_eval else ("PARTIAL" if error_count > 0 else "SUCCESS")
+    finish_job_log(log_id, status, assets_eval, signals_gen, error_count,
+                   "; ".join(error_details) if error_details else None)
+    logger.info(
+        f"[SCHEDULER] ====== MTF EMA complete | {status} | "
+        f"{assets_eval} assets, {signals_gen} signals, {error_count} errors ======"
+    )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    scheduler.add_listener(_scheduler_event_listener, EVENT_JOB_ERROR)
+    scheduler.add_listener(_scheduler_missed_listener, EVENT_JOB_MISSED)
+
     scheduler.add_job(
         _scheduled_trend_forex_evaluate,
         trigger=CronTrigger(hour=17, minute=0, timezone=ET_ZONE),
         id="trend_forex_daily",
         name="Forex Trend Daily Evaluation (5:00 PM ET)",
         replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
     scheduler.add_job(
         _scheduled_trend_non_forex_evaluate,
@@ -225,6 +442,7 @@ async def lifespan(app: FastAPI):
         id="trend_non_forex_daily",
         name="Non-Forex Trend Daily Evaluation (4:00 PM ET)",
         replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
     scheduler.add_job(
         _scheduled_sp500_momentum_30m,
@@ -232,6 +450,7 @@ async def lifespan(app: FastAPI):
         id="sp500_momentum_30m",
         name="SP500 Momentum 30m Evaluation (:00 and :30 ET)",
         replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
     scheduler.add_job(
         _scheduled_highest_lowest_fx,
@@ -239,21 +458,35 @@ async def lifespan(app: FastAPI):
         id="highest_lowest_fx_hourly",
         name="Highest/Lowest FX Evaluation (9:00 & 10:00 AM ET)",
         replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
+    scheduler.add_job(
+        _scheduled_mtf_ema_evaluate,
+        trigger=CronTrigger(minute=0, timezone=ET_ZONE),
+        id="mtf_ema_hourly",
+        name="MTF EMA Hourly Evaluation (every hour ET)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
     scheduler.start()
-    now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
-    is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
-    tz_label = "EDT" if is_dst else "EST"
+
+    watchdog = threading.Thread(target=_watchdog_thread, daemon=True, name="scheduler-watchdog")
+    watchdog.start()
+
+    et = _get_et_context()
     logger.info(
-        f"[SCHEDULER] APScheduler started | "
-        f"sp500_momentum every 30m (:00/:30), "
+        f"[SCHEDULER] APScheduler started with {len(scheduler.get_jobs())} jobs | "
+        f"mtf_ema every hour (:00), sp500_momentum every 30m (:00/:30), "
         f"highest_lowest_fx at 09:00 & 10:00, "
-        f"trend_non_forex at 16:00, trend_forex at 17:00 "
-        f"America/New_York (currently {tz_label}, DST={'active' if is_dst else 'inactive'})"
+        f"trend_non_forex at 16:00, trend_forex at 17:00 | "
+        f"misfire_grace={MISFIRE_GRACE_SECONDS}s | "
+        f"watchdog interval={WATCHDOG_INTERVAL_SECONDS}s | "
+        f"America/New_York ({et['label']}, DST={'active' if et['dst'] else 'inactive'})"
     )
     yield
+    _watchdog_stop.set()
     scheduler.shutdown(wait=False)
-    logger.info("[SCHEDULER] APScheduler shut down")
+    logger.info("[SCHEDULER] APScheduler + watchdog shut down")
 
 
 app = FastAPI(

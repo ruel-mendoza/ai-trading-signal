@@ -27,6 +27,7 @@ from trading_engine.models import (
     AppSetting,
     AdminUser,
     AdminSession,
+    SchedulerJobLog,
     VALID_TIMEFRAMES,
 )
 
@@ -797,3 +798,115 @@ def get_admin_by_id(admin_id: int) -> Optional[dict]:
         if user:
             return {"id": user.id, "username": user.username, "created_at": user.created_at}
         return None
+
+
+def create_job_log(job_id: str, strategy_name: str) -> int:
+    started_at = datetime.utcnow().isoformat()
+    with _get_session() as session:
+        try:
+            log = SchedulerJobLog(
+                job_id=job_id,
+                strategy_name=strategy_name,
+                started_at=started_at,
+                status="RUNNING",
+            )
+            session.add(log)
+            session.commit()
+            logger.debug(f"[DB] Created job log #{log.id} for {job_id}/{strategy_name}")
+            return log.id
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] Create job log failed: {e}")
+            return -1
+
+
+def finish_job_log(log_id: int, status: str, assets_evaluated: int = 0,
+                   signals_generated: int = 0, errors: int = 0,
+                   error_detail: Optional[str] = None):
+    finished_at = datetime.utcnow().isoformat()
+    with _get_session() as session:
+        try:
+            log = session.query(SchedulerJobLog).filter_by(id=log_id).first()
+            if not log:
+                return
+            log.finished_at = finished_at
+            log.status = status
+            log.assets_evaluated = assets_evaluated
+            log.signals_generated = signals_generated
+            log.errors = errors
+            if error_detail:
+                log.error_detail = error_detail[:2000]
+            if log.started_at:
+                try:
+                    start = datetime.fromisoformat(log.started_at)
+                    end = datetime.fromisoformat(finished_at)
+                    log.duration_seconds = round((end - start).total_seconds(), 3)
+                except Exception:
+                    pass
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] Finish job log failed: {e}")
+
+
+def get_recent_job_logs(limit: int = 50) -> list[dict]:
+    with _get_session() as session:
+        logs = (
+            session.query(SchedulerJobLog)
+            .order_by(SchedulerJobLog.id.desc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "id": l.id,
+                "job_id": l.job_id,
+                "strategy_name": l.strategy_name,
+                "started_at": l.started_at,
+                "finished_at": l.finished_at,
+                "duration_seconds": l.duration_seconds,
+                "status": l.status,
+                "assets_evaluated": l.assets_evaluated,
+                "signals_generated": l.signals_generated,
+                "errors": l.errors,
+                "error_detail": l.error_detail,
+            }
+            for l in logs
+        ]
+
+
+def get_scheduler_health_summary() -> dict:
+    with _get_session() as session:
+        total = session.query(SchedulerJobLog).count()
+        last = (
+            session.query(SchedulerJobLog)
+            .order_by(SchedulerJobLog.id.desc())
+            .first()
+        )
+        failed_24h = (
+            session.query(SchedulerJobLog)
+            .filter(
+                SchedulerJobLog.status.in_(["FAILED", "PARTIAL"]),
+                SchedulerJobLog.started_at >= (datetime.utcnow() - timedelta(hours=24)).isoformat(),
+            )
+            .count()
+        )
+        success_24h = (
+            session.query(SchedulerJobLog)
+            .filter(
+                SchedulerJobLog.status == "SUCCESS",
+                SchedulerJobLog.started_at >= (datetime.utcnow() - timedelta(hours=24)).isoformat(),
+            )
+            .count()
+        )
+        return {
+            "total_jobs_logged": total,
+            "last_job": {
+                "job_id": last.job_id if last else None,
+                "strategy": last.strategy_name if last else None,
+                "started_at": last.started_at if last else None,
+                "status": last.status if last else None,
+            },
+            "last_24h_success": success_24h,
+            "last_24h_failures": failed_24h,
+        }

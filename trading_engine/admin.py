@@ -13,6 +13,7 @@ from trading_engine.database import (
     get_all_admins, create_admin, update_admin, delete_admin, get_admin_by_id,
     cleanup_expired_sessions, get_candles,
     get_all_open_positions, get_open_position,
+    get_recent_job_logs, get_scheduler_health_summary,
 )
 from trading_engine.indicators import IndicatorEngine
 
@@ -2477,3 +2478,21 @@ def api_list_admins(request: Request):
         return guard
     admins = get_all_admins()
     return JSONResponse(content={"admins": admins})
+
+
+@router.get("/api/scheduler/health")
+def api_scheduler_health(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    summary = get_scheduler_health_summary()
+    return JSONResponse(content=summary)
+
+
+@router.get("/api/scheduler/jobs")
+def api_scheduler_job_logs(request: Request, limit: int = Query(50, ge=1, le=200)):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    logs = get_recent_job_logs(limit)
+    return JSONResponse(content={"logs": logs, "count": len(logs)})

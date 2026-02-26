@@ -150,3 +150,26 @@ class AdminSession(Base):
     __table_args__ = (
         Index("idx_admin_sessions_token", "token"),
     )
+
+
+class SchedulerJobLog(Base):
+    __tablename__ = "scheduler_job_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(Text, nullable=False)
+    strategy_name = Column(Text, nullable=False)
+    started_at = Column(Text, nullable=False)
+    finished_at = Column(Text)
+    duration_seconds = Column(Float)
+    status = Column(Text, nullable=False, default="RUNNING")
+    assets_evaluated = Column(Integer, default=0)
+    signals_generated = Column(Integer, default=0)
+    errors = Column(Integer, default=0)
+    error_detail = Column(Text)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('RUNNING', 'SUCCESS', 'PARTIAL', 'FAILED')", name="ck_job_log_status"),
+        Index("idx_job_log_job_id", "job_id"),
+        Index("idx_job_log_started", "started_at"),
+        Index("idx_job_log_strategy", "strategy_name"),
+    )
