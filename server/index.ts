@@ -75,34 +75,52 @@ async function waitForEngineReady(maxRetries = 20, delayMs = 500): Promise<boole
   return false;
 }
 
+let engineRestarting = false;
+
+function spawnPythonProcess(): ChildProcess {
+  const pyProc = spawn("setsid", ["python", "-m", "trading_engine.main"], {
+    env: { ...process.env, PYTHON_ENGINE_PORT: "5001" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  pyProc.stdout?.on("data", (data: Buffer) => {
+    const msg = data.toString().trim();
+    if (msg) log(msg, "python-engine");
+  });
+
+  pyProc.stderr?.on("data", (data: Buffer) => {
+    const msg = data.toString().trim();
+    if (msg) log(msg, "python-engine");
+  });
+
+  pyProc.on("error", (err) => {
+    log(`Python engine failed to start: ${err.message}`, "python-engine");
+  });
+
+  pyProc.on("close", (code) => {
+    log(`Python engine exited with code ${code}`, "python-engine");
+    pythonProcess = null;
+    if (!engineRestarting) {
+      engineRestarting = true;
+      log("Auto-restarting Python engine in 2s...", "python-engine");
+      setTimeout(async () => {
+        try {
+          await startPythonEngine();
+          log("Python engine restarted successfully", "python-engine");
+        } catch (err: any) {
+          log(`Python engine restart failed: ${err.message}`, "python-engine");
+        }
+        engineRestarting = false;
+      }, 2000);
+    }
+  });
+
+  return pyProc;
+}
+
 function startPythonEngine(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const pyProc = spawn("python", ["-m", "trading_engine.main"], {
-      env: { ...process.env, PYTHON_ENGINE_PORT: "5001" },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    pythonProcess = pyProc;
-
-    pyProc.stdout?.on("data", (data: Buffer) => {
-      const msg = data.toString().trim();
-      if (msg) log(msg, "python-engine");
-    });
-
-    pyProc.stderr?.on("data", (data: Buffer) => {
-      const msg = data.toString().trim();
-      if (msg) log(msg, "python-engine");
-    });
-
-    pyProc.on("error", (err) => {
-      log(`Python engine failed to start: ${err.message}`, "python-engine");
-      reject(err);
-    });
-
-    pyProc.on("close", (code) => {
-      log(`Python engine exited with code ${code}`, "python-engine");
-      pythonProcess = null;
-    });
+  return new Promise((resolve) => {
+    pythonProcess = spawnPythonProcess();
 
     waitForEngineReady().then((ready) => {
       if (ready) {
@@ -250,15 +268,20 @@ app.get("/api/engine-status", (_req: Request, res: Response) => {
   );
 })();
 
-process.on("exit", () => {
-  if (pythonProcess) {
-    pythonProcess.kill();
+function killPythonEngine() {
+  if (pythonProcess && pythonProcess.pid) {
+    try {
+      process.kill(-pythonProcess.pid, "SIGTERM");
+    } catch {
+      try { pythonProcess.kill(); } catch {}
+    }
   }
-});
+}
+
+process.on("exit", killPythonEngine);
 
 process.on("SIGTERM", () => {
-  if (pythonProcess) {
-    pythonProcess.kill();
-  }
+  engineRestarting = true;
+  killPythonEngine();
   process.exit(0);
 });
