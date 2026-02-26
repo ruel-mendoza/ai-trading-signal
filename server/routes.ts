@@ -74,13 +74,13 @@ export async function registerRoutes(
       res.write(`data: ${JSON.stringify({ type: "status", message: "Analyzing market conditions..." })}\n\n`);
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
-            content: `You are a professional forex technical analyst. Generate a realistic trading signal for the given currency pair. You must respond with valid JSON only (no markdown, no code blocks).
+            content: `You are a professional trading analyst covering forex, crypto, and commodities. Generate a realistic trading signal for the given pair. You MUST choose either "Buy" or "Sell" based on your technical analysis — do NOT default to Buy. Bearish setups should produce Sell signals.
 
-Respond with this exact JSON structure:
+Respond with ONLY valid JSON (no markdown, no code blocks, no extra text):
 {
   "direction": "Buy" or "Sell",
   "entryPrice": number (realistic current market price),
@@ -93,7 +93,7 @@ Respond with this exact JSON structure:
           },
           {
             role: "user",
-            content: `Generate a trading signal for ${pair}. Consider current market dynamics, key technical levels, and provide realistic price targets. Today's date is ${new Date().toISOString().split('T')[0]}.`
+            content: `Generate a trading signal for ${pair}. Analyze whether the setup is bullish (Buy) or bearish (Sell) based on technical indicators and price action. Today's date is ${new Date().toISOString().split('T')[0]}.`
           }
         ],
         max_completion_tokens: 1024,
@@ -102,14 +102,20 @@ Respond with this exact JSON structure:
       const content = response.choices[0]?.message?.content || "";
       let signalData;
       try {
-        signalData = JSON.parse(content);
+        const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+        signalData = JSON.parse(cleaned);
       } catch {
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           signalData = JSON.parse(jsonMatch[0]);
         } else {
+          console.error("AI response was not valid JSON:", content);
           throw new Error("Failed to parse AI response");
         }
+      }
+
+      if (!["Buy", "Sell"].includes(signalData.direction)) {
+        signalData.direction = signalData.direction?.toLowerCase() === "sell" ? "Sell" : "Buy";
       }
 
       res.write(`data: ${JSON.stringify({ type: "status", message: "Generating signal..." })}\n\n`);
