@@ -73,6 +73,8 @@ class MTFIndicators:
     h4_ema200_prev: Optional[float] = None
     h4_ema200_earlier: Optional[float] = None
     h4_atr100: Optional[float] = None
+    h4_close_current: Optional[float] = None
+    h4_close_prev: Optional[float] = None
 
     h1_ema20: Optional[float] = None
     h1_ema20_prev: Optional[float] = None
@@ -252,6 +254,8 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             h4_ema200_prev=_safe_last(h4_ema200_vals, offset=1),
             h4_ema200_earlier=_safe_last(h4_ema200_vals, offset=2),
             h4_atr100=_safe_last(h4_atr100_vals),
+            h4_close_current=_safe_last(h4.closes),
+            h4_close_prev=_safe_last(h4.closes, offset=1),
             h1_ema20=_safe_last(h1_ema20_vals),
             h1_ema20_prev=_safe_last(h1_ema20_vals, offset=1),
             h1_ema50=_safe_last(h1_ema50_vals),
@@ -272,7 +276,8 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             f"[MTF-EMA] {asset} | H4 indicators: "
             f"EMA20={indicators.h4_ema20}, EMA50={indicators.h4_ema50}, "
             f"EMA200={indicators.h4_ema200}, EMA200_prev={indicators.h4_ema200_prev}, "
-            f"EMA200_earlier={indicators.h4_ema200_earlier}, ATR100={indicators.h4_atr100}"
+            f"EMA200_earlier={indicators.h4_ema200_earlier}, ATR100={indicators.h4_atr100}, "
+            f"close_curr={indicators.h4_close_current}, close_prev={indicators.h4_close_prev}"
         )
         logger.info(
             f"[MTF-EMA] {asset} | H1 indicators: "
@@ -560,12 +565,105 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
 
         return None
 
+    def _log_exit_diagnostics(self, asset: str, pos_id: int, direction: str, ind: MTFIndicators) -> None:
+        d1_slope = (ind.d1_ema200 - ind.d1_ema200_prev) if ind.d1_ema200 and ind.d1_ema200_prev else None
+        h4_slope_now = (ind.h4_ema200 - ind.h4_ema200_prev) if ind.h4_ema200 and ind.h4_ema200_prev else None
+        h4_slope_prev = (ind.h4_ema200_prev - ind.h4_ema200_earlier) if ind.h4_ema200_prev and ind.h4_ema200_earlier else None
+        h4_accel = (h4_slope_now - h4_slope_prev) if h4_slope_now is not None and h4_slope_prev is not None else None
+
+        pullback_depth = None
+        if ind.h4_close_current is not None and ind.h4_ema50 is not None:
+            pullback_depth = ind.h4_close_current - ind.h4_ema50
+
+        logger.info(
+            f"[MTF-EMA] {asset} | EXIT DIAGNOSTICS #{pos_id} ({direction}) | "
+            f"D1 EMA200 slope: {f'{d1_slope:.8f}' if d1_slope is not None else 'N/A'} | "
+            f"H4 EMA200 slope_now: {f'{h4_slope_now:.8f}' if h4_slope_now is not None else 'N/A'}, "
+            f"slope_prev: {f'{h4_slope_prev:.8f}' if h4_slope_prev is not None else 'N/A'}, "
+            f"acceleration: {f'{h4_accel:.8f}' if h4_accel is not None else 'N/A'} | "
+            f"H4 close: {f'{ind.h4_close_current:.5f}' if ind.h4_close_current else 'N/A'}, "
+            f"H4 EMA50: {f'{ind.h4_ema50:.5f}' if ind.h4_ema50 else 'N/A'}, "
+            f"pullback depth (close - EMA50): {f'{pullback_depth:.5f}' if pullback_depth is not None else 'N/A'}"
+        )
+
+    def _check_h4_ema50_exit(
+        self, asset: str, pos_id: int, direction: str, ind: MTFIndicators
+    ) -> Optional[SignalResult]:
+        h4_close = ind.h4_close_current
+        h4_ema50 = ind.h4_ema50
+
+        if h4_close is None or h4_ema50 is None:
+            logger.warning(
+                f"[MTF-EMA] {asset} | Position #{pos_id} | "
+                f"Cannot check H4 EMA50 exit — h4_close={h4_close}, h4_ema50={h4_ema50}"
+            )
+            return None
+
+        if direction == "BUY" and h4_close < h4_ema50:
+            breach = h4_ema50 - h4_close
+            logger.info(
+                f"[MTF-EMA] {asset} | EXIT LONG #{pos_id} — H4 candle closed below H4 EMA50 | "
+                f"H4 close={h4_close:.5f} < H4 EMA50={h4_ema50:.5f} (breach={breach:.5f})"
+            )
+            self._log_exit_diagnostics(asset, pos_id, "LONG", ind)
+            return SignalResult(
+                action=Action.EXIT,
+                direction=Direction.LONG,
+                price=h4_close,
+                metadata={
+                    "exit_reason": (
+                        f"H4 EMA50 exit: H4 close {h4_close:.5f} < "
+                        f"H4 EMA50 {h4_ema50:.5f} (breach={breach:.5f})"
+                    ),
+                    "exit_type": "h4_ema50_breach",
+                    "h4_close": round(h4_close, 6),
+                    "h4_ema50": round(h4_ema50, 6),
+                    "breach_distance": round(breach, 6),
+                },
+            )
+
+        if direction == "SELL" and h4_close > h4_ema50:
+            breach = h4_close - h4_ema50
+            logger.info(
+                f"[MTF-EMA] {asset} | EXIT SHORT #{pos_id} — H4 candle closed above H4 EMA50 | "
+                f"H4 close={h4_close:.5f} > H4 EMA50={h4_ema50:.5f} (breach={breach:.5f})"
+            )
+            self._log_exit_diagnostics(asset, pos_id, "SHORT", ind)
+            return SignalResult(
+                action=Action.EXIT,
+                direction=Direction.SHORT,
+                price=h4_close,
+                metadata={
+                    "exit_reason": (
+                        f"H4 EMA50 exit: H4 close {h4_close:.5f} > "
+                        f"H4 EMA50 {h4_ema50:.5f} (breach={breach:.5f})"
+                    ),
+                    "exit_type": "h4_ema50_breach",
+                    "h4_close": round(h4_close, 6),
+                    "h4_ema50": round(h4_ema50, 6),
+                    "breach_distance": round(breach, 6),
+                },
+            )
+
+        logger.info(
+            f"[MTF-EMA] {asset} | Position #{pos_id} ({direction}) | "
+            f"H4 EMA50 exit NOT triggered — H4 close={h4_close:.5f}, "
+            f"H4 EMA50={h4_ema50:.5f}"
+        )
+        return None
+
     def _check_exit_conditions(
         self, asset: str, current_price: float, pos: dict, ind: MTFIndicators
     ) -> Optional[SignalResult]:
         pos_id = pos.get("id")
         direction = pos.get("direction")
         atr_at_entry = pos.get("atr_at_entry")
+
+        self._log_exit_diagnostics(asset, pos_id, direction or "UNKNOWN", ind)
+
+        h4_exit = self._check_h4_ema50_exit(asset, pos_id, direction, ind)
+        if h4_exit:
+            return h4_exit
 
         if not atr_at_entry:
             logger.warning(
@@ -607,6 +705,7 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
                             f"stop {trailing_stop:.5f} "
                             f"(peak {new_highest:.5f} - {TRAILING_STOP_ATR_MULT}×ATR)"
                         ),
+                        "exit_type": "trailing_stop",
                     },
                 )
 
@@ -643,6 +742,7 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
                             f"stop {trailing_stop:.5f} "
                             f"(trough {new_lowest:.5f} + {TRAILING_STOP_ATR_MULT}×ATR)"
                         ),
+                        "exit_type": "trailing_stop",
                     },
                 )
 
