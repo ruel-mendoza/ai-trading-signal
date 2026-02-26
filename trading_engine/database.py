@@ -360,7 +360,7 @@ def get_all_signals(strategy_name: Optional[str] = None, asset: Optional[str] = 
         if asset:
             latest_closed_subq = latest_closed_subq.filter(Signal.asset == asset)
         latest_closed_subq = latest_closed_subq.group_by(
-            Signal.strategy_name, Signal.asset
+            Signal.strategy_name, Signal.asset, Signal.direction
         ).subquery()
 
         q = session.query(Signal)
@@ -377,7 +377,7 @@ def get_all_signals(strategy_name: Optional[str] = None, asset: Optional[str] = 
             q = q.filter(Signal.status == "OPEN")
         else:
             q = q.filter(or_(
-                Signal.status != "CLOSED",
+                Signal.status == "OPEN",
                 Signal.id.in_(session.query(latest_closed_subq.c.max_id)),
             ))
 

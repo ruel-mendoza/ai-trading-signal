@@ -101,11 +101,20 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
     if not signals:
         return '<tr><td colspan="8" style="text-align:center;padding:24px;color:#94a3b8;">No signals found</td></tr>'
 
+    from datetime import datetime as dt_cls
+
+    seen_closed = set()
     rows = []
     for s in signals:
+        status = s.get("status", "OPEN")
+        if status == "CLOSED":
+            dedup_key = (s.get("asset"), s.get("strategy_name"), s.get("direction"))
+            if dedup_key in seen_closed:
+                continue
+            seen_closed.add(dedup_key)
+
         direction = s.get("direction", "")
         dir_class = "buy" if direction == "BUY" else "sell"
-        status = s.get("status", "OPEN")
         status_class = "status-active" if status == "OPEN" else "status-closed"
 
         entry_str = f'{s.get("entry_price", 0):.5f}'
@@ -113,6 +122,27 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
         sl_str = f'{sl_val:.5f}' if sl_val is not None else "—"
         tp_val = s.get("take_profit")
         tp_str = f'{tp_val:.5f}' if tp_val is not None else "—"
+
+        ts_raw = s.get("signal_timestamp", "")
+        if isinstance(ts_raw, dt_cls):
+            ts_display = ts_raw.strftime("%Y-%m-%d %H:%M")
+        elif ts_raw:
+            try:
+                dt = dt_cls.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                ts_display = dt.strftime("%Y-%m-%d %H:%M")
+            except (ValueError, TypeError):
+                ts_display = str(ts_raw)
+        else:
+            ts_display = "—"
+
+        exit_info = ""
+        if status == "CLOSED":
+            exit_price = s.get("exit_price")
+            exit_reason = s.get("exit_reason", "")
+            if exit_price is not None:
+                exit_info = f'<div style="font-size:0.75rem;color:#94a3b8;margin-top:2px;">Exit: {exit_price:.5f} ({exit_reason})</div>'
+            elif exit_reason:
+                exit_info = f'<div style="font-size:0.75rem;color:#94a3b8;margin-top:2px;">({exit_reason})</div>'
 
         rows.append(f"""
         <tr>
@@ -122,8 +152,8 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
             <td>{sl_str}</td>
             <td>{tp_str}</td>
             <td>{s.get("strategy_name", "")}</td>
-            <td><span class="badge {status_class}">{status}</span></td>
-            <td>{s.get("signal_timestamp", "")}</td>
+            <td><span class="badge {status_class}">{status}</span>{exit_info}</td>
+            <td>{ts_display}</td>
         </tr>""")
     return "\n".join(rows)
 
