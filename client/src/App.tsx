@@ -7,12 +7,14 @@ import { Navbar } from "@/components/navbar";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import SignalDetail from "@/pages/signal-detail";
+import StrategyRules from "@/pages/strategy-rules";
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/signal/:id" component={SignalDetail} />
+      <Route path="/strategy-rules" component={StrategyRules} />
       <Route component={NotFound} />
     </Switch>
   );
