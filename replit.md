@@ -148,6 +148,10 @@ trading_engine/          - Python FastAPI trading engine
 - Trailing stop management with automatic exit tracking (uses fixed ATR from DB)
 - Admin dashboard with signal table, CSV/JSON export, credit monitor, timezone display
 
+## Process Stability
+- SIGHUP handler in `server/index.ts` prevents workflow manager from killing Node process
+- SQLite uses WAL journal mode for concurrent read performance
+
 ## API Endpoints (Express)
 - `GET /api/signals?category=` - List signals (filter by category)
 - `GET /api/signals/:id` - Get signal details
