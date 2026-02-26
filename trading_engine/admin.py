@@ -2496,3 +2496,51 @@ def api_scheduler_job_logs(request: Request, limit: int = Query(50, ge=1, le=200
         return guard
     logs = get_recent_job_logs(limit)
     return JSONResponse(content={"logs": logs, "count": len(logs)})
+
+
+@router.get("/api/webhook")
+def api_get_webhook(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from trading_engine.notifications import get_webhook_url
+    url = get_webhook_url()
+    return JSONResponse(content={
+        "configured": bool(url),
+        "url": (url[:20] + "..." + url[-10:]) if url and len(url) > 30 else url,
+    })
+
+
+@router.post("/api/webhook")
+def api_set_webhook(request: Request, body: dict = Body(...)):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from trading_engine.notifications import configure_webhook
+    from trading_engine.database import set_setting
+    url = body.get("url", "").strip()
+    if url:
+        configure_webhook(url)
+        set_setting("webhook_url", url)
+        return JSONResponse(content={"status": "ok", "message": "Webhook configured"})
+    else:
+        configure_webhook(None)
+        set_setting("webhook_url", "")
+        return JSONResponse(content={"status": "ok", "message": "Webhook cleared"})
+
+
+@router.post("/api/webhook/test")
+def api_test_webhook(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from trading_engine.notifications import send_alert, get_webhook_url
+    if not get_webhook_url():
+        return JSONResponse(content={"status": "error", "message": "No webhook configured"}, status_code=400)
+    send_alert(
+        "Webhook Test",
+        "This is a test notification from the AI Signals Trading Engine. If you see this, webhook delivery is working.",
+        level="info",
+        fields={"Test": "Successful"},
+    )
+    return JSONResponse(content={"status": "ok", "message": "Test notification sent"})

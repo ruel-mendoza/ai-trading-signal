@@ -19,6 +19,12 @@ Key architectural decisions include:
 - **Robust Scheduling:** APScheduler handles background tasks for strategy evaluations and data refreshes, with timezone awareness (America/New_York). All 5 scheduled jobs have `misfire_grace_time=120s` for recovery if a job misses its window. A background watchdog thread monitors scheduler health every 300s and auto-restarts if the scheduler stops. Each job execution is logged to the `scheduler_job_log` SQLite table with status (RUNNING/SUCCESS/PARTIAL/FAILED), timing, asset counts, and error details. Per-asset retry logic (2 attempts with 5s delay) prevents transient failures from failing an entire strategy run.
 - **Scheduler Jobs:** MTF EMA (hourly :00), SP500 Momentum (every 30m :00/:30 filtered to ARCA 09:30-15:30), Highest/Lowest FX (09:00 & 10:00 filtered for holidays), Trend Non-Forex (16:00), Trend Forex (17:00). All times America/New_York with automatic DST handling.
 - **Scalable Data Handling:** OHLC candle data is stored locally for various timeframes (30m, 1H, 4H, Daily) to support rapid indicator calculations.
+- **Production Hardening:**
+  - **Webhook Notifications** (`trading_engine/notifications.py`): Configurable external alerting via Discord, Slack, or generic webhooks. Auto-detects webhook type from URL. Sends alerts for: kill switch activation, credit warnings, strategy failures, scheduler down, new signals. Admin API endpoints for webhook config (`/admin/api/webhook`), test (`/admin/api/webhook/test`).
+  - **Rate Limiting**: slowapi middleware on FastAPI (120 requests/minute per IP).
+  - **Global Error Handler**: Catch-all exception handler logs unhandled errors with full traceback and returns structured JSON error responses.
+  - **Security Headers**: Express uses `helmet` middleware (HSTS, X-Content-Type-Options, X-Frame-Options, etc.) with CSP disabled for SPA compatibility.
+  - **Health Endpoint**: `GET /health` returns scheduler status, database connectivity, 24h job success/failure counts, watchdog heartbeat, and API key status. Returns `"healthy"` or `"degraded"` with specific failed checks.
 
 ## External Dependencies
 - **OpenAI:** Used for AI-powered signal generation.

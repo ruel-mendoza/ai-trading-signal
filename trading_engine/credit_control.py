@@ -85,6 +85,8 @@ def check_credit_thresholds() -> dict:
     projected_eom = projection["projected_eom"]
     alert_level = None
 
+    from trading_engine.notifications import notify_kill_switch_activated, notify_credit_warning
+
     with _lock:
         if current_usage >= KILL_SWITCH_THRESHOLD:
             if not _get_kill_switch_from_db():
@@ -94,6 +96,7 @@ def check_credit_thresholds() -> dict:
                     f"has hit the {KILL_SWITCH_THRESHOLD:,} hard limit. "
                     f"All outbound API requests are now BLOCKED until next billing cycle."
                 )
+                notify_kill_switch_activated(current_usage, KILL_SWITCH_THRESHOLD, MONTHLY_LIMIT)
             alert_level = "kill_switch"
         elif projected_eom >= CRITICAL_PROJECTION:
             alert_level = "critical"
@@ -102,6 +105,7 @@ def check_credit_thresholds() -> dict:
                 f"exceeds 90% threshold ({CRITICAL_PROJECTION:,}). "
                 f"Current: {current_usage:,} | Daily rate: {projection['daily_rate']:,.0f}"
             )
+            notify_credit_warning("critical", current_usage, projected_eom, projection["daily_rate"])
         elif projected_eom >= WARNING_PROJECTION:
             alert_level = "warning"
             logger.warning(
@@ -109,6 +113,7 @@ def check_credit_thresholds() -> dict:
                 f"exceeds 60% threshold ({WARNING_PROJECTION:,}). "
                 f"Current: {current_usage:,} | Daily rate: {projection['daily_rate']:,.0f}"
             )
+            notify_credit_warning("warning", current_usage, projected_eom, projection["daily_rate"])
 
     projection["alert_level"] = alert_level
     return projection

@@ -46,6 +46,9 @@ from trading_engine.admin import router as admin_router
 from trading_engine.strategies.trend_forex import TARGET_SYMBOLS as TREND_FOREX_SYMBOLS
 from trading_engine.strategies.trend_non_forex import TARGET_SYMBOLS as TREND_NON_FOREX_SYMBOLS
 from trading_engine.strategies.multi_timeframe import ALL_ASSETS as MTF_EMA_ASSETS
+from trading_engine.notifications import (
+    notify_strategy_failure, notify_scheduler_down, configure_webhook,
+)
 
 scheduler = BackgroundScheduler()
 
@@ -133,15 +136,18 @@ def _watchdog_thread():
                                 "[SCHEDULER-WATCHDOG] Scheduler restarted but has NO jobs — "
                                 "manual intervention may be needed"
                             )
+                        notify_scheduler_down(restart_attempted=True, restart_success=True)
                     else:
                         logger.critical(
                             "[SCHEDULER-WATCHDOG] Scheduler in unrecoverable state — "
                             "cannot restart (already shut down)"
                         )
+                        notify_scheduler_down(restart_attempted=True, restart_success=False)
                 except Exception as restart_err:
                     logger.critical(
                         f"[SCHEDULER-WATCHDOG] Scheduler restart FAILED: {restart_err}"
                     )
+                    notify_scheduler_down(restart_attempted=True, restart_success=False)
             else:
                 logger.debug(
                     f"[SCHEDULER-WATCHDOG] Heartbeat OK — {len(jobs)} jobs registered, "
@@ -191,6 +197,8 @@ def _scheduled_trend_forex_evaluate():
     status = "FAILED" if asset_errors == assets_eval else ("PARTIAL" if error_count > 0 else "SUCCESS")
     finish_job_log(log_id, status, assets_eval, signals_gen, error_count,
                    "; ".join(error_details) if error_details else None)
+    if status in ("FAILED", "PARTIAL"):
+        notify_strategy_failure("trend_forex", error_count, assets_eval, "; ".join(error_details))
     logger.info(f"[SCHEDULER] ====== trend_forex complete | {status} | {assets_eval} assets, {signals_gen} signals, {error_count} errors ======")
 
 
@@ -247,6 +255,8 @@ def _scheduled_trend_non_forex_evaluate():
     status = "FAILED" if asset_errors == assets_eval else ("PARTIAL" if error_count > 0 else "SUCCESS")
     finish_job_log(log_id, status, assets_eval, signals_gen, error_count,
                    "; ".join(error_details) if error_details else None)
+    if status in ("FAILED", "PARTIAL"):
+        notify_strategy_failure("trend_non_forex", error_count, assets_eval, "; ".join(error_details))
     logger.info(f"[SCHEDULER] ====== trend_non_forex complete | {status} | {assets_eval} assets, {signals_gen} signals, {error_count} errors ======")
 
 
@@ -309,6 +319,8 @@ def _scheduled_highest_lowest_fx():
     status = "FAILED" if error_count > 0 and signals_gen == 0 else ("PARTIAL" if error_count > 0 else "SUCCESS")
     finish_job_log(log_id, status, 1, signals_gen, error_count,
                    "; ".join(error_details) if error_details else None)
+    if status in ("FAILED", "PARTIAL"):
+        notify_strategy_failure("highest_lowest_fx", error_count, 1, "; ".join(error_details))
     logger.info(f"[SCHEDULER] ====== highest_lowest_fx complete | {status} ======")
 
 
@@ -370,6 +382,8 @@ def _scheduled_sp500_momentum_30m():
     status = "FAILED" if error_count > 0 else "SUCCESS"
     finish_job_log(log_id, status, 1, signals_gen, error_count,
                    "; ".join(error_details) if error_details else None)
+    if status == "FAILED":
+        notify_strategy_failure("sp500_momentum", error_count, 1, "; ".join(error_details))
     logger.info(f"[SCHEDULER] ====== SP500 Momentum 30m tick complete | {status} ======")
 
 
@@ -417,6 +431,8 @@ def _scheduled_mtf_ema_evaluate():
     status = "FAILED" if error_count == assets_eval else ("PARTIAL" if error_count > 0 else "SUCCESS")
     finish_job_log(log_id, status, assets_eval, signals_gen, error_count,
                    "; ".join(error_details) if error_details else None)
+    if status in ("FAILED", "PARTIAL"):
+        notify_strategy_failure("mtf_ema", error_count, assets_eval, "; ".join(error_details))
     logger.info(
         f"[SCHEDULER] ====== MTF EMA complete | {status} | "
         f"{assets_eval} assets, {signals_gen} signals, {error_count} errors ======"
@@ -425,6 +441,12 @@ def _scheduled_mtf_ema_evaluate():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from trading_engine.database import get_setting
+    saved_webhook = get_setting("webhook_url")
+    if saved_webhook:
+        configure_webhook(saved_webhook)
+        logger.info("[NOTIFY] Webhook URL loaded from database")
+
     scheduler.add_listener(_scheduler_event_listener, EVENT_JOB_ERROR)
     scheduler.add_listener(_scheduler_missed_listener, EVENT_JOB_MISSED)
 
@@ -504,7 +526,87 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
+limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+from starlette.requests import Request as StarletteRequest
+from fastapi.responses import JSONResponse as FastAPIJSONResponse
+import traceback as tb_module
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: StarletteRequest, exc: Exception):
+    logger.error(
+        f"[UNHANDLED] {request.method} {request.url.path} — "
+        f"{type(exc).__name__}: {exc}\n{tb_module.format_exc()}"
+    )
+    return FastAPIJSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal server error",
+            "type": type(exc).__name__,
+        },
+    )
+
 app.include_router(admin_router)
+
+
+@app.get("/health")
+def health_endpoint():
+    from trading_engine.database import get_scheduler_health_summary as _health_summary, _get_session
+    db_ok = False
+    try:
+        with _get_session() as session:
+            session.execute(__import__('sqlalchemy').text("SELECT 1"))
+            db_ok = True
+    except Exception:
+        pass
+
+    scheduler_running = False
+    job_count = 0
+    try:
+        scheduler_running = scheduler.running
+        job_count = len(scheduler.get_jobs())
+    except Exception:
+        pass
+
+    health_data = _health_summary()
+
+    status = "healthy"
+    checks_failed = []
+    if not scheduler_running:
+        status = "degraded"
+        checks_failed.append("scheduler_stopped")
+    if not db_ok:
+        status = "degraded"
+        checks_failed.append("database_error")
+
+    return {
+        "status": status,
+        "checks_failed": checks_failed,
+        "scheduler": {
+            "running": scheduler_running,
+            "jobs_registered": job_count,
+        },
+        "database": {
+            "connected": db_ok,
+        },
+        "last_24h": {
+            "success": health_data.get("last_24h_success", 0),
+            "failures": health_data.get("last_24h_failures", 0),
+        },
+        "watchdog": {
+            "last_heartbeat": _scheduler_heartbeat.get("last_tick"),
+        },
+        "api_key_configured": bool(api_client.api_key),
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
 
 
 class CandleResponse(BaseModel):
