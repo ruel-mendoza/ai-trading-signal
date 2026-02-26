@@ -28,7 +28,7 @@ TARGET_SYMBOLS = [
     "NDX",
     "XAU/USD",
     "XAG/USD",
-    "WTI/USD",
+    "OSX",
     "BTC/USD",
     "ETH/USD",
 ]

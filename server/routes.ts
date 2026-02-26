@@ -22,7 +22,7 @@ const FOREX_PAIRS = [
   { pair: "ETH/USD", category: "crypto" },
   { pair: "XAU/USD", category: "commodities" },
   { pair: "XAG/USD", category: "commodities" },
-  { pair: "WTI/USD", category: "commodities" },
+  { pair: "OSX", category: "commodities" },
 ];
 
 export async function registerRoutes(

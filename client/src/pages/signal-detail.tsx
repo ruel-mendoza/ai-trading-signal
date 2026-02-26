@@ -22,7 +22,7 @@ import {
 function formatPrice(price: number, pair: string): string {
   if (pair.includes("JPY")) return price.toFixed(3);
   if (pair.includes("BTC") || pair.includes("ETH")) return price.toFixed(2);
-  if (pair.includes("XAU") || pair.includes("XAG") || pair.includes("WTI")) return price.toFixed(2);
+  if (pair.includes("XAU") || pair.includes("XAG") || pair.includes("OSX")) return price.toFixed(2);
   return price.toFixed(5);
 }
 
@@ -46,7 +46,7 @@ function getRiskReward(signal: Signal): string {
 function getPipDistance(price1: number, price2: number, pair: string): string {
   const diff = Math.abs(price1 - price2);
   if (pair.includes("JPY")) return (diff * 100).toFixed(1);
-  if (pair.includes("BTC") || pair.includes("ETH") || pair.includes("XAU") || pair.includes("WTI"))
+  if (pair.includes("BTC") || pair.includes("ETH") || pair.includes("XAU") || pair.includes("OSX"))
     return diff.toFixed(2);
   return (diff * 10000).toFixed(1);
 }

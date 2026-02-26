@@ -127,7 +127,7 @@ class TestBaseStrategyInterface:
 
 class TestTargetSymbols:
     def test_all_expected_assets_present(self):
-        expected = ["SPX", "NDX", "XAU/USD", "XAG/USD", "WTI/USD", "BTC/USD", "ETH/USD"]
+        expected = ["SPX", "NDX", "XAU/USD", "XAG/USD", "OSX", "BTC/USD", "ETH/USD"]
         assert TARGET_SYMBOLS == expected
 
     def test_strategy_name(self):

@@ -821,7 +821,7 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
                 <span class="badge status-active">RUT</span>
                 <span class="badge" style="background:#1e3a5f;color:#93c5fd;">XAU/USD</span>
                 <span class="badge" style="background:#1e3a5f;color:#93c5fd;">XAG/USD</span>
-                <span class="badge" style="background:#1e3a5f;color:#93c5fd;">WTI/USD</span>
+                <span class="badge" style="background:#1e3a5f;color:#93c5fd;">OSX</span>
                 <span class="badge" style="background:#3b1f4e;color:#c4b5fd;">BTC/USD</span>
                 <span class="badge" style="background:#3b1f4e;color:#c4b5fd;">ETH/USD</span>
                 <span class="badge" style="background:#1e3a2f;color:#86efac;">EUR/USD</span>
@@ -1046,7 +1046,7 @@ def _get_trend_following_data() -> dict:
     ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
 
     forex_symbols = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "NZD/USD", "USD/CAD", "USD/CHF", "EUR/GBP"]
-    non_forex_symbols = ["SPX", "NDX", "XAU/USD", "XAG/USD", "WTI/USD", "BTC/USD", "ETH/USD"]
+    non_forex_symbols = ["SPX", "NDX", "XAU/USD", "XAG/USD", "OSX", "BTC/USD", "ETH/USD"]
     all_symbols = forex_symbols + non_forex_symbols
 
     def _compute_symbol_data(symbol, long_only=False):

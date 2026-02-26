@@ -24,7 +24,7 @@ STRATEGY_ASSET_CONFIG: dict[str, dict] = {
     "mtf_ema": {
         "assets": [
             "SPX", "NDX", "RUT",
-            "XAU/USD", "XAG/USD", "WTI/USD",
+            "XAU/USD", "XAG/USD", "OSX",
             "BTC/USD", "ETH/USD",
             "EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD",
         ],
@@ -47,7 +47,7 @@ STRATEGY_ASSET_CONFIG: dict[str, dict] = {
         "timeframe": "D1",
     },
     "trend_non_forex": {
-        "assets": ["SPX", "NDX", "XAU/USD", "XAG/USD", "WTI/USD", "BTC/USD", "ETH/USD"],
+        "assets": ["SPX", "NDX", "XAU/USD", "XAG/USD", "OSX", "BTC/USD", "ETH/USD"],
         "timeframe": "D1",
     },
 }

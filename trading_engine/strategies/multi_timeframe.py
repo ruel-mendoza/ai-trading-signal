@@ -19,7 +19,7 @@ STRATEGY_NAME = "mtf_ema"
 
 TARGET_ASSETS = {
     "indices": ["SPX", "NDX", "RUT"],
-    "commodities": ["XAU/USD", "XAG/USD", "WTI/USD"],
+    "commodities": ["XAU/USD", "XAG/USD", "OSX"],
     "crypto": ["BTC/USD", "ETH/USD"],
     "forex": ["EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"],
 }

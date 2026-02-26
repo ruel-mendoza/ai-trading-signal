@@ -9,7 +9,7 @@ import {
 function formatPrice(price: number, pair: string): string {
   if (pair.includes("JPY")) return price.toFixed(3);
   if (pair.includes("BTC") || pair.includes("ETH")) return price.toFixed(2);
-  if (pair.includes("XAU") || pair.includes("XAG") || pair.includes("WTI")) return price.toFixed(2);
+  if (pair.includes("XAU") || pair.includes("XAG") || pair.includes("OSX")) return price.toFixed(2);
   return price.toFixed(5);
 }
 
@@ -24,7 +24,7 @@ function formatDate(date: string | Date): string {
 
 function getCategoryIcon(pair: string): string {
   if (pair.includes("BTC") || pair.includes("ETH")) return "crypto";
-  if (pair.includes("XAU") || pair.includes("XAG") || pair.includes("WTI")) return "commodity";
+  if (pair.includes("XAU") || pair.includes("XAG") || pair.includes("OSX")) return "commodity";
   return "forex";
 }
 
