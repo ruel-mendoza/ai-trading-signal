@@ -1114,7 +1114,7 @@ def _get_trend_following_data() -> dict:
         return sym_info
 
     forex_data = [_compute_symbol_data(s, long_only=False) for s in forex_symbols]
-    non_forex_data = [_compute_symbol_data(s, long_only=True) for s in non_forex_symbols]
+    non_forex_data = [_compute_symbol_data(s, long_only=False) for s in non_forex_symbols]
 
     def _gather_trades(strategy_name):
         active_trades = get_active_signals(strategy_name=strategy_name)
@@ -1277,7 +1277,7 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
         </div>
     </div>
     <div class="settings-section" style="margin-top:20px;">
-        <h3>Non-Forex Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG only</span></h3>
+        <h3>Non-Forex Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG &amp; SHORT</span></h3>
         <div class="stats-grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
             {non_forex_cards}
         </div>
@@ -1309,8 +1309,10 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
         <ul>
             <li><strong>Forex Entry (LONG):</strong> Close &ge; highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
             <li><strong>Forex Entry (SHORT):</strong> Close &le; lowest close of last 50 days AND SMA(50) &lt; SMA(100)</li>
-            <li><strong>Non-Forex Entry:</strong> LONG only &mdash; Close &ge; highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
-            <li><strong>Trailing Stop:</strong> Highest close &minus; (Fixed ATR at entry &times; 3)</li>
+            <li><strong>Non-Forex Entry (LONG):</strong> Close &ge; highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
+            <li><strong>Non-Forex Entry (SHORT):</strong> Close &le; lowest close of last 50 days AND SMA(50) &lt; SMA(100)</li>
+            <li><strong>Trailing Stop (LONG):</strong> Highest close &minus; (Fixed ATR at entry &times; 3)</li>
+            <li><strong>Trailing Stop (SHORT):</strong> Lowest close + (Fixed ATR at entry &times; 3)</li>
             <li><strong>Timeframe:</strong> Daily (D1) candles</li>
             <li><strong>ATR:</strong> Fixed at entry value for the duration of the trade</li>
         </ul>
