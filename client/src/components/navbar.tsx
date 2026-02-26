@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { TrendingUp, Menu, Shield, LogIn, BookOpen } from "lucide-react";
+import { TrendingUp, Menu, Shield, LogIn } from "lucide-react";
 
 export function Navbar() {
   const [location] = useLocation();
@@ -40,16 +40,9 @@ export function Navbar() {
             </div>
           </Link>
 
-          <div className="hidden sm:flex items-center gap-2">
-          <Link href="/strategy-rules" data-testid="link-strategy-rules-desktop">
-            <Button variant="ghost" size="sm">
-              <BookOpen className="w-4 h-4 mr-2" />
-              Strategy Rules
-            </Button>
-          </Link>
           <a
             href={adminHref}
-            className="inline-flex"
+            className="hidden sm:inline-flex"
             data-testid="link-admin-desktop"
           >
             <Button variant="default" size="sm">
@@ -66,7 +59,6 @@ export function Navbar() {
               )}
             </Button>
           </a>
-          </div>
 
           <div className="sm:hidden">
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -89,16 +81,6 @@ export function Navbar() {
                     <div className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-accent cursor-pointer">
                       <TrendingUp className="w-5 h-5" />
                       <span className="font-medium">Signals</span>
-                    </div>
-                  </Link>
-                  <Link
-                    href="/strategy-rules"
-                    onClick={() => setMobileOpen(false)}
-                    data-testid="link-strategy-rules-mobile"
-                  >
-                    <div className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-accent cursor-pointer">
-                      <BookOpen className="w-5 h-5" />
-                      <span className="font-medium">Strategy Rules</span>
                     </div>
                   </Link>
                   <a

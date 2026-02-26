@@ -808,16 +808,232 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
             </table>
         </div>
     </div>
-    <div class="timezone-note" style="margin-top:16px;">
-        <strong>Strategy Rules (Multi-Timeframe EMA):</strong>
-        <ul>
-            <li><strong>Condition 1:</strong> Price &gt; D1 EMA(200) AND Price &gt; D1 EMA(50)</li>
-            <li><strong>Condition 2:</strong> H4 EMA(200) rising (slope &gt; 0)</li>
-            <li><strong>Condition 3:</strong> Price dips below H4 EMA(50)</li>
-            <li><strong>Condition 4:</strong> Dip is within 1 ATR(100) of H4 EMA(50)</li>
-            <li><strong>Condition 5:</strong> H1 candle closes above H1 EMA(20)</li>
-            <li><strong>Trailing Stop:</strong> Highest close - (Fixed ATR at entry &times; 2)</li>
-        </ul>
+    <div class="settings-section" style="margin-top:20px;" data-testid="mtf-strategy-rules">
+        <h3>MTF EMA Trend-Pullback Strategy Rules</h3>
+        <p style="color:#94a3b8;margin-top:4px;font-size:0.85rem;">Multi-Timeframe EMA strategy using D1 + H4 + H1 timeframe synchronization with trend-pullback entry logic and dual exit management.</p>
+
+        <div style="margin-top:16px;">
+            <h4 style="color:#e2e8f0;margin-bottom:8px;font-size:0.95rem;">Covered Assets (12)</h4>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                <span class="badge status-active">SPX</span>
+                <span class="badge status-active">NDX</span>
+                <span class="badge status-active">RUT</span>
+                <span class="badge" style="background:#1e3a5f;color:#93c5fd;">XAU/USD</span>
+                <span class="badge" style="background:#1e3a5f;color:#93c5fd;">XAG/USD</span>
+                <span class="badge" style="background:#1e3a5f;color:#93c5fd;">WTI/USD</span>
+                <span class="badge" style="background:#3b1f4e;color:#c4b5fd;">BTC/USD</span>
+                <span class="badge" style="background:#3b1f4e;color:#c4b5fd;">ETH/USD</span>
+                <span class="badge" style="background:#1e3a2f;color:#86efac;">EUR/USD</span>
+                <span class="badge" style="background:#1e3a2f;color:#86efac;">USD/JPY</span>
+                <span class="badge" style="background:#1e3a2f;color:#86efac;">GBP/USD</span>
+                <span class="badge" style="background:#1e3a2f;color:#86efac;">AUD/USD</span>
+            </div>
+        </div>
+
+        <div style="margin-top:20px;">
+            <h4 style="color:#e2e8f0;margin-bottom:8px;font-size:0.95rem;">Timeframe Hierarchy</h4>
+            <div class="stats-grid" style="grid-template-columns:repeat(3, 1fr);">
+                <div class="stat-card">
+                    <div class="stat-label">D1 (Daily)</div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:4px;">Trend Direction</div>
+                    <div style="font-size:0.78rem;margin-top:6px;">EMA 200 &mdash; Primary trend<br>EMA 50 &mdash; Secondary trend</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">H4 (4-Hour)</div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:4px;">Momentum &amp; Pullback</div>
+                    <div style="font-size:0.78rem;margin-top:6px;">EMA 50 &mdash; Pullback zone<br>EMA 200 &mdash; Slope acceleration<br>ATR 100 &mdash; Volatility measure</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">H1 (1-Hour)</div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:4px;">Entry Trigger</div>
+                    <div style="font-size:0.78rem;margin-top:6px;">EMA 20 &mdash; Crossover signal<br>Candle body &mdash; Confirmation</div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top:20px;">
+            <h4 style="color:#e2e8f0;margin-bottom:8px;font-size:0.95rem;">Indicators Matrix</h4>
+            <div style="overflow-x:auto;">
+                <table class="data-table" style="font-size:0.82rem;">
+                    <thead>
+                        <tr><th>Indicator</th><th style="text-align:center;">D1</th><th style="text-align:center;">H4</th><th style="text-align:center;">H1</th><th>Purpose</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>EMA 20</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td>H1 crossover trigger</td></tr>
+                        <tr><td>EMA 50</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td>Pullback zone &amp; exit level</td></tr>
+                        <tr><td>EMA 200</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td>Trend direction &amp; slope</td></tr>
+                        <tr><td>ATR 100</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td>Stop loss &amp; trailing stop</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div style="margin-top:20px;">
+            <h4 style="color:#6ee7b7;margin-bottom:8px;font-size:0.95rem;">&#9650; Long Entry Conditions (all 4 must be met)</h4>
+            <div style="border-left:3px solid #22c55e;padding-left:12px;">
+                <div style="margin-bottom:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-active" style="font-size:0.7rem;">1</span><strong style="font-size:0.85rem;">D1 Trend Validation</strong></div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">Price must be above both D1 EMA 200 and D1 EMA 50, confirming a bullish macro trend.</div>
+                </div>
+                <div style="margin-bottom:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-active" style="font-size:0.7rem;">2</span><strong style="font-size:0.85rem;">Slope Acceleration</strong></div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">D1 EMA 200 must be rising (current &gt; previous). H4 EMA 200 must be accelerating upward: (current &minus; prev) &gt; (prev &minus; earlier).</div>
+                </div>
+                <div style="margin-bottom:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-active" style="font-size:0.7rem;">3</span><strong style="font-size:0.85rem;">Pullback Validation</strong></div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">Price must be below H4 EMA 50 (dipped into pullback zone) AND within 1&times; H4 ATR 100 of the H4 EMA 50.</div>
+                </div>
+                <div style="margin-bottom:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-active" style="font-size:0.7rem;">4</span><strong style="font-size:0.85rem;">H1 Confirmation</strong></div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">Previous H1 close was below H1 EMA 20, current H1 close is above H1 EMA 20 (crossover). Current H1 candle must have a bullish body (Close &gt; Open).</div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top:20px;">
+            <h4 style="color:#fca5a5;margin-bottom:8px;font-size:0.95rem;">&#9660; Short Entry Conditions (mirrored &mdash; all 4 must be met)</h4>
+            <div style="border-left:3px solid #ef4444;padding-left:12px;">
+                <div style="margin-bottom:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-closed" style="font-size:0.7rem;">1</span><strong style="font-size:0.85rem;">D1 Trend Validation</strong></div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">Price must be below both D1 EMA 200 and D1 EMA 50, confirming a bearish macro trend.</div>
+                </div>
+                <div style="margin-bottom:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-closed" style="font-size:0.7rem;">2</span><strong style="font-size:0.85rem;">Slope Acceleration</strong></div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">D1 EMA 200 must be falling (current &lt; previous). H4 EMA 200 must be accelerating downward: (prev &minus; current) &gt; (earlier &minus; prev).</div>
+                </div>
+                <div style="margin-bottom:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-closed" style="font-size:0.7rem;">3</span><strong style="font-size:0.85rem;">Pullback Validation</strong></div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">Price must be above H4 EMA 50 (rallied into pullback zone) AND within 1&times; H4 ATR 100 of the H4 EMA 50.</div>
+                </div>
+                <div style="margin-bottom:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-closed" style="font-size:0.7rem;">4</span><strong style="font-size:0.85rem;">H1 Confirmation</strong></div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">Previous H1 close was above H1 EMA 20, current H1 close is below H1 EMA 20 (crossover). Current H1 candle must have a bearish body (Close &lt; Open).</div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top:20px;">
+            <h4 style="color:#e2e8f0;margin-bottom:8px;font-size:0.95rem;">Stop Loss Selection (Whichever-is-Greater)</h4>
+            <div class="stats-grid" style="grid-template-columns:1fr 1fr;">
+                <div class="stat-card">
+                    <div class="stat-label">Method A &mdash; ATR-Based Stop</div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:6px;">
+                        0.5&times; H4 ATR(100) from entry price.<br>
+                        Long: entry &minus; (0.5 &times; ATR)<br>
+                        Short: entry + (0.5 &times; ATR)
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Method B &mdash; Structural Stop</div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:6px;">
+                        Long: lowest H1 low below H4 EMA 50 in last 24 H1 candles &minus; 2-pip buffer<br>
+                        Short: highest H1 high above H4 EMA 50 in last 24 H1 candles + 2-pip buffer
+                    </div>
+                </div>
+            </div>
+            <div class="timezone-note" style="margin-top:8px;">
+                <strong>Selection Rule:</strong> The stop loss with the <strong>greater distance</strong> from entry is selected. If no structural candles qualify, ATR stop is used as fallback. If structural stop lands on the wrong side of entry, ATR stop is used.
+            </div>
+            <div style="margin-top:8px;font-size:0.82rem;color:#94a3b8;">
+                <strong style="color:#e2e8f0;">Take Profit:</strong> 3.0&times; H4 ATR(100) from entry price. Long: entry + (3.0 &times; ATR). Short: entry &minus; (3.0 &times; ATR).
+            </div>
+        </div>
+
+        <div style="margin-top:20px;">
+            <h4 style="color:#e2e8f0;margin-bottom:8px;font-size:0.95rem;">Exit Rules (checked in priority order)</h4>
+            <div class="stat-card" style="border-left:3px solid #f59e0b;margin-bottom:8px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                    <span class="badge" style="background:#f59e0b;color:#1e293b;font-size:0.7rem;">PRIORITY 1</span>
+                    <strong style="font-size:0.9rem;">H4 EMA 50 Breach Exit</strong>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                    <div style="background:#1a2332;border-radius:6px;padding:10px;">
+                        <div style="font-size:0.82rem;font-weight:600;color:#6ee7b7;margin-bottom:4px;">Long Exit</div>
+                        <div style="font-size:0.78rem;color:#94a3b8;">Exit immediately when an H4 candle <strong style="color:#e2e8f0;">closes below</strong> the H4 EMA 50. The pullback zone has been lost.</div>
+                    </div>
+                    <div style="background:#1a2332;border-radius:6px;padding:10px;">
+                        <div style="font-size:0.82rem;font-weight:600;color:#fca5a5;margin-bottom:4px;">Short Exit</div>
+                        <div style="font-size:0.78rem;color:#94a3b8;">Exit immediately when an H4 candle <strong style="color:#e2e8f0;">closes above</strong> the H4 EMA 50. The pullback zone has been lost.</div>
+                    </div>
+                </div>
+            </div>
+            <div class="stat-card" style="border-left:3px solid #64748b;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                    <span class="badge" style="background:#475569;color:#e2e8f0;font-size:0.7rem;">PRIORITY 2</span>
+                    <strong style="font-size:0.9rem;">Trailing Stop Exit</strong>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                    <div style="background:#1a2332;border-radius:6px;padding:10px;">
+                        <div style="font-size:0.82rem;font-weight:600;color:#6ee7b7;margin-bottom:4px;">Long Trailing Stop</div>
+                        <div style="font-size:0.78rem;color:#94a3b8;">Tracks the highest price since entry. Stop = peak &minus; (2.0&times; ATR at entry). Triggers when price drops below the trailing stop.</div>
+                    </div>
+                    <div style="background:#1a2332;border-radius:6px;padding:10px;">
+                        <div style="font-size:0.82rem;font-weight:600;color:#fca5a5;margin-bottom:4px;">Short Trailing Stop</div>
+                        <div style="font-size:0.78rem;color:#94a3b8;">Tracks the lowest price since entry. Stop = trough + (2.0&times; ATR at entry). Triggers when price rises above the trailing stop.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top:20px;">
+            <h4 style="color:#e2e8f0;margin-bottom:8px;font-size:0.95rem;">Exit Diagnostics Logging</h4>
+            <div class="stats-grid" style="grid-template-columns:1fr 1fr;">
+                <div class="stat-card">
+                    <div class="stat-label">D1 EMA 200 Slope</div>
+                    <div style="font-size:0.78rem;color:#94a3b8;margin-top:4px;">current &minus; previous value. Positive = rising daily trend, negative = falling.</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">H4 EMA 200 Slope</div>
+                    <div style="font-size:0.78rem;color:#94a3b8;margin-top:4px;">Current and previous period slopes logged separately to show momentum direction.</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">H4 EMA 200 Acceleration</div>
+                    <div style="font-size:0.78rem;color:#94a3b8;margin-top:4px;">Difference between current slope and previous slope. Shows if momentum is increasing or decaying.</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Pullback Depth</div>
+                    <div style="font-size:0.78rem;color:#94a3b8;margin-top:4px;">H4 close minus H4 EMA 50. Shows how far price has moved from the key pullback level.</div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top:20px;">
+            <h4 style="color:#e2e8f0;margin-bottom:8px;font-size:0.95rem;">Data Requirements</h4>
+            <div class="stats-grid" style="grid-template-columns:repeat(3, 1fr);">
+                <div class="stat-card" style="text-align:center;">
+                    <div class="stat-value" style="font-size:1.5rem;">200</div>
+                    <div class="stat-label">D1 candles</div>
+                </div>
+                <div class="stat-card" style="text-align:center;">
+                    <div class="stat-value" style="font-size:1.5rem;">200</div>
+                    <div class="stat-label">H4 candles</div>
+                </div>
+                <div class="stat-card" style="text-align:center;">
+                    <div class="stat-value" style="font-size:1.5rem;">20</div>
+                    <div class="stat-label">H1 candles</div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top:20px;">
+            <h4 style="color:#e2e8f0;margin-bottom:8px;font-size:0.95rem;">Strategy Constants</h4>
+            <div style="overflow-x:auto;">
+                <table class="data-table" style="font-size:0.82rem;">
+                    <thead>
+                        <tr><th>Constant</th><th>Value</th><th>Usage</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td style="font-family:monospace;font-size:0.78rem;">SL_ATR_MULT</td><td>0.5</td><td>ATR stop loss multiplier</td></tr>
+                        <tr><td style="font-family:monospace;font-size:0.78rem;">TP_ATR_MULT</td><td>3.0</td><td>Take profit multiplier</td></tr>
+                        <tr><td style="font-family:monospace;font-size:0.78rem;">TRAILING_STOP_ATR_MULT</td><td>2.0</td><td>Trailing stop distance</td></tr>
+                        <tr><td style="font-family:monospace;font-size:0.78rem;">STRUCTURAL_LOOKBACK_H1</td><td>24</td><td>H1 candles to scan for structural stop</td></tr>
+                        <tr><td style="font-family:monospace;font-size:0.78rem;">STRUCTURAL_PIP_BUFFER</td><td>0.0002</td><td>2-pip buffer on structural stop</td></tr>
+                        <tr><td style="font-family:monospace;font-size:0.78rem;">EMA periods</td><td>20 / 50 / 200</td><td>Fast / Medium / Slow EMA</td></tr>
+                        <tr><td style="font-family:monospace;font-size:0.78rem;">ATR period</td><td>100</td><td>Volatility lookback</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
     """
 
