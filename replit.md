@@ -1,163 +1,27 @@
 # AI Signals - AI-Powered Trading Signals Platform
 
 ## Overview
-An AI-powered trading signals platform that generates forex, crypto, and commodity trading signals using OpenAI. Now includes a Python-based Trading Signal Engine with FastAPI for OHLC data management, caching, technical indicator calculations, and a StrategyEngine with four automated trading strategies.
+AI Signals is an AI-powered trading signals platform designed to generate forex, crypto, and commodity trading signals. It integrates a Python-based Trading Signal Engine with FastAPI for robust data management, technical analysis, and automated strategy execution. The platform aims to provide users with timely and accurate trading insights across various asset classes, leveraging advanced AI and quantitative strategies.
 
-## Tech Stack
-- **Frontend**: React + TypeScript + Vite + TailwindCSS + Shadcn UI
-- **Backend**: Express.js + TypeScript (main server, port 5000)
-- **Trading Engine**: Python FastAPI (port 5001, proxied via Express at /api/engine/)
-- **Database**: PostgreSQL with Drizzle ORM (signals), SQLite (OHLC candle data + strategy signals)
-- **AI**: OpenAI via Replit AI Integrations (gpt-5-mini for signal generation)
-- **Scheduler**: APScheduler (BackgroundScheduler with CronTrigger)
-- **Routing**: Wouter
-- **State**: TanStack React Query
+## User Preferences
+I want iterative development. I prefer detailed explanations and for the agent to ask before making major changes.
 
-## Project Structure
-```
-client/src/
-  App.tsx          - Main router (/, /signal/:id)
-  pages/
-    home.tsx       - Signal listing with filters & stats
-    signal-detail.tsx - Detailed signal view with analysis
-  components/
-    signal-card.tsx        - Signal card component
-    category-filter.tsx    - Category filter buttons
-    generate-signal-dialog.tsx - AI signal generation dialog
-server/
-  index.ts    - Express server entry (spawns Python engine, proxies /api/engine/)
-  routes.ts   - API routes (/api/signals, /api/pairs, /api/signals/generate)
-  storage.ts  - Database storage layer
-  db.ts       - Database connection
-  seed.ts     - Seed data
-shared/
-  schema.ts   - Drizzle schema (users, signals tables)
-trading_engine/          - Python FastAPI trading engine
-  main.py               - FastAPI app with routes (candles, indicators, strategies, admin)
-  database.py           - SQLite database layer for OHLC candles + strategy signals + API usage
-  fcsapi_client.py      - FCSAPI client for fetching OHLC data (with usage tracking)
-  cache_layer.py        - Caching layer (calls API only on candle closes)
-  indicators.py         - IndicatorEngine class (EMA, SMA, ATR, RSI)
-  strategy_engine.py    - StrategyEngine orchestrator + trailing stop management
-  admin.py              - Admin dashboard (HTML), export endpoints, credit monitor, timezone logic
-  utils/                 - Utility modules
-    holiday_manager.py  - Trading holiday detection (US + JP calendars via `holidays` package)
-  strategies/            - Individual strategy modules
-    highest_lowest.py   - Highest/Lowest Close FX Strategy (EUR/USD, session & holiday aware, 9/10 AM ET)
-    sp500_momentum.py   - S&P 500 Momentum Strategy (ARCA session filter, RSI crossover, ATR stops)
-    trend_forex.py      - Forex Trend Following Strategy (EUR/USD, USD/JPY, GBP/USD, 5PM ET eval)
-```
+## System Architecture
+The platform utilizes a modern stack for both frontend and backend development. The frontend is built with React, TypeScript, Vite, TailwindCSS, and Shadcn UI, focusing on a responsive and intuitive user experience. The backend is an Express.js server in TypeScript, acting as the main API gateway and proxying requests to the Python FastAPI Trading Signal Engine.
 
-## Trading Engine API (via /api/engine/)
-- `GET /api/engine/` - Health check / status
-- `GET /api/engine/api/candles?symbol=EUR/USD&timeframe=1H&limit=300` - Get OHLC candles
-- `GET /api/engine/api/indicators?symbol=EUR/USD&timeframe=1H&include_series=false` - Get indicators
-- `POST /api/engine/api/candles/refresh?symbol=EUR/USD&timeframe=1H` - Force refresh candles
-- `GET /api/engine/api/symbols` - List available symbols
-- `GET /api/engine/api/cache/status?symbol=EUR/USD&timeframe=1H` - Cache status
-- `GET /api/engine-status` - Python engine process status
+The Trading Signal Engine handles OHLC data management, caching, technical indicator calculations (EMA, SMA, ATR, RSI), and orchestrates four automated trading strategies: MTF EMA, Trend Following, S&P 500 Momentum, and Highest/Lowest Close FX. Data persistence is managed with PostgreSQL using Drizzle ORM for signals and SQLite for OHLC candle data, strategy signals, and API usage tracking. AI signal generation is powered by OpenAI through Replit AI Integrations.
 
-## Advance/Quotes API (via /api/engine/)
-- `GET /api/engine/api/quotes?symbols=EUR/USD,SPX,BTC/USD&period=1h&merge=latest,profile` - Real-time quotes with profile data
-- All asset classes use FCSAPI v4 advance endpoint with exchange-prefixed symbols
-- Forex: `FX:EURUSD` format, Crypto: `COINBASE:BTCUSD` format, Indices: `CBOE:SPX` format
-- Symbol translation is automatic — pass friendly names (EUR/USD, BTC/USD, SPX)
-- Merge options: latest (OHLC+change), profile (name/exchange/type), tech (indicators), perf (performance)
+Key architectural decisions include:
+- **Modular Design:** Separation of concerns between frontend, Node.js backend, and Python trading engine.
+- **Data Caching:** Smart caching mechanisms in the Python engine to optimize external API calls for OHLC data.
+- **Idempotent Strategy Execution:** Strategies are designed to prevent duplicate signals and manage positions effectively, including ATR State Lock for consistent trailing stop calculations.
+- **Admin Interface:** A dedicated admin dashboard for monitoring signals, managing API keys, tracking credit usage, and configuring user settings.
+- **Robust Scheduling:** APScheduler handles background tasks for strategy evaluations and data refreshes, with timezone awareness.
+- **Scalable Data Handling:** OHLC candle data is stored locally for various timeframes (30m, 1H, 4H, Daily) to support rapid indicator calculations.
 
-## Strategy Engine API (via /api/engine/)
-- `POST /api/engine/api/strategies/evaluate?symbols=EUR/USD,GBP/USD` - Evaluate all strategies
-- `POST /api/engine/api/strategies/evaluate/{strategy_name}?symbol=EUR/USD` - Evaluate single strategy
-- `POST /api/engine/api/strategies/check-exits` - Check and execute exit conditions
-- `GET /api/engine/api/strategy-signals?strategy=&symbol=&status=` - List strategy signals
-- `GET /api/engine/api/strategy-signals/active` - List active signals only
-
-## Strategies
-1. **MTF EMA (mtf_ema)**: Multi-timeframe using D1/H4/H1. Long when price > D1 200/50 EMA, H4 200 EMA rising, price dips below H4 50 EMA by < 1 ATR, H1 closes back above 20 EMA.
-2. **Trend Following (trend_following)**: Entry when close > last 50 days AND SMA50 > SMA100. Exit via 3x ATR(100) trailing stop.
-3. **S&P 500 Momentum (sp500_momentum)**: SPX only, 30m candles. Implements `BaseStrategy` interface (`evaluate(asset, timeframe, df, open_position) -> SignalResult`). ARCA session filter (9:30 AM-4:00 PM ET, last valid candle at 3:30 PM, 4:00 PM excluded). Uses pytz for DST-aware ET timezone handling. Entry: LONG when prev RSI(20) < 70 AND current RSI(20) >= 70, no existing open trade. Uses FCSAPI v4 advance endpoint (`period="30m"`) for real-time price (entry/exit decisions), falls back to cached candles. ATR(100) fixed at entry. Exit: 2x ATR trailing stop (highest_close_since_entry - 2×ATR_at_entry) OR RSI cross-down (prev >= 70 AND curr < 70). Idempotency: `has_open_signal()` primary guard + `signal_exists()` secondary. Scheduled via APScheduler at :00 and :30 past every hour (US/Eastern); scheduler pre-filters ARCA session before calling strategy. `run_sp500_intraday_cycle()` orchestrates: fetch candles → load open position (with fixed atr_at_entry from DB) → evaluate entry/update peak → check exits. Logs RSI values, ATR at entry, and trailing stop on every 30m tick for auditability. Module: `trading_engine/strategies/sp500_momentum.py`.
-4. **Highest/Lowest Close FX (highest_lowest_fx)**: EUR/USD only. H1 candles + D1 for indicators. Implements `BaseStrategy` interface. Session & holiday aware — only evaluates at exactly 9:00 AM and 10:00 AM ET (America/New_York). Skips US and JP public holidays via `trading_engine/utils/holiday_manager.py` (uses `holidays` Python package with `holidays.US()` and `holidays.JP()` calendars). LONG when price >= 50-day highest close. SELL when price <= 50-day lowest close (with NY reversal: if within 0.2% of lowest, triggers BUY reversal instead). Exit via 2x ATR(100) trailing stop (ATR fixed at entry). Uses v4 advance endpoint for real-time price. Idempotency via `has_open_signal()` + `signal_exists()`. Position tracking with `open_position()`/`close_position()` for trailing stop management. Scheduled via APScheduler at 09:00 and 10:00 AM US/Eastern. Module: `trading_engine/strategies/highest_lowest.py`.
-5. **Forex Trend Following (trend_forex)**: EUR/USD, USD/JPY, GBP/USD only. D1 candles, evaluates at 5:00 PM ET (forex daily close). LONG when close > highest close of last 50 days AND SMA(50) > SMA(100). SHORT when close < lowest close of last 50 days AND SMA(50) < SMA(100). Exit via 3x ATR(100) trailing stop (ATR fixed at entry). Module: `trading_engine/strategies/trend_forex.py`.
-6. **Non-Forex Trend Following (trend_non_forex)**: SPX, NDX, XAU/USD, XAG/USD, WTI/USD, BTC/USD, ETH/USD. D1 candles, evaluates at 4:00 PM ET. Implements `BaseStrategy` interface (`evaluate(asset, timeframe, df, open_position) -> SignalResult`). Uses v4 advance endpoint for real-time price (entry/exit decisions), pd.DataFrame for indicator computation (SMA, ATR). LONG only — advance close > highest close of last 50 days AND SMA(50) > SMA(100). No short entries. Returns `SignalResult(action=ENTRY, direction=LONG)` with signal dict in metadata. Exit via 3x ATR(100) trailing stop (ATR fixed at entry). Exit check also uses v4 advance price with fallback to cached candles. Signal timestamp uses current ET time. Scheduled via APScheduler at 16:00 US/Eastern. Module: `trading_engine/strategies/trend_non_forex.py`.
-
-## Indicator Engine
-- `trading_engine/indicators/` — Package (converted from single file)
-  - `__init__.py` — IndicatorEngine class: EMA(20,50,200), SMA(50,100), ATR(100), RSI(20)
-  - `validation.py` — `check_data_length(data, period, label)` validates pd.Series/DataFrame length, raises `InsufficientDataError`
-  - `ema_slope.py` — `ema(series, period)` computes EMA on pd.Series (index/tz preserved); `calculate_slope(ema_series)` returns `float` = current − previous value (for MTF trend analysis); `calculate_slope_series(ema_series)` returns full `pd.Series` of diffs
-  - `sma.py` — `SMA(data, period=50)` vectorized via `data.rolling(window=period).mean()`; `SMA50()`, `SMA100()` convenience functions; `latest(data, period)` returns `float|None`
-  - `ema.py` — `EMA(data, period=20)` vectorized via `data.ewm(span=period, adjust=False).mean()`; `EMA20()`, `EMA50()`, `EMA200()` convenience functions; `latest(data, period)` returns `float|None`
-  - `atr.py` — `ATR(df, period=100)` True Range + Simple Moving Average (`rolling(period).mean()`); `true_range(df)` exposed separately; `latest(df, period)` returns `float|None`
-  - `rsi.py` — `RSI(data, period=20)` Wilder's Smoothing; returns `(rsi_series, cross_above_70, cross_below_70)` — both cross directions for S&P 500 Momentum entry/exit; `latest(data, period)` returns `float|None`
-- All functions accept pd.Series or pd.DataFrame and return pd.Series with preserved indices (timezone-aware)
-- Performance: all indicators run under 3ms for 10,000 data points
-
-## FCSAPI v4 API (All Asset Classes)
-- **All endpoints use FCSAPI v4** at `api-v4.fcsapi.com` with unified parameter format
-- **Forex & Commodities**: `api-v4.fcsapi.com/forex/history` — params: `symbol` (EURUSD, XAUUSD), `period` (timeframe), `length` (count)
-- **Crypto**: `api-v4.fcsapi.com/crypto/history` — params: `symbol` (BTCUSD, ETHUSD), `period` (timeframe), `length` (count)
-- **Stock Indices**: `api-v4.fcsapi.com/stock/history` — params: `symbol` (CBOE:SPX), `period` (timeframe), `length` (count), `type=index`
-- **Advance (all)**: `api-v4.fcsapi.com/{forex|crypto|stock}/advance` — real-time quotes with exchange-prefixed symbols
-- History symbol format: slash removed for forex/crypto (EUR/USD→EURUSD), exchange-prefixed for stocks (SPX→CBOE:SPX)
-- Advance symbol format: FX:EURUSD (forex), COINBASE:BTCUSD (crypto), CBOE:SPX (stocks)
-
-## Environment Variables
-- `FCSAPI_KEY` - FCSAPI API key for fetching OHLC data (required for live data)
-
-## Admin Interface (via /api/engine/admin/)
-- `GET /api/engine/admin/` - Admin dashboard HTML (signals table, credit monitor, market hours)
-- `GET /api/engine/admin/export?format=csv` - Export signals as CSV
-- `GET /api/engine/admin/export?format=json` - Export signals as JSON
-- `GET /api/engine/admin/api/usage` - FCSAPI usage stats JSON
-- `GET /api/engine/admin/api/market-times` - Current market times JSON
-- `POST /api/engine/admin/api/settings/key` - Save FCSAPI API key to database
-- `POST /api/engine/admin/api/settings/test-connection` - Test FCSAPI connection, returns plan/credits
-- `GET /api/engine/admin/api/settings` - Get current key source status
-- `GET /api/engine/admin/login` - Login page (HTML form)
-- `POST /api/engine/admin/login` - Login submission (form POST)
-- `GET /api/engine/admin/logout` - Logout and clear session
-- `POST /api/engine/admin/api/users` - Create new admin user
-- `PUT /api/engine/admin/api/users/:id` - Update admin user (re-hashes password)
-- `DELETE /api/engine/admin/api/users/:id` - Delete admin user (prevents deleting last admin)
-- `GET /api/engine/admin/api/users` - List all admin users
-- Supports query params: ?strategy=, ?status=, ?symbol=, ?tab= for filtering
-- Settings tab: API key management, test connection, credit meter
-- User Settings tab: Admin user list, add/edit/delete admin accounts
-- All routes protected behind session-based cookie authentication
-- Default admin credentials: username=admin, password=pass123 (auto-seeded on first run)
-
-## Credit Monitor
-- Tracks FCSAPI API calls in SQLite (api_usage table)
-- Monthly limit: 500,000 credits
-- Alert levels: caution (60%), warning (75%), critical (90%)
-- Shows daily history, per-endpoint breakdown
-
-## Timezone Logic
-- Tokyo (JST, UTC+9): Session 09:00-15:00
-- New York (EST/EDT): Session 09:30-16:00, DST auto-detected
-- London (GMT): Session 08:00-16:00
-- Strategy windows: Tokyo 8am (23:00 UTC), NY 8am (13:00 UTC)
-
-## Key Features
-- AI-generated trading signals with entry/SL/TP levels
-- Signal categories: Forex, Crypto, Commodities
-- Signal status management (active/closed/expired)
-- Detailed technical analysis per signal
-- Real-time signal generation via SSE streaming
-- OHLC candle data storage for 30m, 1H, 4H, Daily timeframes
-- Smart caching that only fetches new data on candle closes
-- Local technical indicator calculations
-- Idempotent strategy evaluation (no duplicate signals per candle)
-- ATR State Lock: ATR(100) calculated once at entry, stored in open_positions table, never recalculated for exit logic
-- Trailing stop management with automatic exit tracking (uses fixed ATR from DB)
-- Admin dashboard with signal table, CSV/JSON export, credit monitor, timezone display
-
-## Process Stability
-- SIGHUP handler in `server/index.ts` prevents workflow manager from killing Node process
-- SQLite uses WAL journal mode for concurrent read performance
-
-## API Endpoints (Express)
-- `GET /api/signals?category=` - List signals (filter by category)
-- `GET /api/signals/:id` - Get signal details
-- `POST /api/signals/generate` - Generate AI signal (SSE stream)
-- `PATCH /api/signals/:id/status` - Update signal status
-- `GET /api/pairs` - List available trading pairs
+## External Dependencies
+- **OpenAI:** Used for AI-powered signal generation.
+- **FCSAPI v4:** Provides OHLC (Open-High-Low-Close) data and real-time quotes for forex, crypto, commodities, and stock indices.
+- **PostgreSQL:** Primary database for storing trading signals and user-related data.
+- **SQLite:** Used for storing OHLC candle data, strategy-specific signals, API usage statistics, and internal engine data.
+- **`holidays` Python package:** Utilized for detecting US and Japanese public holidays to inform strategy execution.

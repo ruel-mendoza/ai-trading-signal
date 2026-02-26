@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 import pytz
@@ -30,14 +30,50 @@ TIMEFRAME_H1 = "1H"
 TIMEFRAME_D1 = "D1"
 LOOKBACK_DAYS = 50
 ATR_PERIOD = 100
-TRAILING_STOP_ATR_MULT = 2.0
+TRAILING_STOP_ATR_MULT = 0.25
 TAKE_PROFIT_ATR_MULT = 6.0
-MIN_H1_BARS = 50
+MIN_H1_BARS = 100
 MIN_D1_BARS = 50
 ALLOWED_ET_HOURS = (9, 10)
 NY_REVERSAL_THRESHOLD = 0.998
 
 ET_ZONE = pytz.timezone("America/New_York")
+
+
+def _parse_candle_date(candle: dict) -> Optional[datetime]:
+    ts = candle.get("timestamp", "")
+    if isinstance(ts, datetime):
+        return ts
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(str(ts), fmt)
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def _get_previous_weekday_candle(d_candles: list[dict], now_et: Optional[datetime] = None) -> Optional[dict]:
+    if len(d_candles) < 2:
+        return None
+
+    today = now_et.date() if now_et else datetime.now(pytz.utc).astimezone(ET_ZONE).date()
+
+    for candle in reversed(d_candles):
+        candle_dt = _parse_candle_date(candle)
+        if candle_dt is None:
+            continue
+        candle_date = candle_dt.date()
+        if candle_date >= today:
+            continue
+        if candle_date.weekday() >= 5:
+            continue
+        if is_trading_holiday(candle_date):
+            continue
+        return candle
+
+    if len(d_candles) >= 2:
+        return d_candles[-2]
+    return None
 
 
 class HighestLowestFXStrategy(BaseStrategy):
@@ -124,14 +160,16 @@ class HighestLowestFXStrategy(BaseStrategy):
             return SignalResult()
 
         d_closes = [c["close"] for c in d_candles]
-        d_highs = [c["high"] for c in d_candles]
-        d_lows = [c["low"] for c in d_candles]
-
-        atr_values = IndicatorEngine.atr(d_highs, d_lows, d_closes, ATR_PERIOD)
-        atr_val = atr_values[-1] if atr_values and atr_values[-1] is not None else None
 
         highest_50d = max(d_closes[-LOOKBACK_DAYS:])
         lowest_50d = min(d_closes[-LOOKBACK_DAYS:])
+
+        h1_closes = df["close"].tolist()
+        h1_highs = df["high"].tolist()
+        h1_lows = df["low"].tolist()
+
+        h1_atr_values = IndicatorEngine.atr(h1_highs, h1_lows, h1_closes, ATR_PERIOD)
+        h1_atr_val = h1_atr_values[-1] if h1_atr_values and h1_atr_values[-1] is not None else None
 
         advance_quote = self._get_advance_price(asset)
         if advance_quote and advance_quote.get("close") is not None:
@@ -143,17 +181,24 @@ class HighestLowestFXStrategy(BaseStrategy):
 
         signal_timestamp = now_et.strftime("%Y-%m-%dT%H:%M:%S")
 
-        atr_str = f"{atr_val:.6f}" if atr_val is not None else "None"
+        atr_str = f"{h1_atr_val:.6f}" if h1_atr_val is not None else "None"
+
+        prev_day = _get_previous_weekday_candle(d_candles, now_et)
+        prev_high = prev_day["high"] if prev_day else None
+        prev_low = prev_day["low"] if prev_day else None
+        prev_high_str = f"{prev_high:.5f}" if prev_high is not None else "None"
+        prev_low_str = f"{prev_low:.5f}" if prev_low is not None else "None"
+
         logger.info(
             f"[HLC-FX] {asset} | price={current_price:.5f} | "
             f"highest_50d={highest_50d:.5f} | lowest_50d={lowest_50d:.5f} | "
-            f"ATR({ATR_PERIOD})={atr_str}"
+            f"H1 ATR({ATR_PERIOD})={atr_str} | "
+            f"prev_day_high={prev_high_str} | prev_day_low={prev_low_str}"
         )
 
         if open_position and open_position.get("direction") in ("BUY", "SELL"):
             pos_id = open_position.get("id")
             direction = open_position.get("direction")
-            pos_atr = open_position.get("atr_at_entry")
 
             if direction == "BUY":
                 stored_highest = open_position.get("highest_price_since_entry") or open_position.get("entry_price", current_price)
@@ -161,12 +206,16 @@ class HighestLowestFXStrategy(BaseStrategy):
                 if new_highest > stored_highest:
                     update_position_tracking(pos_id, highest_price=new_highest)
                     logger.info(f"[HLC-FX] {asset} | ACTIVE LONG #{pos_id} | Peak updated: {stored_highest:.5f} → {new_highest:.5f}")
+                else:
+                    logger.info(f"[HLC-FX] {asset} | ACTIVE LONG #{pos_id} | Peak unchanged: {stored_highest:.5f}")
             elif direction == "SELL":
                 stored_lowest = open_position.get("lowest_price_since_entry") or open_position.get("entry_price", current_price)
                 new_lowest = min(stored_lowest, current_price)
                 if new_lowest < stored_lowest:
                     update_position_tracking(pos_id, lowest_price=new_lowest)
                     logger.info(f"[HLC-FX] {asset} | ACTIVE SHORT #{pos_id} | Trough updated: {stored_lowest:.5f} → {new_lowest:.5f}")
+                else:
+                    logger.info(f"[HLC-FX] {asset} | ACTIVE SHORT #{pos_id} | Trough unchanged: {stored_lowest:.5f}")
 
             logger.info(f"[HLC-FX] {asset} | IDEMPOTENCY: Open {direction} position #{pos_id} — skipping entry")
             return SignalResult()
@@ -206,6 +255,27 @@ class HighestLowestFXStrategy(BaseStrategy):
             )
             return SignalResult()
 
+        direction = signal_data["direction"]
+        if prev_day is not None:
+            if direction == "BUY" and prev_low is not None and current_price < prev_low:
+                logger.info(
+                    f"[HLC-FX] {asset} | PREV DAY FILTER REJECTED: LONG entry price "
+                    f"{current_price:.5f} < previous day low {prev_low:.5f} — blocked"
+                )
+                return SignalResult()
+            if direction == "SELL" and prev_high is not None and current_price > prev_high:
+                logger.info(
+                    f"[HLC-FX] {asset} | PREV DAY FILTER REJECTED: SHORT entry price "
+                    f"{current_price:.5f} > previous day high {prev_high:.5f} — blocked"
+                )
+                return SignalResult()
+            logger.info(
+                f"[HLC-FX] {asset} | PREV DAY FILTER PASSED: {direction} entry "
+                f"{current_price:.5f} vs prev_high={prev_high_str}, prev_low={prev_low_str}"
+            )
+        else:
+            logger.warning(f"[HLC-FX] {asset} | No previous day candle — prev day filter skipped")
+
         if has_open_signal(STRATEGY_NAME, asset):
             logger.info(
                 f"[HLC-FX] {asset} | IDEMPOTENCY: An OPEN signal already exists — duplicate blocked"
@@ -216,20 +286,22 @@ class HighestLowestFXStrategy(BaseStrategy):
             logger.info(f"[HLC-FX] {asset} | Signal already exists for timestamp {signal_timestamp} — blocked")
             return SignalResult()
 
-        stop_distance = (TRAILING_STOP_ATR_MULT * atr_val) if atr_val else 0.0050
-        direction = signal_data["direction"]
+        if h1_atr_val is None:
+            logger.warning(f"[HLC-FX] {asset} | H1 ATR({ATR_PERIOD}) is None — cannot set trailing stop")
+            return SignalResult()
 
+        stop_distance = TRAILING_STOP_ATR_MULT * h1_atr_val
         if direction == "BUY":
             stop_loss = current_price - stop_distance
-            take_profit = current_price + (TAKE_PROFIT_ATR_MULT * atr_val if atr_val else 3 * stop_distance)
+            take_profit = current_price + (TAKE_PROFIT_ATR_MULT * h1_atr_val)
         else:
             stop_loss = current_price + stop_distance
-            take_profit = current_price - (TAKE_PROFIT_ATR_MULT * atr_val if atr_val else 3 * stop_distance)
+            take_profit = current_price - (TAKE_PROFIT_ATR_MULT * h1_atr_val)
 
         logger.info(
             f"[HLC-FX] {asset} | SIGNAL: {direction} @ {current_price:.5f} | "
-            f"SL={stop_loss:.5f} | TP={take_profit:.5f} | "
-            f"ATR_at_entry={atr_str} | "
+            f"SL={stop_loss:.5f} (0.25x H1 ATR) | TP={take_profit:.5f} | "
+            f"H1 ATR_at_entry={atr_str} | "
             f"reason={signal_data['reason']}"
         )
 
@@ -240,11 +312,13 @@ class HighestLowestFXStrategy(BaseStrategy):
             direction=signal_direction,
             price=current_price,
             stop_loss=stop_loss,
-            atr_at_entry=round(atr_val, 6) if atr_val else None,
+            atr_at_entry=round(h1_atr_val, 6),
             metadata={
                 "take_profit": take_profit,
                 "reason": signal_data["reason"],
                 "session": session_label,
+                "prev_day_high": prev_high,
+                "prev_day_low": prev_low,
                 "signal": {
                     "strategy_name": STRATEGY_NAME,
                     "asset": asset,
@@ -252,7 +326,7 @@ class HighestLowestFXStrategy(BaseStrategy):
                     "entry_price": current_price,
                     "stop_loss": stop_loss,
                     "take_profit": take_profit,
-                    "atr_at_entry": round(atr_val, 6) if atr_val else None,
+                    "atr_at_entry": round(h1_atr_val, 6),
                     "signal_timestamp": signal_timestamp,
                 },
             },
@@ -301,42 +375,47 @@ class HighestLowestFXStrategy(BaseStrategy):
                 logger.info(f"[HLC-FX-EXIT] Position #{pos_id} | Using cached H1 close: {current_close:.5f}")
 
             trailing_stop_hit = False
+            trailing_stop_level = 0.0
+
             if direction == "BUY":
                 stored_highest = pos.get("highest_price_since_entry") or entry_price
                 highest_close = max(stored_highest, current_close)
                 if highest_close > stored_highest:
                     update_position_tracking(pos_id, highest_price=highest_close)
+                    logger.info(f"[HLC-FX-EXIT] Position #{pos_id} | Peak updated: {stored_highest:.5f} → {highest_close:.5f}")
 
                 trailing_stop_level = highest_close - (atr_at_entry * TRAILING_STOP_ATR_MULT)
                 trailing_stop_hit = current_close < trailing_stop_level
 
                 logger.info(
                     f"[HLC-FX-EXIT] Position #{pos_id} | LONG | close={current_close:.5f} | "
-                    f"highest={highest_close:.5f} | ATR_entry={atr_at_entry:.6f} (FIXED) | "
-                    f"trailing_stop={trailing_stop_level:.5f} | hit={trailing_stop_hit}"
+                    f"highest={highest_close:.5f} | ATR_entry={atr_at_entry:.6f} (FIXED, H1) | "
+                    f"trailing_stop={trailing_stop_level:.5f} (highest - 0.25×ATR) | hit={trailing_stop_hit}"
                 )
             elif direction == "SELL":
                 stored_lowest = pos.get("lowest_price_since_entry") or entry_price
                 lowest_close = min(stored_lowest, current_close)
                 if lowest_close < stored_lowest:
                     update_position_tracking(pos_id, lowest_price=lowest_close)
+                    logger.info(f"[HLC-FX-EXIT] Position #{pos_id} | Trough updated: {stored_lowest:.5f} → {lowest_close:.5f}")
 
                 trailing_stop_level = lowest_close + (atr_at_entry * TRAILING_STOP_ATR_MULT)
                 trailing_stop_hit = current_close > trailing_stop_level
 
                 logger.info(
                     f"[HLC-FX-EXIT] Position #{pos_id} | SHORT | close={current_close:.5f} | "
-                    f"lowest={lowest_close:.5f} | ATR_entry={atr_at_entry:.6f} (FIXED) | "
-                    f"trailing_stop={trailing_stop_level:.5f} | hit={trailing_stop_hit}"
+                    f"lowest={lowest_close:.5f} | ATR_entry={atr_at_entry:.6f} (FIXED, H1) | "
+                    f"trailing_stop={trailing_stop_level:.5f} (lowest + 0.25×ATR) | hit={trailing_stop_hit}"
                 )
 
             if trailing_stop_hit:
                 exit_reason = (
                     f"Trailing stop hit | close={current_close:.5f}, "
                     f"stop={trailing_stop_level:.5f}, "
-                    f"ATR_at_entry={atr_at_entry:.6f} (fixed)"
+                    f"ATR_at_entry={atr_at_entry:.6f} (H1, fixed), "
+                    f"mult={TRAILING_STOP_ATR_MULT}"
                 )
-                logger.info(f"[HLC-FX-EXIT] Position #{pos_id} | EXIT: trailing_stop")
+                logger.info(f"[HLC-FX-EXIT] Position #{pos_id} | EXIT: trailing_stop (0.25x H1 ATR)")
 
                 active_sigs = get_active_signals(strategy_name=STRATEGY_NAME, asset=asset)
                 for sig in active_sigs:
