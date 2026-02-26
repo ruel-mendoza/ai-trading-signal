@@ -48,6 +48,7 @@ from trading_engine.strategies.trend_non_forex import TARGET_SYMBOLS as TREND_NO
 from trading_engine.strategies.multi_timeframe import ALL_ASSETS as MTF_EMA_ASSETS
 from trading_engine.notifications import (
     notify_strategy_failure, notify_scheduler_down, configure_webhook,
+    set_notifications_enabled, set_category_enabled,
 )
 
 scheduler = BackgroundScheduler()
@@ -446,6 +447,20 @@ async def lifespan(app: FastAPI):
     if saved_webhook:
         configure_webhook(saved_webhook)
         logger.info("[NOTIFY] Webhook URL loaded from database")
+
+    notif_enabled = get_setting("notifications_enabled")
+    if notif_enabled is not None:
+        set_notifications_enabled(notif_enabled == "true")
+
+    import json as _json
+    notif_categories = get_setting("notification_categories")
+    if notif_categories:
+        try:
+            cats = _json.loads(notif_categories)
+            for cat_key, cat_val in cats.items():
+                set_category_enabled(cat_key, bool(cat_val))
+        except Exception:
+            pass
 
     scheduler.add_listener(_scheduler_event_listener, EVENT_JOB_ERROR)
     scheduler.add_listener(_scheduler_missed_listener, EVENT_JOB_MISSED)

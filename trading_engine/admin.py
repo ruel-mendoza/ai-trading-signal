@@ -1758,6 +1758,12 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 .user-bar span { font-size: 0.85rem; color: #94a3b8; }
 .user-bar .btn { margin: 0; }
 .hidden { display: none; }
+.toggle-switch { position: relative; display: inline-block; width: 48px; height: 26px; flex-shrink: 0; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #334155; border-radius: 26px; transition: 0.25s; }
+.toggle-slider:before { content: ""; position: absolute; height: 20px; width: 20px; left: 3px; bottom: 3px; background: #94a3b8; border-radius: 50%; transition: 0.25s; }
+.toggle-switch input:checked + .toggle-slider { background: #3b82f6; }
+.toggle-switch input:checked + .toggle-slider:before { transform: translateX(22px); background: #f1f5f9; }
 @media (max-width: 768px) {
     .layout { flex-direction: column; }
     .sidebar { display: none; }
@@ -1781,6 +1787,7 @@ function showTab(tabName) {
     var mobileEl = document.querySelector('.mobile-tab-bar .tab[data-tab="' + tabName + '"]');
     if (mobileEl) mobileEl.classList.add('active');
     if (tabName === 'settings') loadCreditMeter();
+    if (tabName === 'notifications') loadNotifConfig();
 }
 
 function showStrategyTab(strategyName) {
@@ -1994,9 +2001,138 @@ async function deleteAdmin(id, username) {
     }
 }
 
+async function loadNotifConfig() {
+    try {
+        const res = await fetch(BASE + '/admin/api/notifications');
+        const data = await res.json();
+        document.getElementById('notif-loading').style.display = 'none';
+        document.getElementById('notif-content').style.display = 'block';
+
+        document.getElementById('notif-master-toggle').checked = data.enabled;
+        updateNotifUIState(data.enabled);
+
+        if (data.webhook_url) {
+            document.getElementById('notif-webhook-url').value = data.webhook_url;
+            document.getElementById('notif-webhook-status').innerHTML = '<span style="color:#22c55e;">Webhook configured</span> (auto-detected type: ' + detectType(data.webhook_url) + ')';
+        } else {
+            document.getElementById('notif-webhook-status').innerHTML = '<span style="color:#94a3b8;">No webhook URL configured</span>';
+        }
+
+        var cats = data.categories || {};
+        ['new_signals', 'strategy_failures', 'credit_warnings', 'scheduler_alerts'].forEach(function(cat) {
+            var el = document.getElementById('notif-cat-' + cat);
+            if (el) el.checked = cats[cat] !== false;
+        });
+    } catch (e) {
+        document.getElementById('notif-loading').textContent = 'Failed to load notification settings.';
+    }
+}
+
+function detectType(url) {
+    if (!url) return 'none';
+    if (url.indexOf('discord.com/api/webhooks') !== -1 || url.indexOf('discordapp.com/api/webhooks') !== -1) return 'Discord';
+    if (url.indexOf('hooks.slack.com') !== -1) return 'Slack';
+    return 'Generic Webhook';
+}
+
+function updateNotifUIState(enabled) {
+    var overlay = document.getElementById('notif-disabled-overlay');
+    var cats = document.getElementById('notif-categories');
+    if (enabled) {
+        overlay.style.display = 'none';
+        if (cats) cats.style.opacity = '1';
+        if (cats) cats.style.pointerEvents = 'auto';
+    } else {
+        overlay.style.display = 'block';
+        if (cats) cats.style.opacity = '0.5';
+        if (cats) cats.style.pointerEvents = 'none';
+    }
+}
+
+async function updateNotifMaster(enabled) {
+    try {
+        await fetch(BASE + '/admin/api/notifications', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: enabled})
+        });
+        updateNotifUIState(enabled);
+    } catch (e) {
+        alert('Failed to update setting: ' + e.message);
+    }
+}
+
+async function updateNotifCategory(category, enabled) {
+    try {
+        var cats = {};
+        cats[category] = enabled;
+        await fetch(BASE + '/admin/api/notifications', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({categories: cats})
+        });
+    } catch (e) {
+        alert('Failed to update category: ' + e.message);
+    }
+}
+
+async function saveWebhookUrl() {
+    var url = document.getElementById('notif-webhook-url').value.trim();
+    if (!url) {
+        document.getElementById('notif-webhook-status').innerHTML = '<span style="color:#ef4444;">Please enter a webhook URL.</span>';
+        return;
+    }
+    try {
+        var res = await fetch(BASE + '/admin/api/notifications', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({webhook_url: url})
+        });
+        var data = await res.json();
+        if (data.status === 'ok') {
+            document.getElementById('notif-webhook-status').innerHTML = '<span style="color:#22c55e;">Webhook URL saved successfully</span> (type: ' + detectType(url) + ')';
+        } else {
+            document.getElementById('notif-webhook-status').innerHTML = '<span style="color:#ef4444;">Failed to save webhook URL.</span>';
+        }
+    } catch (e) {
+        document.getElementById('notif-webhook-status').innerHTML = '<span style="color:#ef4444;">Error: ' + e.message + '</span>';
+    }
+}
+
+async function clearWebhookUrl() {
+    try {
+        await fetch(BASE + '/admin/api/notifications', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({webhook_url: ''})
+        });
+        document.getElementById('notif-webhook-url').value = '';
+        document.getElementById('notif-webhook-status').innerHTML = '<span style="color:#94a3b8;">Webhook URL cleared</span>';
+    } catch (e) {
+        document.getElementById('notif-webhook-status').innerHTML = '<span style="color:#ef4444;">Error: ' + e.message + '</span>';
+    }
+}
+
+async function testWebhook() {
+    var resultEl = document.getElementById('notif-test-result');
+    resultEl.innerHTML = '<span style="color:#94a3b8;">Sending test notification...</span>';
+    try {
+        var res = await fetch(BASE + '/admin/api/webhook/test', {method: 'POST'});
+        var data = await res.json();
+        if (data.status === 'ok') {
+            resultEl.innerHTML = '<span style="color:#22c55e;">Test notification sent. Check your webhook endpoint.</span>';
+        } else {
+            resultEl.innerHTML = '<span style="color:#ef4444;">' + (data.message || 'Failed to send test.') + '</span>';
+        }
+    } catch (e) {
+        resultEl.innerHTML = '<span style="color:#ef4444;">Error: ' + e.message + '</span>';
+    }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     const activeTab = document.querySelector('.tab.active');
     if (activeTab && activeTab.getAttribute('data-tab') === 'settings') loadCreditMeter();
+    if (activeTab && activeTab.getAttribute('data-tab') === 'notifications') loadNotifConfig();
 });
 """
 
@@ -2186,6 +2322,10 @@ def admin_dashboard(
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                         User Settings
                     </a>
+                    <a class="sidebar-link {'active' if tab == 'notifications' else ''}" data-tab="notifications" onclick="showTab('notifications')" data-testid="sidebar-notifications">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+                        Notifications
+                    </a>
                 </div>
             </nav>
             <div class="sidebar-footer">
@@ -2204,6 +2344,7 @@ def admin_dashboard(
                 <a class="tab {'active' if tab == 'timezone' else ''}" data-tab="timezone" onclick="showTab('timezone')">Hours</a>
                 <a class="tab {'active' if tab == 'settings' else ''}" data-tab="settings" onclick="showTab('settings')">Settings</a>
                 <a class="tab {'active' if tab == 'users' else ''}" data-tab="users" onclick="showTab('users')">Users</a>
+                <a class="tab {'active' if tab == 'notifications' else ''}" data-tab="notifications" onclick="showTab('notifications')">Alerts</a>
             </div>
 
             <div id="tab-signals" class="tab-content {'hidden' if tab != 'signals' else ''}">
@@ -2297,6 +2438,95 @@ def admin_dashboard(
             <div class="section">
                 <h2>User Settings</h2>
                 {users_html}
+            </div>
+        </div>
+        <div id="tab-notifications" class="tab-content {'hidden' if tab != 'notifications' else ''}">
+            <div class="section">
+                <h2>Notification Settings</h2>
+                <p style="color:#94a3b8;margin-bottom:20px;">Configure webhook notifications for trading alerts, system events, and warnings. Notifications are sent to Discord, Slack, or any generic webhook endpoint.</p>
+
+                <div id="notif-loading" style="text-align:center;padding:40px;color:#94a3b8;">Loading notification settings...</div>
+                <div id="notif-content" style="display:none;">
+
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;margin-bottom:24px;">
+                    <div>
+                        <div style="font-weight:600;color:#f1f5f9;font-size:15px;">Master Notifications Toggle</div>
+                        <div style="color:#94a3b8;font-size:13px;margin-top:2px;">Enable or disable all webhook notifications globally</div>
+                    </div>
+                    <label class="toggle-switch" data-testid="toggle-notifications-master">
+                        <input type="checkbox" id="notif-master-toggle" onchange="updateNotifMaster(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div style="padding:20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;margin-bottom:24px;">
+                    <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:16px;">Webhook URL</div>
+                    <div style="display:flex;gap:8px;align-items:stretch;">
+                        <input type="text" id="notif-webhook-url" placeholder="https://discord.com/api/webhooks/... or https://hooks.slack.com/..." style="flex:1;padding:10px 14px;background:rgba(15,23,42,0.6);border:1px solid rgba(148,163,184,0.15);border-radius:8px;color:#f1f5f9;font-size:14px;font-family:monospace;" data-testid="input-webhook-url">
+                        <button class="btn btn-primary" onclick="saveWebhookUrl()" data-testid="button-save-webhook" style="white-space:nowrap;">Save URL</button>
+                        <button class="btn" onclick="clearWebhookUrl()" data-testid="button-clear-webhook" style="white-space:nowrap;background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);">Clear</button>
+                    </div>
+                    <div id="notif-webhook-status" style="margin-top:10px;font-size:13px;color:#94a3b8;"></div>
+                    <div style="margin-top:12px;display:flex;gap:8px;">
+                        <button class="btn" onclick="testWebhook()" data-testid="button-test-webhook" style="background:rgba(59,130,246,0.15);color:#3b82f6;border:1px solid rgba(59,130,246,0.3);font-size:13px;">Send Test Notification</button>
+                    </div>
+                    <div id="notif-test-result" style="margin-top:8px;font-size:13px;"></div>
+                </div>
+
+                <div style="padding:20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;margin-bottom:24px;">
+                    <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:4px;">Notification Categories</div>
+                    <div style="color:#94a3b8;font-size:13px;margin-bottom:16px;">Choose which types of notifications to receive</div>
+
+                    <div id="notif-categories" style="display:flex;flex-direction:column;gap:12px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:rgba(15,23,42,0.4);border-radius:8px;">
+                            <div>
+                                <div style="font-weight:500;color:#f1f5f9;font-size:14px;">New Signals</div>
+                                <div style="color:#64748b;font-size:12px;">New trading signals generated by strategies</div>
+                            </div>
+                            <label class="toggle-switch" data-testid="toggle-category-new-signals">
+                                <input type="checkbox" id="notif-cat-new_signals" onchange="updateNotifCategory('new_signals', this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:rgba(15,23,42,0.4);border-radius:8px;">
+                            <div>
+                                <div style="font-weight:500;color:#f1f5f9;font-size:14px;">Strategy Failures</div>
+                                <div style="color:#64748b;font-size:12px;">Strategy run failures or partial errors</div>
+                            </div>
+                            <label class="toggle-switch" data-testid="toggle-category-strategy-failures">
+                                <input type="checkbox" id="notif-cat-strategy_failures" onchange="updateNotifCategory('strategy_failures', this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:rgba(15,23,42,0.4);border-radius:8px;">
+                            <div>
+                                <div style="font-weight:500;color:#f1f5f9;font-size:14px;">Credit Warnings</div>
+                                <div style="color:#64748b;font-size:12px;">Credit usage warnings and kill switch alerts</div>
+                            </div>
+                            <label class="toggle-switch" data-testid="toggle-category-credit-warnings">
+                                <input type="checkbox" id="notif-cat-credit_warnings" onchange="updateNotifCategory('credit_warnings', this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:rgba(15,23,42,0.4);border-radius:8px;">
+                            <div>
+                                <div style="font-weight:500;color:#f1f5f9;font-size:14px;">Scheduler Alerts</div>
+                                <div style="color:#64748b;font-size:12px;">Scheduler down or restart events</div>
+                            </div>
+                            <label class="toggle-switch" data-testid="toggle-category-scheduler-alerts">
+                                <input type="checkbox" id="notif-cat-scheduler_alerts" onchange="updateNotifCategory('scheduler_alerts', this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="notif-disabled-overlay" style="display:none;padding:16px 20px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:10px;margin-bottom:16px;">
+                    <div style="color:#ef4444;font-weight:500;font-size:14px;">Notifications are currently disabled</div>
+                    <div style="color:#94a3b8;font-size:13px;margin-top:4px;">Turn on the master toggle above to enable webhook notifications.</div>
+                </div>
+
+                </div>
             </div>
         </div>
         </main>
@@ -2496,6 +2726,59 @@ def api_scheduler_job_logs(request: Request, limit: int = Query(50, ge=1, le=200
         return guard
     logs = get_recent_job_logs(limit)
     return JSONResponse(content={"logs": logs, "count": len(logs)})
+
+
+@router.get("/api/notifications")
+def api_get_notification_config(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from trading_engine.notifications import get_full_config, NOTIFICATION_CATEGORIES
+    config = get_full_config()
+    config["category_descriptions"] = NOTIFICATION_CATEGORIES
+    return JSONResponse(content=config)
+
+
+@router.post("/api/notifications")
+def api_update_notification_config(request: Request, body: dict = Body(...)):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from trading_engine.notifications import (
+        configure_webhook, set_notifications_enabled,
+        set_category_enabled, get_full_config,
+    )
+    from trading_engine.database import set_setting
+    import json as _json
+
+    if "enabled" in body:
+        enabled = bool(body["enabled"])
+        set_notifications_enabled(enabled)
+        set_setting("notifications_enabled", "true" if enabled else "false")
+
+    if "webhook_url" in body:
+        url = (body["webhook_url"] or "").strip()
+        if url:
+            configure_webhook(url)
+            set_setting("webhook_url", url)
+        else:
+            configure_webhook(None)
+            set_setting("webhook_url", "")
+
+    if "categories" in body and isinstance(body["categories"], dict):
+        from trading_engine.notifications import get_category_settings
+        from trading_engine.database import get_setting as _get_setting
+        existing_raw = _get_setting("notification_categories")
+        try:
+            existing_cats = _json.loads(existing_raw) if existing_raw else {}
+        except Exception:
+            existing_cats = {}
+        merged = {**get_category_settings(), **existing_cats, **body["categories"]}
+        for cat_key, cat_val in body["categories"].items():
+            set_category_enabled(cat_key, bool(cat_val))
+        set_setting("notification_categories", _json.dumps(merged))
+
+    return JSONResponse(content={"status": "ok", "config": get_full_config()})
 
 
 @router.get("/api/webhook")
