@@ -3264,13 +3264,13 @@ def admin_dashboard(
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
                         SPX 500 Momentum
                     </a>
-                    <a class="sidebar-link {'active' if tab == 'forex_trend' else ''}" data-tab="forex_trend" onclick="showTab('forex_trend')" data-testid="sidebar-forex-trend">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                        Forex Trend
-                    </a>
                     <a class="sidebar-link {'active' if tab == 'hlc_fx' else ''}" data-tab="hlc_fx" onclick="showTab('hlc_fx')" data-testid="sidebar-hlc-fx">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
                         Highest/Lowest FX
+                    </a>
+                    <a class="sidebar-link {'active' if tab == 'forex_trend' else ''}" data-tab="forex_trend" onclick="showTab('forex_trend')" data-testid="sidebar-forex-trend">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                        Forex Trend
                     </a>
                 </div>
                 <div class="sidebar-group">
@@ -3317,8 +3317,8 @@ def admin_dashboard(
                 <a class="tab {'active' if tab == 'signals' else ''}" data-tab="signals" onclick="showTab('signals')">Overview</a>
                 <a class="tab {'active' if tab == 'analysis' else ''}" data-tab="analysis" onclick="showTab('analysis')">Analysis</a>
                 <a class="tab {'active' if tab == 'spx' else ''}" data-tab="spx" onclick="showTab('spx')">SPX 500</a>
-                <a class="tab {'active' if tab == 'forex_trend' else ''}" data-tab="forex_trend" onclick="showTab('forex_trend')">FX Trend</a>
                 <a class="tab {'active' if tab == 'hlc_fx' else ''}" data-tab="hlc_fx" onclick="showTab('hlc_fx')">HLC FX</a>
+                <a class="tab {'active' if tab == 'forex_trend' else ''}" data-tab="forex_trend" onclick="showTab('forex_trend')">FX Trend</a>
                 <a class="tab {'active' if tab == 'credits' else ''}" data-tab="credits" onclick="showTab('credits')">Credits</a>
                 <a class="tab {'active' if tab == 'timezone' else ''}" data-tab="timezone" onclick="showTab('timezone')">Hours</a>
                 <a class="tab {'active' if tab == 'settings' else ''}" data-tab="settings" onclick="showTab('settings')">Settings</a>
