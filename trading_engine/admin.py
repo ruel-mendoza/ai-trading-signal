@@ -1932,6 +1932,460 @@ def _build_hlc_fx_html(hlc_data: dict, hlc_signal_rows: str, hlc_signal_count: i
     """
 
 
+def _get_signal_analysis_data() -> dict:
+    from zoneinfo import ZoneInfo
+    from trading_engine.utils.holiday_manager import is_trading_holiday as _is_holiday
+
+    et_zone = ZoneInfo("America/New_York")
+    et_now = datetime.now(et_zone)
+    ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
+    is_holiday = _is_holiday(et_now)
+    et_hour = et_now.hour
+
+    all_signals = get_all_signals(limit=500)
+    all_positions = get_all_open_positions()
+    pos_map = {}
+    for p in all_positions:
+        key = f"{p.get('strategy_name','')}|{p.get('asset','')}"
+        pos_map[key] = p
+    sig_by_strat = {}
+    for s in all_signals:
+        sn = s.get("strategy_name", "")
+        sig_by_strat.setdefault(sn, []).append(s)
+
+    trend_nf_symbols = ["SPX", "NDX", "XAU/USD", "XAG/USD", "OSX", "BTC/USD", "ETH/USD"]
+    trend_fx_symbols = ["EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD", "NZD/USD", "USD/CAD", "USD/CHF", "EUR/GBP"]
+    mtf_symbols = ["SPX", "NDX", "RUT", "XAU/USD", "XAG/USD", "OSX", "BTC/USD", "ETH/USD", "EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"]
+
+    def _dp(sym):
+        return 5 if "/" in sym else 2
+
+    trend_nf_rows = []
+    for sym in trend_nf_symbols:
+        d1 = get_candles(sym, "D1", 300)
+        dp = _dp(sym)
+        row = {"symbol": sym, "candles": len(d1), "status": "insufficient", "close": None,
+               "hi50": None, "lo50": None, "sma50": None, "sma100": None, "atr100": None,
+               "pct_from_hi": None, "pct_from_lo": None, "sma_bias": None,
+               "long_met": False, "short_met": False, "dp": dp,
+               "position": pos_map.get(f"trend_non_forex|{sym}")}
+        if len(d1) >= 101:
+            closes = [c["close"] for c in d1]
+            highs = [c["high"] for c in d1]
+            lows = [c["low"] for c in d1]
+            sma50 = IndicatorEngine.sma(closes, 50)[-1]
+            sma100 = IndicatorEngine.sma(closes, 100)[-1]
+            atr = IndicatorEngine.atr(highs, lows, closes, 100)
+            atr_val = atr[-1] if atr else None
+            hi50 = max(closes[-51:-1])
+            lo50 = min(closes[-51:-1])
+            cur = closes[-1]
+            row.update({
+                "status": "ready", "close": cur, "hi50": hi50, "lo50": lo50,
+                "sma50": sma50, "sma100": sma100, "atr100": atr_val,
+                "pct_from_hi": (cur - hi50) / hi50 * 100,
+                "pct_from_lo": (cur - lo50) / lo50 * 100,
+                "sma_bias": "BULL" if sma50 > sma100 else "BEAR",
+                "long_met": cur > hi50 and sma50 > sma100,
+                "short_met": cur < lo50 and sma50 < sma100,
+            })
+        trend_nf_rows.append(row)
+
+    trend_fx_rows = []
+    for sym in trend_fx_symbols:
+        d1 = get_candles(sym, "D1", 300)
+        row = {"symbol": sym, "candles": len(d1), "status": "insufficient", "close": None,
+               "hi50": None, "lo50": None, "sma50": None, "sma100": None, "atr100": None,
+               "pct_from_hi": None, "pct_from_lo": None, "sma_bias": None,
+               "long_met": False, "short_met": False, "dp": 5,
+               "position": pos_map.get(f"trend_forex|{sym}")}
+        if len(d1) >= 101:
+            closes = [c["close"] for c in d1]
+            highs = [c["high"] for c in d1]
+            lows = [c["low"] for c in d1]
+            sma50 = IndicatorEngine.sma(closes, 50)[-1]
+            sma100 = IndicatorEngine.sma(closes, 100)[-1]
+            atr = IndicatorEngine.atr(highs, lows, closes, 100)
+            atr_val = atr[-1] if atr else None
+            hi50 = max(closes[-51:-1])
+            lo50 = min(closes[-51:-1])
+            cur = closes[-1]
+            row.update({
+                "status": "ready", "close": cur, "hi50": hi50, "lo50": lo50,
+                "sma50": sma50, "sma100": sma100, "atr100": atr_val,
+                "pct_from_hi": (cur - hi50) / hi50 * 100,
+                "pct_from_lo": (cur - lo50) / lo50 * 100,
+                "sma_bias": "BULL" if sma50 > sma100 else "BEAR",
+                "long_met": cur > hi50 and sma50 > sma100,
+                "short_met": cur < lo50 and sma50 < sma100,
+            })
+        trend_fx_rows.append(row)
+
+    hlc_row = {"symbol": "EUR/USD", "status": "insufficient", "close": None,
+               "hi50": None, "lo50": None, "h1_atr": None, "rev_threshold": None,
+               "prev_high": None, "prev_low": None,
+               "long_met": False, "short_met": False, "reversal_met": False,
+               "window_active": et_hour in (9, 10),
+               "holiday_blocked": is_holiday,
+               "position": pos_map.get("highest_lowest_fx|EUR/USD")}
+    h1 = get_candles("EUR/USD", "1H", 300)
+    d1 = get_candles("EUR/USD", "D1", 200)
+    if len(h1) >= 100 and len(d1) >= 50:
+        h1c = [c["close"] for c in h1]
+        h1h = [c["high"] for c in h1]
+        h1l = [c["low"] for c in h1]
+        d1c = [c["close"] for c in d1]
+        hi50 = max(d1c[-50:])
+        lo50 = min(d1c[-50:])
+        atr = IndicatorEngine.atr(h1h, h1l, h1c, 100)
+        atr_val = atr[-1] if atr else None
+        cur = h1c[-1]
+        rev = lo50 * 0.998
+        today = et_now.date()
+        prev_high = None
+        prev_low = None
+        for candle in reversed(d1):
+            ts = candle.get("timestamp", "")
+            try:
+                if isinstance(ts, datetime):
+                    c_date = ts.date()
+                else:
+                    c_date = datetime.strptime(str(ts)[:10], "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                continue
+            if c_date >= today or c_date.weekday() >= 5 or _is_holiday(c_date):
+                continue
+            prev_high = candle.get("high")
+            prev_low = candle.get("low")
+            break
+        hlc_row.update({
+            "status": "ready", "close": cur, "hi50": hi50, "lo50": lo50,
+            "h1_atr": atr_val, "rev_threshold": rev,
+            "prev_high": prev_high, "prev_low": prev_low,
+            "long_met": cur >= hi50,
+            "short_met": cur <= lo50 and cur <= rev,
+            "reversal_met": cur <= lo50 and cur > rev,
+        })
+
+    spx_row = {"symbol": "SPX", "status": "insufficient", "close": None, "rsi20": None,
+               "long_met": False, "in_session": False,
+               "position": pos_map.get("sp500_momentum|SPX")}
+    m30 = get_candles("SPX", "30m", 300)
+    if len(m30) >= 20:
+        closes_30 = [c["close"] for c in m30]
+        rsi = IndicatorEngine.rsi(closes_30, 20)
+        rsi_val = rsi[-1] if rsi else None
+        in_session = 9 * 60 + 30 <= et_hour * 60 + et_now.minute < 15 * 60 + 30
+        spx_row.update({
+            "status": "ready", "close": closes_30[-1], "rsi20": rsi_val,
+            "long_met": bool(rsi_val and rsi_val > 70),
+            "in_session": in_session,
+        })
+
+    mtf_rows = []
+    for sym in mtf_symbols:
+        dp = _dp(sym)
+        row = {"symbol": sym, "dp": dp, "timeframes": {},
+               "all_bull": False, "all_bear": False,
+               "position": pos_map.get(f"mtf_ema|{sym}")}
+        bull_count = 0
+        bear_count = 0
+        for tf in ["D1", "4H", "1H"]:
+            candles = get_candles(sym, tf, 300)
+            tf_data = {"candles": len(candles), "status": "insufficient"}
+            if len(candles) >= 200:
+                closes = [c["close"] for c in candles]
+                ema20 = IndicatorEngine.ema(closes, 20)[-1]
+                ema50 = IndicatorEngine.ema(closes, 50)[-1]
+                ema200 = IndicatorEngine.ema(closes, 200)[-1]
+                cur = closes[-1]
+                bull = ema20 > ema50 > ema200 and cur > ema20
+                bear = ema20 < ema50 < ema200 and cur < ema20
+                if bull:
+                    bull_count += 1
+                if bear:
+                    bear_count += 1
+                tf_data = {
+                    "candles": len(candles), "status": "ready",
+                    "close": cur, "ema20": ema20, "ema50": ema50, "ema200": ema200,
+                    "bull": bull, "bear": bear,
+                }
+            row["timeframes"][tf] = tf_data
+        row["all_bull"] = bull_count == 3
+        row["all_bear"] = bear_count == 3
+        mtf_rows.append(row)
+
+    return {
+        "et_time": et_now.strftime(f"%Y-%m-%d %H:%M:%S {'EDT' if ny_dst else 'EST'}"),
+        "et_hour": et_hour,
+        "is_holiday": is_holiday,
+        "dst_active": ny_dst,
+        "signal_counts": {k: len(v) for k, v in sig_by_strat.items()},
+        "total_signals": len(all_signals),
+        "open_positions": len(all_positions),
+        "trend_nf": trend_nf_rows,
+        "trend_fx": trend_fx_rows,
+        "hlc": hlc_row,
+        "spx": spx_row,
+        "mtf": mtf_rows,
+    }
+
+
+def _build_signal_analysis_html(data: dict) -> str:
+    summary_cards = f"""
+    <div class="stats-grid" style="margin-bottom:24px;">
+        <div class="stat-card">
+            <div class="stat-label">Current Time</div>
+            <div class="stat-value" style="font-size:1rem;">{data['et_time']}</div>
+            <div class="stat-label" style="margin-top:4px;">DST: {'Active' if data['dst_active'] else 'Inactive'}{' | <span style=&quot;color:#f59e0b;&quot;>HOLIDAY</span>' if data['is_holiday'] else ''}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total Signals (All Time)</div>
+            <div class="stat-value" data-testid="text-total-signals">{data['total_signals']}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Open Positions</div>
+            <div class="stat-value" data-testid="text-open-positions">{data['open_positions']}</div>
+        </div>
+    </div>
+    """
+
+    def _fmt(val, dp):
+        return f"{val:.{dp}f}" if val is not None else '<span style="color:#64748b;">N/A</span>'
+
+    def _pct_bar(pct_hi, pct_lo):
+        if pct_hi is None or pct_lo is None:
+            return ""
+        total = abs(pct_hi) + abs(pct_lo)
+        if total == 0:
+            return ""
+        pos_pct = abs(pct_lo) / total * 100
+        return f"""<div style="margin-top:6px;height:6px;background:#334155;border-radius:3px;position:relative;overflow:hidden;">
+            <div style="position:absolute;left:0;top:0;height:100%;width:{pos_pct:.1f}%;background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e);border-radius:3px;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#64748b;margin-top:2px;">
+            <span>Low ({pct_lo:+.1f}%)</span><span>High ({pct_hi:+.1f}%)</span>
+        </div>"""
+
+    def _cond_badge(met, label, blocked=False):
+        if blocked:
+            return f'<span class="badge status-expired" style="font-size:11px;">{label}: BLOCKED</span>'
+        if met:
+            return f'<span class="badge buy" style="font-size:11px;">{label}: MET</span>'
+        return f'<span class="badge" style="font-size:11px;background:rgba(100,116,139,0.15);color:#94a3b8;">{label}: NOT MET</span>'
+
+    def _pos_badge(pos):
+        if not pos:
+            return '<span style="color:#64748b;font-size:12px;">No position</span>'
+        d = pos.get("direction", "")
+        dc = "buy" if d == "BUY" else "sell"
+        return f'<span class="badge {dc}" style="font-size:11px;">OPEN {d}</span>'
+
+    trend_nf_html = ""
+    for r in data["trend_nf"]:
+        dp = r["dp"]
+        if r["status"] == "insufficient":
+            trend_nf_html += f"""<tr data-testid="row-analysis-tnf-{r['symbol'].replace('/','-')}">
+                <td style="font-weight:600;">{r['symbol']}</td>
+                <td colspan="7" style="color:#64748b;">Insufficient data ({r['candles']} candles, need 101+)</td>
+                <td>{_pos_badge(r['position'])}</td></tr>"""
+            continue
+        sma_color = "#6ee7b7" if r["sma_bias"] == "BULL" else "#fca5a5"
+        trend_nf_html += f"""<tr data-testid="row-analysis-tnf-{r['symbol'].replace('/','-')}">
+            <td style="font-weight:600;">{r['symbol']}</td>
+            <td>{_fmt(r['close'], dp)}</td>
+            <td>{_fmt(r['hi50'], dp)} <span style="color:#64748b;font-size:11px;">({r['pct_from_hi']:+.2f}%)</span></td>
+            <td>{_fmt(r['lo50'], dp)} <span style="color:#64748b;font-size:11px;">({r['pct_from_lo']:+.2f}%)</span></td>
+            <td><span style="color:{sma_color};font-weight:600;">{r['sma_bias']}</span>
+                <span style="color:#64748b;font-size:11px;display:block;">{_fmt(r['sma50'], dp)} / {_fmt(r['sma100'], dp)}</span></td>
+            <td>{_fmt(r['atr100'], dp)}</td>
+            <td>{_cond_badge(r['long_met'], 'LONG')}</td>
+            <td>{_cond_badge(r['short_met'], 'SHORT')}</td>
+            <td>{_pos_badge(r['position'])}</td></tr>"""
+
+    trend_fx_html = ""
+    for r in data["trend_fx"]:
+        if r["status"] == "insufficient":
+            trend_fx_html += f"""<tr data-testid="row-analysis-tfx-{r['symbol'].replace('/','-')}">
+                <td style="font-weight:600;">{r['symbol']}</td>
+                <td colspan="7" style="color:#f59e0b;">No data &mdash; awaiting first scheduler run (5:00 PM ET)</td>
+                <td>{_pos_badge(r['position'])}</td></tr>"""
+            continue
+        sma_color = "#6ee7b7" if r["sma_bias"] == "BULL" else "#fca5a5"
+        trend_fx_html += f"""<tr data-testid="row-analysis-tfx-{r['symbol'].replace('/','-')}">
+            <td style="font-weight:600;">{r['symbol']}</td>
+            <td>{_fmt(r['close'], 5)}</td>
+            <td>{_fmt(r['hi50'], 5)} <span style="color:#64748b;font-size:11px;">({r['pct_from_hi']:+.2f}%)</span></td>
+            <td>{_fmt(r['lo50'], 5)} <span style="color:#64748b;font-size:11px;">({r['pct_from_lo']:+.2f}%)</span></td>
+            <td><span style="color:{sma_color};font-weight:600;">{r['sma_bias']}</span>
+                <span style="color:#64748b;font-size:11px;display:block;">{_fmt(r['sma50'], 5)} / {_fmt(r['sma100'], 5)}</span></td>
+            <td>{_fmt(r['atr100'], 5)}</td>
+            <td>{_cond_badge(r['long_met'], 'LONG')}</td>
+            <td>{_cond_badge(r['short_met'], 'SHORT')}</td>
+            <td>{_pos_badge(r['position'])}</td></tr>"""
+
+    h = data["hlc"]
+    hlc_window_badge = '<span class="badge status-active">IN WINDOW</span>' if h["window_active"] else '<span class="badge status-closed">OUTSIDE</span>'
+    hlc_holiday_badge = ' <span class="badge status-expired">HOLIDAY</span>' if h["holiday_blocked"] else ""
+    hlc_detail_html = ""
+    if h["status"] == "ready":
+        hlc_detail_html = f"""
+        <div class="stats-grid" style="margin-top:12px;">
+            <div class="stat-card"><div class="stat-label">Current Price</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h['close'], 5)}</div></div>
+            <div class="stat-card"><div class="stat-label">50-Day Highest</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h['hi50'], 5)}</div></div>
+            <div class="stat-card"><div class="stat-label">50-Day Lowest</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h['lo50'], 5)}</div></div>
+            <div class="stat-card"><div class="stat-label">H1 ATR(100)</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h['h1_atr'], 6)}</div></div>
+            <div class="stat-card"><div class="stat-label">Reversal Threshold</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h['rev_threshold'], 5)}</div></div>
+            <div class="stat-card"><div class="stat-label">Prev Day High / Low</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h['prev_high'], 5)} / {_fmt(h['prev_low'], 5)}</div></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+            {_cond_badge(h['long_met'], 'LONG (price &ge; highest)')}
+            {_cond_badge(h['short_met'], 'SHORT (price &lt; threshold)')}
+            {_cond_badge(h['reversal_met'], 'REVERSAL LONG (near lowest)')}
+            {_cond_badge(h['window_active'] and not h['holiday_blocked'], 'TIME WINDOW', blocked=h['holiday_blocked'] or not h['window_active'])}
+        </div>
+        <div style="margin-top:8px;">{_pos_badge(h['position'])}</div>"""
+    else:
+        hlc_detail_html = '<p style="color:#64748b;">Insufficient data for analysis.</p>'
+
+    s = data["spx"]
+    spx_session_badge = '<span class="badge status-active">IN SESSION</span>' if s["in_session"] else '<span class="badge status-closed">OUTSIDE</span>'
+    spx_detail_html = ""
+    if s["status"] == "ready":
+        rsi_color = "#22c55e" if s["rsi20"] and s["rsi20"] > 70 else "#f59e0b" if s["rsi20"] and s["rsi20"] > 60 else "#94a3b8"
+        spx_detail_html = f"""
+        <div class="stats-grid" style="margin-top:12px;">
+            <div class="stat-card"><div class="stat-label">SPX Close (30m)</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(s['close'], 2)}</div></div>
+            <div class="stat-card"><div class="stat-label">RSI(20)</div><div class="stat-value" style="font-size:1.1rem;color:{rsi_color};">{_fmt(s['rsi20'], 2)}</div>
+                <div style="margin-top:4px;height:6px;background:#334155;border-radius:3px;position:relative;overflow:hidden;">
+                    <div style="position:absolute;left:0;top:0;height:100%;width:{min(s['rsi20'] or 0, 100):.0f}%;background:{rsi_color};border-radius:3px;"></div>
+                </div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px;">Entry threshold: 70</div>
+            </div>
+            <div class="stat-card"><div class="stat-label">ARCA Session</div><div style="margin-top:8px;">{spx_session_badge}</div></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+            {_cond_badge(s['long_met'], 'RSI &gt; 70 (LONG)')}
+            {_cond_badge(s['in_session'], 'ARCA 09:30-15:30', blocked=not s['in_session'])}
+        </div>
+        <div style="margin-top:8px;">{_pos_badge(s['position'])}</div>"""
+    else:
+        spx_detail_html = '<p style="color:#64748b;">Insufficient 30m data for analysis.</p>'
+
+    mtf_html = ""
+    for r in data["mtf"]:
+        dp = r["dp"]
+        sync_badge = ""
+        if r["all_bull"]:
+            sync_badge = '<span class="badge buy" style="font-size:11px;">ALL BULL ALIGNED</span>'
+        elif r["all_bear"]:
+            sync_badge = '<span class="badge sell" style="font-size:11px;">ALL BEAR ALIGNED</span>'
+        else:
+            sync_badge = '<span class="badge" style="font-size:11px;background:rgba(100,116,139,0.15);color:#94a3b8;">NO ALIGNMENT</span>'
+
+        tf_cells = ""
+        for tf in ["D1", "4H", "1H"]:
+            tfd = r["timeframes"].get(tf, {})
+            if tfd.get("status") != "ready":
+                tf_cells += f'<td style="color:#64748b;">No data</td>'
+                continue
+            if tfd.get("bull"):
+                icon = '<span style="color:#22c55e;">&#9650;</span>'
+            elif tfd.get("bear"):
+                icon = '<span style="color:#ef4444;">&#9660;</span>'
+            else:
+                icon = '<span style="color:#f59e0b;">&#9644;</span>'
+            tf_cells += f'<td>{icon} <span style="font-size:11px;color:#94a3b8;">E20={_fmt(tfd["ema20"], dp)} E50={_fmt(tfd["ema50"], dp)}</span></td>'
+
+        mtf_html += f"""<tr data-testid="row-analysis-mtf-{r['symbol'].replace('/','-')}">
+            <td style="font-weight:600;">{r['symbol']}</td>
+            {tf_cells}
+            <td>{sync_badge}</td>
+            <td>{_pos_badge(r['position'])}</td></tr>"""
+
+    signal_dist_html = ""
+    for sn, count in sorted(data["signal_counts"].items()):
+        signal_dist_html += f'<div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:#f1f5f9;">{sn}</span><span style="color:#94a3b8;">{count}</span></div>'
+    if not signal_dist_html:
+        signal_dist_html = '<div style="color:#64748b;">No signals generated yet.</div>'
+
+    return f"""
+    {summary_cards}
+
+    <div class="settings-section" style="margin-bottom:20px;">
+        <h3>Signal Distribution</h3>
+        <div style="max-width:400px;margin-top:8px;">{signal_dist_html}</div>
+    </div>
+
+    <div class="settings-section" style="margin-bottom:20px;">
+        <h3>Trend Following &mdash; Non-Forex <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 4:00 PM ET | LONG &amp; SHORT | 3&times;ATR(100) trailing stop</span></h3>
+        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG) or Close &lt; 50-day lowest (SHORT), confirmed by SMA(50) vs SMA(100) crossover</p>
+        <div style="overflow-x:auto;">
+            <table class="data-table" data-testid="table-analysis-trend-nf">
+                <thead><tr>
+                    <th>Asset</th><th>Close</th><th>50d High</th><th>50d Low</th>
+                    <th>SMA Bias</th><th>ATR(100)</th><th>Long</th><th>Short</th><th>Position</th>
+                </tr></thead>
+                <tbody>{trend_nf_html}</tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="settings-section" style="margin-bottom:20px;">
+        <h3>Trend Following &mdash; Forex <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 5:00 PM ET | LONG &amp; SHORT | 3&times;ATR(100) trailing stop</span></h3>
+        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG) or Close &lt; 50-day lowest (SHORT), confirmed by SMA(50) vs SMA(100) crossover</p>
+        <div style="overflow-x:auto;">
+            <table class="data-table" data-testid="table-analysis-trend-fx">
+                <thead><tr>
+                    <th>Asset</th><th>Close</th><th>50d High</th><th>50d Low</th>
+                    <th>SMA Bias</th><th>ATR(100)</th><th>Long</th><th>Short</th><th>Position</th>
+                </tr></thead>
+                <tbody>{trend_fx_html}</tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="settings-section" style="margin-bottom:20px;">
+        <h3>Highest/Lowest Close FX <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">EUR/USD | Scheduler: 9:00 &amp; 10:00 AM ET | 0.25&times;ATR trail, 6&times;ATR TP</span></h3>
+        <p style="color:#94a3b8;font-size:13px;margin:4px 0 8px;">Entry: Price &ge; 50d highest (LONG), Price &le; 50d lowest (SHORT/REVERSAL), filtered by prev-day range &amp; holidays</p>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+            {hlc_window_badge}{hlc_holiday_badge}
+        </div>
+        {hlc_detail_html}
+    </div>
+
+    <div class="settings-section" style="margin-bottom:20px;">
+        <h3>SP500 Momentum <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">SPX | Scheduler: every 30m | LONG only | RSI(20) &gt; 70 entry</span></h3>
+        <p style="color:#94a3b8;font-size:13px;margin:4px 0 8px;">Entry: RSI(20) crosses above 70 on 30m candles during ARCA session (09:30&ndash;15:30 ET)</p>
+        {spx_detail_html}
+    </div>
+
+    <div class="settings-section" style="margin-bottom:20px;">
+        <h3>Multi-Timeframe EMA <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: every hour | D1+H4+H1 sync | EMA 20/50/200</span></h3>
+        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: All three timeframes must show EMA20 &gt; EMA50 &gt; EMA200 with price above EMA20 (BULL) or inverse (BEAR)</p>
+        <div style="overflow-x:auto;">
+            <table class="data-table" data-testid="table-analysis-mtf">
+                <thead><tr>
+                    <th>Asset</th><th>D1</th><th>H4</th><th>H1</th><th>Sync</th><th>Position</th>
+                </tr></thead>
+                <tbody>{mtf_html}</tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="timezone-note" style="margin-top:16px;">
+        <strong>Reading This Dashboard:</strong>
+        <ul>
+            <li><strong>Condition badges</strong> show real-time rule evaluation &mdash; green <span style="color:#22c55e;">MET</span> means the entry condition is satisfied right now</li>
+            <li><strong>% from High/Low</strong> shows how far the current close is from the 50-day extremes &mdash; closer to 0% means a breakout is near</li>
+            <li><strong>SMA Bias</strong> confirms trend direction &mdash; BULL (SMA50 &gt; SMA100) required for LONG, BEAR for SHORT</li>
+            <li><strong>Position column</strong> shows if the strategy already has an open trade (idempotency prevents duplicate entries)</li>
+            <li><strong>MTF arrows:</strong> <span style="color:#22c55e;">&#9650;</span> = bullish alignment, <span style="color:#ef4444;">&#9660;</span> = bearish alignment, <span style="color:#f59e0b;">&#9644;</span> = no alignment on that timeframe</li>
+        </ul>
+    </div>
+    """
+
+
 def _build_users_html(current_user_id: int) -> str:
     admins = get_all_admins()
     rows = ""
@@ -2739,6 +3193,9 @@ def admin_dashboard(
     hlc_signal_count = len(hlc_signals)
     hlc_fx_html = _build_hlc_fx_html(hlc_data, hlc_signal_rows, hlc_signal_count)
 
+    analysis_data = _get_signal_analysis_data()
+    signal_analysis_html = _build_signal_analysis_html(analysis_data)
+
     strategy_options = ""
     for s in ["", "mtf_ema", "trend_following", "sp500_momentum", "highest_lowest_fx", "trend_forex"]:
         label = s.replace("_", " ").title() if s else "All Strategies"
@@ -2787,6 +3244,10 @@ def admin_dashboard(
                     <a class="sidebar-link {'active' if tab == 'signals' else ''}" data-tab="signals" onclick="showTab('signals')" data-testid="sidebar-signals">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
                         Global Overview
+                    </a>
+                    <a class="sidebar-link {'active' if tab == 'analysis' else ''}" data-tab="analysis" onclick="showTab('analysis')" data-testid="sidebar-analysis">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 21H4.6c-.56 0-.84 0-1.054-.109a1 1 0 0 1-.437-.437C3 20.24 3 19.96 3 19.4V3"/><path d="m7 14 4-4 4 4 6-6"/></svg>
+                        Signal Analysis
                     </a>
                 </div>
                 <div class="sidebar-group">
@@ -2854,6 +3315,7 @@ def admin_dashboard(
         <main class="main-content">
             <div class="mobile-tab-bar">
                 <a class="tab {'active' if tab == 'signals' else ''}" data-tab="signals" onclick="showTab('signals')">Overview</a>
+                <a class="tab {'active' if tab == 'analysis' else ''}" data-tab="analysis" onclick="showTab('analysis')">Analysis</a>
                 <a class="tab {'active' if tab == 'spx' else ''}" data-tab="spx" onclick="showTab('spx')">SPX 500</a>
                 <a class="tab {'active' if tab == 'forex_trend' else ''}" data-tab="forex_trend" onclick="showTab('forex_trend')">FX Trend</a>
                 <a class="tab {'active' if tab == 'hlc_fx' else ''}" data-tab="hlc_fx" onclick="showTab('hlc_fx')">HLC FX</a>
@@ -2901,6 +3363,14 @@ def admin_dashboard(
                         <tbody>{signal_rows}</tbody>
                     </table>
                 </div>
+            </div>
+        </div>
+
+        <div id="tab-analysis" class="tab-content {'hidden' if tab != 'analysis' else ''}">
+            <div class="section">
+                <h2>Signal Analysis</h2>
+                <p style="color:#94a3b8;margin-bottom:20px;">Real-time evaluation of all strategy entry conditions across every tracked asset.</p>
+                {signal_analysis_html}
             </div>
         </div>
 
