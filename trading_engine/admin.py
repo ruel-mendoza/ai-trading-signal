@@ -3197,8 +3197,15 @@ def admin_dashboard(
     signal_analysis_html = _build_signal_analysis_html(analysis_data)
 
     strategy_options = ""
-    for s in ["", "mtf_ema", "trend_following", "sp500_momentum", "trend_forex", "highest_lowest_fx"]:
-        label = s.replace("_", " ").title() if s else "All Strategies"
+    strategy_choices = [
+        ("", "All Strategies"),
+        ("mtf_ema", "MTF EMA"),
+        ("trend_non_forex", "Trend Non-Forex"),
+        ("sp500_momentum", "SP500 Momentum"),
+        ("trend_forex", "Trend Forex"),
+        ("highest_lowest_fx", "Highest/Lowest FX"),
+    ]
+    for s, label in strategy_choices:
         selected = "selected" if s == (strategy_name or "") else ""
         strategy_options += f'<option value="{s}" {selected}>{label}</option>'
 
