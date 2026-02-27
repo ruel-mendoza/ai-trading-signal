@@ -1613,6 +1613,325 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
     """
 
 
+def _get_hlc_fx_data() -> dict:
+    from zoneinfo import ZoneInfo
+    from trading_engine.utils.holiday_manager import is_trading_holiday as _is_holiday
+    et_zone = ZoneInfo("America/New_York")
+    et_now = datetime.now(et_zone)
+    et_minutes = et_now.hour * 60 + et_now.minute
+    ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
+
+    in_window = et_now.hour in (9, 10)
+    is_holiday_today = _is_holiday(et_now)
+
+    symbol = "EUR/USD"
+    h1_candles = get_candles(symbol, "1H", 300)
+    d1_candles = get_candles(symbol, "D1", 200)
+
+    sym_info = {
+        "symbol": symbol,
+        "current_price": None,
+        "highest_50d": None,
+        "lowest_50d": None,
+        "h1_atr100": None,
+        "h1_candle_count": len(h1_candles),
+        "d1_candle_count": len(d1_candles),
+        "prev_day_high": None,
+        "prev_day_low": None,
+        "reversal_threshold": None,
+    }
+
+    if len(h1_candles) >= 100:
+        h1_closes = [c["close"] for c in h1_candles]
+        h1_highs = [c["high"] for c in h1_candles]
+        h1_lows = [c["low"] for c in h1_candles]
+        sym_info["current_price"] = h1_closes[-1]
+
+        atr_vals = IndicatorEngine.atr(h1_highs, h1_lows, h1_closes, 100)
+        sym_info["h1_atr100"] = atr_vals[-1] if atr_vals else None
+
+    if len(d1_candles) >= 50:
+        d_closes = [c["close"] for c in d1_candles]
+        sym_info["highest_50d"] = max(d_closes[-50:])
+        sym_info["lowest_50d"] = min(d_closes[-50:])
+        if sym_info["lowest_50d"] is not None:
+            sym_info["reversal_threshold"] = sym_info["lowest_50d"] * 0.998
+
+        today = et_now.date()
+        for candle in reversed(d1_candles):
+            ts = candle.get("timestamp", "")
+            try:
+                if isinstance(ts, datetime):
+                    c_date = ts.date()
+                else:
+                    c_date = datetime.strptime(str(ts)[:10], "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                continue
+            if c_date >= today:
+                continue
+            if c_date.weekday() >= 5:
+                continue
+            if _is_holiday(c_date):
+                continue
+            sym_info["prev_day_high"] = candle.get("high")
+            sym_info["prev_day_low"] = candle.get("low")
+            break
+
+    active_trades = get_active_signals(strategy_name="highest_lowest_fx")
+    open_positions = get_all_open_positions(strategy_name="highest_lowest_fx")
+    pos_by_asset = {p["asset"]: p for p in open_positions}
+    trade_details = []
+    for sig in active_trades:
+        atr_at_entry = sig.get("atr_at_entry")
+        direction = sig["direction"]
+        entry_price = sig["entry_price"]
+        pos = pos_by_asset.get(sig["asset"])
+
+        if direction == "BUY":
+            stored_extreme = (pos.get("highest_price_since_entry") if pos else None) or entry_price
+            sym_h1 = get_candles(sig["asset"], "1H", 5)
+            cur_close = sym_h1[-1]["close"] if sym_h1 else None
+            if cur_close:
+                stored_extreme = max(stored_extreme, cur_close)
+            trailing_stop = None
+            if atr_at_entry is not None:
+                trailing_stop = stored_extreme - (atr_at_entry * 0.25)
+            take_profit = None
+            if atr_at_entry is not None:
+                take_profit = entry_price + (atr_at_entry * 6.0)
+            trade_details.append({
+                "id": sig["id"],
+                "symbol": sig["asset"],
+                "direction": direction,
+                "entry_price": entry_price,
+                "atr_at_entry": atr_at_entry,
+                "extreme_price": stored_extreme,
+                "trailing_stop": trailing_stop,
+                "take_profit": take_profit,
+                "current_close": cur_close,
+                "created_at": sig.get("created_at"),
+            })
+        elif direction == "SELL":
+            stored_extreme = (pos.get("lowest_price_since_entry") if pos else None) or entry_price
+            sym_h1 = get_candles(sig["asset"], "1H", 5)
+            cur_close = sym_h1[-1]["close"] if sym_h1 else None
+            if cur_close:
+                stored_extreme = min(stored_extreme, cur_close)
+            trailing_stop = None
+            if atr_at_entry is not None:
+                trailing_stop = stored_extreme + (atr_at_entry * 0.25)
+            take_profit = None
+            if atr_at_entry is not None:
+                take_profit = entry_price - (atr_at_entry * 6.0)
+            trade_details.append({
+                "id": sig["id"],
+                "symbol": sig["asset"],
+                "direction": direction,
+                "entry_price": entry_price,
+                "atr_at_entry": atr_at_entry,
+                "extreme_price": stored_extreme,
+                "trailing_stop": trailing_stop,
+                "take_profit": take_profit,
+                "current_close": cur_close,
+                "created_at": sig.get("created_at"),
+            })
+
+    return {
+        "et_time": et_now.strftime(f"%Y-%m-%d %H:%M:%S {'EDT' if ny_dst else 'EST'}"),
+        "in_window": in_window,
+        "is_holiday": is_holiday_today,
+        "dst_active": ny_dst,
+        "symbol_info": sym_info,
+        "active_trades": trade_details,
+    }
+
+
+def _build_hlc_fx_html(hlc_data: dict, hlc_signal_rows: str, hlc_signal_count: int) -> str:
+    in_window = hlc_data["in_window"]
+    is_holiday = hlc_data.get("is_holiday", False)
+    if is_holiday:
+        window_badge = '<span class="badge status-expired">HOLIDAY</span>'
+    elif in_window:
+        window_badge = '<span class="badge status-active">IN WINDOW</span>'
+    else:
+        window_badge = '<span class="badge status-closed">OUTSIDE WINDOW</span>'
+
+    sym = hlc_data["symbol_info"]
+    price_display = f"{sym['current_price']:.5f}" if sym["current_price"] is not None else "N/A"
+    high_display = f"{sym['highest_50d']:.5f}" if sym["highest_50d"] is not None else "N/A"
+    low_display = f"{sym['lowest_50d']:.5f}" if sym["lowest_50d"] is not None else "N/A"
+    atr_display = f"{sym['h1_atr100']:.5f}" if sym["h1_atr100"] is not None else "N/A"
+    prev_high_display = f"{sym['prev_day_high']:.5f}" if sym["prev_day_high"] is not None else "N/A"
+    prev_low_display = f"{sym['prev_day_low']:.5f}" if sym["prev_day_low"] is not None else "N/A"
+    reversal_display = f"{sym['reversal_threshold']:.5f}" if sym["reversal_threshold"] is not None else "N/A"
+
+    breakout_long = ""
+    breakout_short = ""
+    if sym["current_price"] is not None and sym["highest_50d"] is not None:
+        if sym["current_price"] >= sym["highest_50d"]:
+            breakout_long = ' <span class="badge buy">BREAKOUT</span>'
+    if sym["current_price"] is not None and sym["lowest_50d"] is not None:
+        if sym["current_price"] <= sym["lowest_50d"]:
+            breakout_short = ' <span class="badge sell">BREAKDOWN</span>'
+
+    symbol_html = f"""
+    <div class="settings-section" style="margin-bottom:16px;" data-testid="hlc-fx-symbol-{sym['symbol'].replace('/','-')}">
+        <h3>{sym['symbol']} <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">{sym['h1_candle_count']} H1 / {sym['d1_candle_count']} D1 candles</span></h3>
+        <div class="stats-grid" style="margin-top:12px;">
+            <div class="stat-card">
+                <div class="stat-label">Current Price</div>
+                <div class="stat-value" style="font-size:1.2rem;">{price_display}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">50-Day High{breakout_long}</div>
+                <div class="stat-value" style="font-size:1.2rem;">{high_display}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">50-Day Low{breakout_short}</div>
+                <div class="stat-value" style="font-size:1.2rem;">{low_display}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">H1 ATR(100)</div>
+                <div class="stat-value" style="font-size:1.2rem;">{atr_display}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Prev Day High</div>
+                <div class="stat-value" style="font-size:1.2rem;">{prev_high_display}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Prev Day Low</div>
+                <div class="stat-value" style="font-size:1.2rem;">{prev_low_display}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Reversal Threshold (0.998)</div>
+                <div class="stat-value" style="font-size:1.2rem;">{reversal_display}</div>
+            </div>
+        </div>
+    </div>"""
+
+    active_html = ""
+    if hlc_data["active_trades"]:
+        trade_rows = ""
+        for t in hlc_data["active_trades"]:
+            dir_class = "buy" if t["direction"] == "BUY" else "sell"
+            entry_display = f"{t['entry_price']:.5f}"
+            atr_display_t = f"{t['atr_at_entry']:.6f}" if t["atr_at_entry"] is not None else "N/A"
+            extreme_label = "Peak" if t["direction"] == "BUY" else "Trough"
+            extreme_display = f"{t['extreme_price']:.5f}"
+            trail_display = f"{t['trailing_stop']:.5f}" if t["trailing_stop"] is not None else "N/A"
+            tp_display = f"{t['take_profit']:.5f}" if t["take_profit"] is not None else "N/A"
+            cur_display = f"{t['current_close']:.5f}" if t["current_close"] is not None else "N/A"
+            pnl = ""
+            if t["current_close"] is not None:
+                if t["direction"] == "BUY":
+                    diff = t["current_close"] - t["entry_price"]
+                else:
+                    diff = t["entry_price"] - t["current_close"]
+                pnl_color = "#6ee7b7" if diff >= 0 else "#fca5a5"
+                pnl = f'<span style="color:{pnl_color};font-weight:600;">{diff:+.5f}</span>'
+
+            trade_rows += f"""
+            <tr data-testid="row-hlc-trade-{t['id']}">
+                <td>{t['symbol']}</td>
+                <td><span class="badge {dir_class}">{t['direction']}</span></td>
+                <td>{entry_display}</td>
+                <td>{atr_display_t}</td>
+                <td>{extreme_display} <span style="color:#64748b;font-size:0.75rem;">({extreme_label})</span></td>
+                <td style="color:#fbbf24;font-weight:600;">{trail_display}</td>
+                <td style="color:#3b82f6;">{tp_display}</td>
+                <td>{cur_display}</td>
+                <td>{pnl}</td>
+                <td>{t.get('created_at', 'N/A')}</td>
+            </tr>"""
+
+        active_html = f"""
+        <div class="settings-section" style="margin-top:20px;border-left:3px solid #8b5cf6;">
+            <h3>Active Trades ({len(hlc_data['active_trades'])})</h3>
+            <div style="overflow-x:auto;margin-top:12px;">
+                <table class="data-table" data-testid="hlc-fx-active-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Direction</th>
+                            <th>Entry Price</th>
+                            <th>Entry ATR(100)</th>
+                            <th>Tracked Extreme</th>
+                            <th>Trailing Stop</th>
+                            <th>Take Profit</th>
+                            <th>Current Close</th>
+                            <th>P&amp;L</th>
+                            <th>Opened</th>
+                        </tr>
+                    </thead>
+                    <tbody>{trade_rows}</tbody>
+                </table>
+            </div>
+        </div>"""
+    else:
+        active_html = """
+        <div class="settings-section" style="margin-top:20px;">
+            <h3>Active Trades</h3>
+            <p style="color:#94a3b8;padding:16px 0;">No active Highest/Lowest FX trades.</p>
+        </div>"""
+
+    return f"""
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Eval Window (9:00 &amp; 10:00 AM ET)</div>
+            <div style="margin-top:8px;">{window_badge}</div>
+            <div class="stat-label" style="margin-top:8px;">{hlc_data['et_time']}</div>
+            <div class="stat-label">DST: {'Active' if hlc_data['dst_active'] else 'Inactive'}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Target Asset</div>
+            <div class="stat-value" style="font-size:1.2rem;">EUR/USD</div>
+            <div class="stat-label" style="margin-top:4px;">H1 candles + D1 lookback</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Scheduler</div>
+            <div class="stat-value" style="font-size:1.2rem;color:#6ee7b7;">Active</div>
+            <div class="stat-label" style="margin-top:4px;">APScheduler @ 09:00 &amp; 10:00 ET</div>
+        </div>
+    </div>
+    {symbol_html}
+    {active_html}
+    <div class="settings-section" style="margin-top:20px;">
+        <h3>Signal History ({hlc_signal_count})</h3>
+        <div style="overflow-x:auto;margin-top:12px;">
+            <table class="data-table" data-testid="hlc-fx-signals-table">
+                <thead>
+                    <tr>
+                        <th>Asset</th>
+                        <th>Direction</th>
+                        <th>Entry Price</th>
+                        <th>Stop Loss</th>
+                        <th>Take Profit</th>
+                        <th>Strategy</th>
+                        <th>Status</th>
+                        <th>Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody>{hlc_signal_rows}</tbody>
+            </table>
+        </div>
+    </div>
+    <div class="timezone-note" style="margin-top:16px;">
+        <strong>Strategy Rules:</strong>
+        <ul>
+            <li><strong>Long Entry:</strong> Price &ge; 50-day highest close (D1 lookback)</li>
+            <li><strong>Reversal Long:</strong> Price near 50-day lowest close (within 0.2%) &mdash; potential bounce</li>
+            <li><strong>Short Entry:</strong> Price &le; 50-day lowest close AND below reversal threshold</li>
+            <li><strong>Previous Day Filter:</strong> Long blocked if price &lt; prev day low; Short blocked if price &gt; prev day high</li>
+            <li><strong>Holiday Filter:</strong> Skips US &amp; JP public holidays</li>
+            <li><strong>Exit (Trailing Stop):</strong> Long exits when close &lt; peak - 0.25&times;ATR(100); Short exits when close &gt; trough + 0.25&times;ATR(100)</li>
+            <li><strong>Take Profit:</strong> 6&times; H1 ATR(100) from entry</li>
+            <li><strong>ATR:</strong> H1 ATR(100), fixed at entry value (never recalculated)</li>
+            <li><strong>Timing:</strong> Evaluates at 9:00 AM and 10:00 AM ET only, automated via APScheduler</li>
+        </ul>
+    </div>
+    """
+
+
 def _build_users_html(current_user_id: int) -> str:
     admins = get_all_admins()
     rows = ""
@@ -2414,6 +2733,12 @@ def admin_dashboard(
     tf_signal_count = len(tf_signals_combined)
     trend_following_html = _build_trend_following_html(tf_data, tf_signal_rows, tf_signal_count)
 
+    hlc_data = _get_hlc_fx_data()
+    hlc_signals = get_all_signals(strategy_name="highest_lowest_fx", limit=200)
+    hlc_signal_rows = _signals_to_table_rows(hlc_signals)
+    hlc_signal_count = len(hlc_signals)
+    hlc_fx_html = _build_hlc_fx_html(hlc_data, hlc_signal_rows, hlc_signal_count)
+
     strategy_options = ""
     for s in ["", "mtf_ema", "trend_following", "sp500_momentum", "highest_lowest_fx", "trend_forex"]:
         label = s.replace("_", " ").title() if s else "All Strategies"
@@ -2482,6 +2807,10 @@ def admin_dashboard(
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                         Forex Trend
                     </a>
+                    <a class="sidebar-link {'active' if tab == 'hlc_fx' else ''}" data-tab="hlc_fx" onclick="showTab('hlc_fx')" data-testid="sidebar-hlc-fx">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
+                        Highest/Lowest FX
+                    </a>
                 </div>
                 <div class="sidebar-group">
                     <div class="sidebar-group-label">System</div>
@@ -2527,6 +2856,7 @@ def admin_dashboard(
                 <a class="tab {'active' if tab == 'signals' else ''}" data-tab="signals" onclick="showTab('signals')">Overview</a>
                 <a class="tab {'active' if tab == 'spx' else ''}" data-tab="spx" onclick="showTab('spx')">SPX 500</a>
                 <a class="tab {'active' if tab == 'forex_trend' else ''}" data-tab="forex_trend" onclick="showTab('forex_trend')">FX Trend</a>
+                <a class="tab {'active' if tab == 'hlc_fx' else ''}" data-tab="hlc_fx" onclick="showTab('hlc_fx')">HLC FX</a>
                 <a class="tab {'active' if tab == 'credits' else ''}" data-tab="credits" onclick="showTab('credits')">Credits</a>
                 <a class="tab {'active' if tab == 'timezone' else ''}" data-tab="timezone" onclick="showTab('timezone')">Hours</a>
                 <a class="tab {'active' if tab == 'settings' else ''}" data-tab="settings" onclick="showTab('settings')">Settings</a>
@@ -2599,6 +2929,13 @@ def admin_dashboard(
             <div class="section">
                 <h2>Trend Following Strategy</h2>
                 {trend_following_html}
+            </div>
+        </div>
+
+        <div id="tab-hlc_fx" class="tab-content {'hidden' if tab != 'hlc_fx' else ''}">
+            <div class="section">
+                <h2>Highest/Lowest Close FX Strategy</h2>
+                {hlc_fx_html}
             </div>
         </div>
 
