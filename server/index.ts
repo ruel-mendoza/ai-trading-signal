@@ -144,6 +144,23 @@ function startPythonEngine(): Promise<void> {
 
 const PYTHON_ENGINE_URL = "http://127.0.0.1:5001";
 
+app.use("/v1", async (req: Request, res: Response) => {
+  try {
+    const targetPath = `/v1${req.path || "/"}`;
+    const queryString = new URLSearchParams(req.query as Record<string, string>).toString();
+    const url = `${PYTHON_ENGINE_URL}${targetPath}${queryString ? "?" + queryString : ""}`;
+
+    const response = await fetch(url);
+    const contentType = response.headers.get("content-type") || "application/json";
+    res.status(response.status).set("content-type", contentType);
+    const body = await response.text();
+    res.send(body);
+  } catch (error) {
+    console.error("[v1-proxy] Error:", error);
+    res.status(502).json({ error: "Trading engine unavailable" });
+  }
+});
+
 app.use("/api/engine", async (req: Request, res: Response) => {
   try {
     const targetPath = req.path || "/";
