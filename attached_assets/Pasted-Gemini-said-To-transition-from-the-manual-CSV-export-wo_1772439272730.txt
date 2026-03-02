@@ -1,0 +1,52 @@
+Gemini said
+To transition from the manual CSV export workflow to a high-performance, real-time signaling system, we will implement a FastAPI-based Backend API. This layer will serve signals directly from the local PostgreSQL database, utilizing Redis for sub-second read performance and FastAPI-Pagination for efficient historical data access.
+
+1. API Architecture & Versioning (v1)
+The API is designed as a read-only service to ensure security and maximum throughput for the DailyForex frontend.
+
+Key Technical Decisions:
+
+Framework: FastAPI (Asynchronous by default, ideal for high-concurrency).
+
+Data Source: Local DB only; strict isolation from the FCSAPI to avoid external rate limits and latency.
+
+Caching Strategy: Cache-Aside pattern with Redis. The API checks Redis first; if data is missing (cache miss), it fetches from DB and populates Redis with a 60-second TTL.
+
+2. Implementation of Core Endpoints
+GET /api/v1/signals/latest
+This is the "Hot Path" for the frontend. It returns currently active signals with mandatory filtering capabilities.
+
+Logic: Retrieves signals where status = 'ACTIVE'.
+
+Filters: ?asset=EUR/USD, ?strategy=trend_forex, ?asset_class=crypto.
+
+Caching: Cached as a JSON blob in Redis keyed by the filter parameters.
+
+GET /api/v1/signals/history
+Provides auditable historical data for performance tracking.
+
+Logic: Uses Limit-Offset pagination.
+
+Response: Includes metadata such as total_count, page, and size.
+
+3. Caching & Performance Layer
+Prompt for Replit Agent:
+
+Implement the Redis caching layer in app/api/v1/endpoints/signals.py:
+
+Middleware/Decorator: Create a cache_response(ttl=60) decorator.
+
+Key Generation: Use the endpoint path and sorted query parameters to generate unique cache keys (e.g., signals_latest:asset=BTC/USD:strategy=mtf).
+
+Connection Pooling: Use redis-py with a connection pool to handle high concurrent traffic without reconnect floods.
+
+4. Security & Rate Limiting
+To protect the backend from scraping or DDoS, we implement standard production-grade guards:
+
+Rate Limiting: Integrated slowapi to limit requests (e.g., 100 requests/minute per IP).
+
+CORS: Strict configuration allowing only the DailyForex frontend domain.
+
+Health Checks: /api/v1/health/public returns basic system status (UP/DOWN) without exposing internal database or server metadata.
+
+API Contract Example (latest signals)

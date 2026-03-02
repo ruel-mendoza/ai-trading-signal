@@ -45,7 +45,9 @@ Read-only API for the DailyForex frontend (`trading_engine/api_v1.py`), mounted 
   - `GET /v1/scheduler/status` — 24h success/failure counts and last job info
   - `GET /v1/scheduler/jobs` — Recent job execution logs, param: `limit`
   - `GET /v1/health` — API health + cache stats (size, hit rate, TTL)
-- **Response format**: Signals include `asset`, `category`, `strategy`, `strategy_label`, `direction`, `entry_price`, `stop_loss`, `take_profit`, `trailing_stop` (boolean), `status`, `opened_at`, `updated_at`
+  - `GET /v1/health/public` — Liveness check, returns only `status: "UP"/"DOWN"` and `version`
+  - `POST /v1/cache/flush` — Clear all cache shards
+- **Response format**: `/v1/signals/latest` returns `{count, data: [{asset, direction (LONG/SHORT), entry, stop_loss, strategy, published_at, meta: {atr_entry, highest_close, lowest_close}}]}`. Internal endpoints (`/signals/history`, `/signals/active`, `/signals`) use legacy format with `signals` array, `entry_price`, `BUY/SELL` direction, `opened_at`
 
 ## External Dependencies
 - **OpenAI:** Used for AI-powered signal generation.

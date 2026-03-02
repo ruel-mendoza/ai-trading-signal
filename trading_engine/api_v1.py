@@ -190,6 +190,41 @@ STRATEGY_LABELS = {
 VALID_TIMEFRAMES = ["30m", "1H", "4H", "D1"]
 
 
+DIRECTION_MAP = {"BUY": "LONG", "SELL": "SHORT"}
+
+
+def _format_signal_public(s: dict, position: Optional[dict] = None) -> dict:
+    ts = s.get("signal_timestamp") or s.get("created_at") or ""
+    if ts and not ts.endswith("Z"):
+        ts = ts.replace(" ", "T")
+        if "T" in ts:
+            ts = ts + "Z"
+
+    meta = {}
+    atr = s.get("atr_at_entry")
+    if atr is not None:
+        meta["atr_entry"] = atr
+    if position:
+        if position.get("highest_price_since_entry") is not None:
+            meta["highest_close"] = position["highest_price_since_entry"]
+        if position.get("lowest_price_since_entry") is not None:
+            meta["lowest_close"] = position["lowest_price_since_entry"]
+
+    result = {
+        "asset": s["asset"],
+        "direction": DIRECTION_MAP.get(s["direction"], s["direction"]),
+        "entry": s["entry_price"],
+        "stop_loss": s["stop_loss"],
+        "strategy": s["strategy_name"],
+        "published_at": ts,
+    }
+    if s.get("take_profit") is not None:
+        result["take_profit"] = s["take_profit"]
+    if meta:
+        result["meta"] = meta
+    return result
+
+
 def _format_signal(s: dict) -> dict:
     return {
         "id": s["id"],
@@ -230,9 +265,27 @@ def get_signals_latest(
     asset_class: Optional[str] = Query(None, description="Filter by asset class: forex, crypto, commodities, indices"),
 ):
     raw = get_active_signals(strategy_name=strategy, asset=asset)
-    formatted = [_format_signal(s) for s in raw]
-    formatted = _filter_by_asset_class(formatted, asset_class)
-    return {"signals": formatted, "count": len(formatted)}
+
+    positions = get_all_open_positions()
+    pos_map = {}
+    for p in positions:
+        key = (p.get("asset"), p.get("strategy_name"))
+        pos_map[key] = p
+
+    formatted = []
+    for s in raw:
+        pos = pos_map.get((s["asset"], s["strategy_name"]))
+        f = _format_signal_public(s, position=pos)
+        f["_category"] = CATEGORY_MAP.get(s["asset"], "other")
+        formatted.append(f)
+
+    if asset_class:
+        formatted = [f for f in formatted if f.get("_category") == asset_class]
+
+    for f in formatted:
+        f.pop("_category", None)
+
+    return {"count": len(formatted), "data": formatted}
 
 
 @router.get("/signals/history")
