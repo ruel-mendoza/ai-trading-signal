@@ -19,6 +19,8 @@ from trading_engine.database import (
     get_api_usage_stats,
     get_recent_job_logs,
     get_scheduler_health_summary,
+    get_signal_metrics,
+    get_all_signal_metrics,
 )
 
 logger = logging.getLogger("trading_engine.api_v1")
@@ -479,6 +481,52 @@ def get_positions(
         })
 
     return {"positions": formatted, "count": len(formatted)}
+
+
+@router.get("/metrics")
+@cache_response(ttl=60, prefix="signal_metrics")
+def get_metrics(
+    strategy: Optional[str] = Query(None, description="Filter by strategy name"),
+    asset: Optional[str] = Query(None, description="Filter by specific asset"),
+    period: str = Query("all_time", description="Period: all_time, 7d, 30d"),
+    summary_only: bool = Query(False, description="If true, return only strategy-level summaries (no per-asset rows)"),
+):
+    if period not in ("all_time", "7d", "30d"):
+        raise HTTPException(status_code=400, detail="Invalid period. Use: all_time, 7d, 30d")
+
+    metrics = get_signal_metrics(
+        strategy_name=strategy,
+        asset=asset,
+        period=period,
+        summary_only=summary_only if not asset else False,
+    )
+
+    return {"metrics": metrics, "count": len(metrics), "period": period}
+
+
+@router.get("/metrics/summary")
+@cache_response(ttl=60, prefix="metrics_summary")
+def get_metrics_summary():
+    all_metrics = get_all_signal_metrics()
+
+    summary_rows = [m for m in all_metrics if m["asset"] is None and m["period"] == "all_time"]
+
+    total_signals = sum(m["total_signals"] for m in summary_rows)
+    total_won = sum(m["won"] for m in summary_rows)
+    total_lost = sum(m["lost"] for m in summary_rows)
+    total_closed = total_won + total_lost
+    overall_win_rate = round(total_won / total_closed * 100, 1) if total_closed > 0 else 0.0
+
+    computed = max((m["computed_at"] for m in all_metrics), default=None) if all_metrics else None
+
+    return {
+        "total_signals": total_signals,
+        "total_won": total_won,
+        "total_lost": total_lost,
+        "overall_win_rate": overall_win_rate,
+        "strategies": summary_rows,
+        "last_computed": computed,
+    }
 
 
 @router.get("/scheduler/status")

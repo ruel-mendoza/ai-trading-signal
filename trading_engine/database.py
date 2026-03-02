@@ -28,6 +28,7 @@ from trading_engine.models import (
     AdminUser,
     AdminSession,
     SchedulerJobLog,
+    SignalMetrics,
     VALID_TIMEFRAMES,
 )
 
@@ -910,3 +911,192 @@ def get_scheduler_health_summary() -> dict:
             "last_24h_success": success_24h,
             "last_24h_failures": failed_24h,
         }
+
+
+def _parse_ts(ts_str):
+    if not ts_str:
+        return None
+    try:
+        ts_str = ts_str.replace("Z", "+00:00")
+        return datetime.fromisoformat(ts_str).replace(tzinfo=None)
+    except (ValueError, TypeError):
+        return None
+
+
+def compute_signal_metrics():
+    now_dt = datetime.utcnow()
+    cutoff_7d = now_dt - timedelta(days=7)
+    cutoff_30d = now_dt - timedelta(days=30)
+
+    with _get_session() as session:
+        all_signals = session.query(Signal).all()
+
+        if not all_signals:
+            logger.info("[METRICS] No signals to compute metrics for")
+            return 0
+
+        groups = {}
+        for s in all_signals:
+            ts_dt = _parse_ts(s.signal_timestamp) or _parse_ts(s.created_at)
+            for period, cutoff in [("all_time", None), ("7d", cutoff_7d), ("30d", cutoff_30d)]:
+                if cutoff and (ts_dt is None or ts_dt < cutoff):
+                    continue
+
+                for key in [(s.strategy_name, None, period), (s.strategy_name, s.asset, period)]:
+                    if key not in groups:
+                        groups[key] = []
+                    groups[key].append(s)
+
+        count = 0
+        for (strategy, asset, period), sigs in groups.items():
+            total = len(sigs)
+            open_count = sum(1 for s in sigs if s.status == "OPEN")
+            closed_count = sum(1 for s in sigs if s.status == "CLOSED")
+
+            gains = []
+            losses = []
+            durations = []
+
+            for s in sigs:
+                if s.status != "CLOSED" or not s.exit_price or not s.entry_price:
+                    continue
+
+                if s.direction == "BUY":
+                    pct = ((s.exit_price - s.entry_price) / s.entry_price) * 100
+                else:
+                    pct = ((s.entry_price - s.exit_price) / s.entry_price) * 100
+
+                if pct >= 0:
+                    gains.append(pct)
+                else:
+                    losses.append(pct)
+
+                if s.signal_timestamp and s.updated_at:
+                    try:
+                        t_open = datetime.fromisoformat(s.signal_timestamp.replace("Z", ""))
+                        t_close = datetime.fromisoformat(s.updated_at.replace("Z", ""))
+                        dur_hours = (t_close - t_open).total_seconds() / 3600
+                        durations.append(dur_hours)
+                    except (ValueError, TypeError):
+                        pass
+
+            won = len(gains)
+            lost = len(losses)
+            win_rate = round(won / (won + lost) * 100, 1) if (won + lost) > 0 else 0.0
+            avg_gain = round(sum(gains) / len(gains), 4) if gains else 0.0
+            avg_loss = round(sum(losses) / len(losses), 4) if losses else 0.0
+            best = round(max(gains), 4) if gains else None
+            worst = round(min(losses), 4) if losses else None
+            avg_dur = round(sum(durations) / len(durations), 2) if durations else None
+
+            last_ts = max((s.signal_timestamp or s.created_at or "") for s in sigs)
+
+            existing = (
+                session.query(SignalMetrics)
+                .filter_by(strategy_name=strategy, asset=asset, period=period)
+                .first()
+            )
+
+            if existing:
+                existing.total_signals = total
+                existing.open_signals = open_count
+                existing.closed_signals = closed_count
+                existing.won = won
+                existing.lost = lost
+                existing.win_rate = win_rate
+                existing.avg_gain_pct = avg_gain
+                existing.avg_loss_pct = avg_loss
+                existing.best_gain_pct = best
+                existing.worst_loss_pct = worst
+                existing.avg_duration_hours = avg_dur
+                existing.last_signal_at = last_ts
+                existing.computed_at = now_iso
+            else:
+                session.add(SignalMetrics(
+                    strategy_name=strategy,
+                    asset=asset,
+                    period=period,
+                    total_signals=total,
+                    open_signals=open_count,
+                    closed_signals=closed_count,
+                    won=won,
+                    lost=lost,
+                    win_rate=win_rate,
+                    avg_gain_pct=avg_gain,
+                    avg_loss_pct=avg_loss,
+                    best_gain_pct=best,
+                    worst_loss_pct=worst,
+                    avg_duration_hours=avg_dur,
+                    last_signal_at=last_ts,
+                    computed_at=now_iso,
+                ))
+            count += 1
+
+        session.commit()
+        logger.info(f"[METRICS] Computed {count} metric rows from {len(all_signals)} signals")
+        return count
+
+
+def get_signal_metrics(
+    strategy_name: Optional[str] = None,
+    asset: Optional[str] = None,
+    period: str = "all_time",
+    summary_only: bool = False,
+) -> list[dict]:
+    with _get_session() as session:
+        q = session.query(SignalMetrics).filter_by(period=period)
+        if strategy_name:
+            q = q.filter_by(strategy_name=strategy_name)
+        if asset:
+            q = q.filter_by(asset=asset)
+        elif summary_only:
+            q = q.filter(SignalMetrics.asset.is_(None))
+
+        rows = q.all()
+        return [
+            {
+                "strategy": r.strategy_name,
+                "asset": r.asset,
+                "period": r.period,
+                "total_signals": r.total_signals,
+                "open": r.open_signals,
+                "closed": r.closed_signals,
+                "won": r.won,
+                "lost": r.lost,
+                "win_rate": r.win_rate,
+                "avg_gain_pct": r.avg_gain_pct,
+                "avg_loss_pct": r.avg_loss_pct,
+                "best_gain_pct": r.best_gain_pct,
+                "worst_loss_pct": r.worst_loss_pct,
+                "avg_duration_hours": r.avg_duration_hours,
+                "last_signal_at": r.last_signal_at,
+                "computed_at": r.computed_at,
+            }
+            for r in rows
+        ]
+
+
+def get_all_signal_metrics() -> list[dict]:
+    with _get_session() as session:
+        rows = session.query(SignalMetrics).all()
+        return [
+            {
+                "strategy": r.strategy_name,
+                "asset": r.asset,
+                "period": r.period,
+                "total_signals": r.total_signals,
+                "open": r.open_signals,
+                "closed": r.closed_signals,
+                "won": r.won,
+                "lost": r.lost,
+                "win_rate": r.win_rate,
+                "avg_gain_pct": r.avg_gain_pct,
+                "avg_loss_pct": r.avg_loss_pct,
+                "best_gain_pct": r.best_gain_pct,
+                "worst_loss_pct": r.worst_loss_pct,
+                "avg_duration_hours": r.avg_duration_hours,
+                "last_signal_at": r.last_signal_at,
+                "computed_at": r.computed_at,
+            }
+            for r in rows
+        ]

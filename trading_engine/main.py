@@ -36,6 +36,7 @@ logger = logging.getLogger("trading_engine")
 from trading_engine.database import (
     init_db, get_candles, get_candle_count, get_all_signals, get_active_signals,
     create_job_log, finish_job_log, get_scheduler_health_summary,
+    compute_signal_metrics,
 )
 from trading_engine.models import VALID_TIMEFRAMES
 from trading_engine.fcsapi_client import FCSAPIClient
@@ -452,6 +453,17 @@ def _scheduled_mtf_ema_evaluate():
     )
 
 
+def _run_metrics_worker():
+    import time as _time
+    t0 = _time.monotonic()
+    try:
+        rows = compute_signal_metrics()
+        elapsed = round(_time.monotonic() - t0, 2)
+        logger.info(f"[METRICS] Worker completed: {rows} metric rows in {elapsed}s")
+    except Exception as e:
+        logger.error(f"[METRICS] Worker failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from trading_engine.database import get_setting
@@ -517,7 +529,21 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
+    scheduler.add_job(
+        _run_metrics_worker,
+        trigger=CronTrigger(minute="*/5", timezone=ET_ZONE),
+        id="signal_metrics_worker",
+        name="Signal Metrics Worker (every 5 minutes)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
     scheduler.start()
+
+    try:
+        compute_signal_metrics()
+        logger.info("[METRICS] Initial metrics computation completed on startup")
+    except Exception as e:
+        logger.warning(f"[METRICS] Initial computation failed: {e}")
 
     watchdog = threading.Thread(target=_watchdog_thread, daemon=True, name="scheduler-watchdog")
     watchdog.start()
@@ -528,6 +554,7 @@ async def lifespan(app: FastAPI):
         f"mtf_ema every hour (:00), sp500_momentum every 30m (:00/:30), "
         f"highest_lowest_fx at 09:00 & 10:00, "
         f"trend_non_forex at 16:00, trend_forex at 17:00 | "
+        f"metrics worker every 5m | "
         f"misfire_grace={MISFIRE_GRACE_SECONDS}s | "
         f"watchdog interval={WATCHDOG_INTERVAL_SECONDS}s | "
         f"America/New_York ({et['label']}, DST={'active' if et['dst'] else 'inactive'})"

@@ -173,3 +173,31 @@ class SchedulerJobLog(Base):
         Index("idx_job_log_started", "started_at"),
         Index("idx_job_log_strategy", "strategy_name"),
     )
+
+
+class SignalMetrics(Base):
+    __tablename__ = "signal_metrics"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    strategy_name = Column(Text, nullable=False)
+    asset = Column(Text)
+    period = Column(Text, nullable=False, default="all_time")
+    total_signals = Column(Integer, default=0)
+    open_signals = Column(Integer, default=0)
+    closed_signals = Column(Integer, default=0)
+    won = Column(Integer, default=0)
+    lost = Column(Integer, default=0)
+    win_rate = Column(Float, default=0.0)
+    avg_gain_pct = Column(Float, default=0.0)
+    avg_loss_pct = Column(Float, default=0.0)
+    best_gain_pct = Column(Float)
+    worst_loss_pct = Column(Float)
+    avg_duration_hours = Column(Float)
+    last_signal_at = Column(Text)
+    computed_at = Column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("strategy_name", "asset", "period", name="uq_signal_metrics_key"),
+        Index("idx_signal_metrics_strategy", "strategy_name"),
+        Index("idx_signal_metrics_period", "period"),
+    )
