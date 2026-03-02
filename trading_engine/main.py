@@ -43,6 +43,7 @@ from trading_engine.cache_layer import CacheLayer
 from trading_engine.indicators import IndicatorEngine
 from trading_engine.strategy_engine import StrategyEngine
 from trading_engine.admin import router as admin_router
+from trading_engine.api_v1 import router as api_v1_router
 from trading_engine.strategies.trend_forex import TARGET_SYMBOLS as TREND_FOREX_SYMBOLS
 from trading_engine.strategies.trend_non_forex import TARGET_SYMBOLS as TREND_NON_FOREX_SYMBOLS
 from trading_engine.strategies.multi_timeframe import ALL_ASSETS as MTF_EMA_ASSETS
@@ -581,6 +582,7 @@ async def global_exception_handler(request: StarletteRequest, exc: Exception):
     )
 
 app.include_router(admin_router)
+app.include_router(api_v1_router)
 
 
 @app.get("/health")

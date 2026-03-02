@@ -26,6 +26,18 @@ Key architectural decisions include:
   - **Security Headers**: Express uses `helmet` middleware (HSTS, X-Content-Type-Options, X-Frame-Options, etc.) with CSP disabled for SPA compatibility.
   - **Health Endpoint**: `GET /health` returns scheduler status, database connectivity, 24h job success/failure counts, watchdog heartbeat, and API key status. Returns `"healthy"` or `"degraded"` with specific failed checks.
 
+## Public API v1
+Read-only API for the DailyForex frontend (`trading_engine/api_v1.py`), mounted at `/v1` on the Python engine (proxied through Express at `/api/engine/v1`).
+
+- **Architecture**: Read-only, local DB only (no external API calls), Cache-Aside pattern with `cachetools` TTLCache (60s TTL, 256 max entries). Every response includes a `cache` field (`hit`/`miss`).
+- **Endpoints**:
+  - `GET /v1/signals` — All signals with filters: `strategy`, `asset`, `status`, `category`, `limit`
+  - `GET /v1/signals/active` — Open signals only, filters: `strategy`, `asset`, `category`
+  - `GET /v1/signals/{id}` — Single signal by ID
+  - `GET /v1/strategies` — Strategy summary with open/closed counts
+  - `GET /v1/health` — API health + cache stats
+- **Response format**: Signals include `asset`, `category`, `strategy`, `strategy_label`, `direction`, `entry_price`, `stop_loss`, `take_profit`, `trailing_stop` (boolean), `status`, `opened_at`, `updated_at`
+
 ## External Dependencies
 - **OpenAI:** Used for AI-powered signal generation.
 - **FCSAPI v4:** Provides OHLC (Open-High-Low-Close) data and real-time quotes for forex, crypto, commodities (with `type=commodity`), and stock indices (with `type=index`). Commodity symbols (XAU/USD, XAG/USD, XPT/USD, XPD/USD, XCU/USD, NATGAS/USD, CORN/USD, SOYBEAN/USD, WHEAT/USD, SUGAR/USD) use the forex endpoint with `type=commodity`. Stock indices (SPX, NDX, DJI, RUT) use the stock endpoint with `type=index` and plain symbols (no exchange prefix). WTI/USD and BRENT/USD are not available on FCSAPI and are marked unsupported.

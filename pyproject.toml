@@ -5,6 +5,7 @@ description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
     "apscheduler>=3.11.2",
+    "cachetools>=7.0.1",
     "fastapi>=0.131.0",
     "holidays>=0.91",
     "httpx>=0.28.1",
