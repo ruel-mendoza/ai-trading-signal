@@ -32,10 +32,17 @@ Read-only API for the DailyForex frontend (`trading_engine/api_v1.py`), mounted 
 - **Architecture**: Read-only, local DB only (no external API calls), Cache-Aside pattern with `cachetools` TTLCache (60s TTL, 256 max entries). Every response includes a `cache` field (`hit`/`miss`).
 - **Endpoints**:
   - `GET /v1/signals` — All signals with filters: `strategy`, `asset`, `status`, `category`, `limit`
+  - `GET /v1/signals/latest` — Active signals (hot path), filters: `asset`, `strategy`, `asset_class`
+  - `GET /v1/signals/history` — Paginated history, filters: `asset`, `strategy`, `status`, `asset_class`, `page`, `size`
   - `GET /v1/signals/active` — Open signals only, filters: `strategy`, `asset`, `category`
   - `GET /v1/signals/{id}` — Single signal by ID
   - `GET /v1/strategies` — Strategy summary with open/closed counts
-  - `GET /v1/health` — API health + cache stats
+  - `GET /v1/market/candles` — OHLC candle data, params: `asset`, `timeframe`, `limit`
+  - `GET /v1/market/indicators` — Technical indicators (SMA, EMA, RSI, ATR at multiple periods), params: `asset`, `timeframe`
+  - `GET /v1/positions` — Open positions with trailing stop data, filters: `strategy`, `asset`
+  - `GET /v1/scheduler/status` — 24h success/failure counts and last job info
+  - `GET /v1/scheduler/jobs` — Recent job execution logs, param: `limit`
+  - `GET /v1/health` — API health + cache stats (size, hit rate, TTL)
 - **Response format**: Signals include `asset`, `category`, `strategy`, `strategy_label`, `direction`, `entry_price`, `stop_loss`, `take_profit`, `trailing_stop` (boolean), `status`, `opened_at`, `updated_at`
 
 ## External Dependencies
