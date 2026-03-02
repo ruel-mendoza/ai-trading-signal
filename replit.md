@@ -29,7 +29,7 @@ Key architectural decisions include:
 ## Public API v1
 Read-only API for the DailyForex frontend (`trading_engine/api_v1.py`), mounted at `/v1` on the Python engine (proxied through Express at `/api/engine/v1`).
 
-- **Architecture**: Read-only, local DB only (no external API calls), Cache-Aside pattern with `cachetools` TTLCache (60s TTL, 256 max entries). Every response includes a `cache` field (`hit`/`miss`).
+- **Architecture**: Read-only, local DB only (no external API calls). `cache_response(ttl)` decorator with `CachePool` — 4-shard thread-safe `cachetools` TTLCache (60s default TTL, 256 max entries per shard). Human-readable cache keys (`signals_latest:asset=BTC/USD:strategy=mtf`). Every response includes `cache` field (`hit`/`miss`) and `response_time_ms` on misses. `POST /v1/cache/flush` to clear all shards. Health endpoint reports shard count, hit/miss/set counts, and hit rate.
 - **Endpoints**:
   - `GET /v1/signals` — All signals with filters: `strategy`, `asset`, `status`, `category`, `limit`
   - `GET /v1/signals/latest` — Active signals (hot path), filters: `asset`, `strategy`, `asset_class`
