@@ -461,6 +461,15 @@ def api_health():
     }
 
 
+@router.get("/health/public")
+def api_health_public():
+    return {
+        "status": "UP",
+        "version": "v1",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+
+
 @router.post("/cache/flush")
 def flush_cache():
     cache_pool.flush()

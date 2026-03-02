@@ -21,10 +21,12 @@ Key architectural decisions include:
 - **Scalable Data Handling:** OHLC candle data is stored locally for various timeframes (30m, 1H, 4H, Daily) to support rapid indicator calculations.
 - **Production Hardening:**
   - **Webhook Notifications** (`trading_engine/notifications.py`): Configurable external alerting via Discord, Slack, or generic webhooks. Auto-detects webhook type from URL. Sends alerts for: kill switch activation, credit warnings, strategy failures, scheduler down, new signals. Admin API endpoints for webhook config (`/admin/api/webhook`), test (`/admin/api/webhook/test`). Full admin dashboard "Notifications" tab with master on/off toggle, webhook URL configuration (save/clear/test), and per-category toggles (new_signals, strategy_failures, credit_warnings, scheduler_alerts). All preferences persisted in `app_settings` SQLite table and loaded on startup.
-  - **Rate Limiting**: slowapi middleware on FastAPI (120 requests/minute per IP).
+  - **Rate Limiting**: slowapi middleware on FastAPI — 120 requests/minute per IP (default), 100 requests/minute application-wide limit, fixed-window strategy.
+  - **CORS**: Strict origin whitelist auto-configured from Replit environment variables (`REPL_SLUG`, `REPL_OWNER`). Override via `CORS_ALLOWED_ORIGINS` env var (comma-separated). Only allows `GET`, `POST`, `OPTIONS` methods. Exposes rate-limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`).
   - **Global Error Handler**: Catch-all exception handler logs unhandled errors with full traceback and returns structured JSON error responses.
   - **Security Headers**: Express uses `helmet` middleware (HSTS, X-Content-Type-Options, X-Frame-Options, etc.) with CSP disabled for SPA compatibility.
   - **Health Endpoint**: `GET /health` returns scheduler status, database connectivity, 24h job success/failure counts, watchdog heartbeat, and API key status. Returns `"healthy"` or `"degraded"` with specific failed checks.
+  - **Public Health**: `GET /v1/health/public` returns only `status: "UP"/"DOWN"` and `version` — no internal metadata exposed. Safe for external monitoring.
 
 ## Public API v1
 Read-only API for the DailyForex frontend (`trading_engine/api_v1.py`), mounted at `/v1` on the Python engine (proxied through Express at `/api/engine/v1`).
