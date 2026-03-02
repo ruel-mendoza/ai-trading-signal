@@ -169,7 +169,7 @@ def cache_response(ttl: int = CachePool.DEFAULT_TTL, prefix: Optional[str] = Non
     return decorator
 
 
-router = APIRouter(prefix="/v1", tags=["Public API v1"])
+router = APIRouter(prefix="/api/v1", tags=["Public API v1"])
 
 
 CATEGORY_MAP = {

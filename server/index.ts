@@ -144,9 +144,9 @@ function startPythonEngine(): Promise<void> {
 
 const PYTHON_ENGINE_URL = "http://127.0.0.1:5001";
 
-app.use("/v1", async (req: Request, res: Response) => {
+app.use("/api/v1", async (req: Request, res: Response) => {
   try {
-    const targetPath = `/v1${req.path || "/"}`;
+    const targetPath = `/api/v1${req.path || "/"}`;
     const queryString = new URLSearchParams(req.query as Record<string, string>).toString();
     const url = `${PYTHON_ENGINE_URL}${targetPath}${queryString ? "?" + queryString : ""}`;
 

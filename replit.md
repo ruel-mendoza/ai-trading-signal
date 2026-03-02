@@ -26,29 +26,29 @@ Key architectural decisions include:
   - **Global Error Handler**: Catch-all exception handler logs unhandled errors with full traceback and returns structured JSON error responses.
   - **Security Headers**: Express uses `helmet` middleware (HSTS, X-Content-Type-Options, X-Frame-Options, etc.) with CSP disabled for SPA compatibility.
   - **Health Endpoint**: `GET /health` returns scheduler status, database connectivity, 24h job success/failure counts, watchdog heartbeat, and API key status. Returns `"healthy"` or `"degraded"` with specific failed checks.
-  - **Public Health**: `GET /v1/health/public` returns only `status: "UP"/"DOWN"` and `version` — no internal metadata exposed. Safe for external monitoring.
+  - **Public Health**: `GET /api/v1/health/public` returns only `status: "UP"/"DOWN"` and `version` — no internal metadata exposed. Safe for external monitoring.
 
 ## Public API v1
-Read-only API for the DailyForex frontend (`trading_engine/api_v1.py`), mounted at `/v1` on the Python engine (proxied through Express at `/api/engine/v1`).
+Read-only API for the DailyForex frontend (`trading_engine/api_v1.py`), mounted at `/api/v1` on the Python engine (proxied through Express at `/api/v1`).
 
 - **Architecture**: Read-only, local DB only (no external API calls). `cache_response(ttl)` decorator with `CachePool` — 4-shard thread-safe `cachetools` TTLCache (60s default TTL, 256 max entries per shard). Human-readable cache keys (`signals_latest:asset=BTC/USD:strategy=mtf`). Every response includes `cache` field (`hit`/`miss`) and `response_time_ms` on misses. `POST /v1/cache/flush` to clear all shards. Health endpoint reports shard count, hit/miss/set counts, and hit rate.
 - **Endpoints**:
-  - `GET /v1/signals` — All signals with filters: `strategy`, `asset`, `status`, `category`, `limit`
-  - `GET /v1/signals/latest` — Active signals (hot path), filters: `asset`, `strategy`, `asset_class`
-  - `GET /v1/signals/history` — Paginated history, filters: `asset`, `strategy`, `status`, `asset_class`, `page`, `size`
-  - `GET /v1/signals/active` — Open signals only, filters: `strategy`, `asset`, `category`
-  - `GET /v1/signals/{id}` — Single signal by ID
-  - `GET /v1/strategies` — Strategy summary with open/closed counts
-  - `GET /v1/market/candles` — OHLC candle data, params: `asset`, `timeframe`, `limit`
-  - `GET /v1/market/indicators` — Technical indicators (SMA, EMA, RSI, ATR at multiple periods), params: `asset`, `timeframe`
-  - `GET /v1/positions` — Open positions with trailing stop data, filters: `strategy`, `asset`
-  - `GET /v1/metrics` — Signal performance metrics, filters: `strategy`, `asset`, `period` (all_time/7d/30d), `summary_only` (bool). Returns both per-asset and aggregate rows by default
-  - `GET /v1/metrics/summary` — Overall platform win rate, total signals, per-strategy summary
-  - `GET /v1/scheduler/status` — 24h success/failure counts and last job info
-  - `GET /v1/scheduler/jobs` — Recent job execution logs, param: `limit`
-  - `GET /v1/health` — API health + cache stats (size, hit rate, TTL)
-  - `GET /v1/health/public` — Liveness check, returns only `status: "UP"/"DOWN"` and `version`
-  - `POST /v1/cache/flush` — Clear all cache shards
+  - `GET /api/v1/signals` — All signals with filters: `strategy`, `asset`, `status`, `category`, `limit`
+  - `GET /api/v1/signals/latest` — Active signals (hot path), filters: `asset`, `strategy`, `asset_class`
+  - `GET /api/v1/signals/history` — Paginated history, filters: `asset`, `strategy`, `status`, `asset_class`, `page`, `size`
+  - `GET /api/v1/signals/active` — Open signals only, filters: `strategy`, `asset`, `category`
+  - `GET /api/v1/signals/{id}` — Single signal by ID
+  - `GET /api/v1/strategies` — Strategy summary with open/closed counts
+  - `GET /api/v1/market/candles` — OHLC candle data, params: `asset`, `timeframe`, `limit`
+  - `GET /api/v1/market/indicators` — Technical indicators (SMA, EMA, RSI, ATR at multiple periods), params: `asset`, `timeframe`
+  - `GET /api/v1/positions` — Open positions with trailing stop data, filters: `strategy`, `asset`
+  - `GET /api/v1/metrics` — Signal performance metrics, filters: `strategy`, `asset`, `period` (all_time/7d/30d), `summary_only` (bool). Returns both per-asset and aggregate rows by default
+  - `GET /api/v1/metrics/summary` — Overall platform win rate, total signals, per-strategy summary
+  - `GET /api/v1/scheduler/status` — 24h success/failure counts and last job info
+  - `GET /api/v1/scheduler/jobs` — Recent job execution logs, param: `limit`
+  - `GET /api/v1/health` — API health + cache stats (size, hit rate, TTL)
+  - `GET /api/v1/health/public` — Liveness check, returns only `status: "UP"/"DOWN"` and `version`
+  - `POST /api/v1/cache/flush` — Clear all cache shards
 - **Response format**: `/v1/signals/latest` returns `{count, data: [{asset, direction (LONG/SHORT), entry, stop_loss, strategy, published_at, meta: {atr_entry, highest_close, lowest_close}}]}`. Internal endpoints (`/signals/history`, `/signals/active`, `/signals`) use legacy format with `signals` array, `entry_price`, `BUY/SELL` direction, `opened_at`
 
 ## External Dependencies
