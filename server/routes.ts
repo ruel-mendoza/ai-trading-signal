@@ -32,13 +32,63 @@ export async function registerRoutes(
   app.get("/api/signals", async (req, res) => {
     try {
       const { category } = req.query;
-      let results;
+      let aiSignals;
       if (category && category !== "all") {
-        results = await storage.getSignalsByCategory(category as string);
+        aiSignals = await storage.getSignalsByCategory(category as string);
       } else {
-        results = await storage.getAllSignals();
+        aiSignals = await storage.getAllSignals();
       }
-      res.json(results);
+
+      let strategySignals: any[] = [];
+      try {
+        const engineRes = await fetch("http://localhost:5001/api/strategy-signals");
+        if (engineRes.ok) {
+          const data = await engineRes.json();
+          const raw = data.signals || [];
+
+          const categoryMap: Record<string, string> = {
+            "EUR/USD": "forex", "GBP/USD": "forex", "USD/JPY": "forex",
+            "USD/CAD": "forex", "AUD/USD": "forex", "NZD/USD": "forex",
+            "USD/CHF": "forex", "EUR/GBP": "forex",
+            "BTC/USD": "crypto", "ETH/USD": "crypto",
+            "XAU/USD": "commodities", "XAG/USD": "commodities", "OSX": "commodities",
+            "SPX": "indices", "NDX": "indices", "RUT": "indices",
+          };
+
+          strategySignals = raw
+            .filter((s: any) => {
+              if (!category || category === "all") return true;
+              return (categoryMap[s.asset] || "other") === category;
+            })
+            .map((s: any) => ({
+              id: `strategy-${s.id}`,
+              pair: s.asset,
+              category: categoryMap[s.asset] || "other",
+              direction: s.direction === "BUY" ? "Buy" : "Sell",
+              entryPrice: s.entry_price,
+              stopLoss: s.stop_loss,
+              takeProfit: s.take_profit,
+              confidence: 85,
+              analysis: `Strategy signal from ${s.strategy_name.replace(/_/g, " ")}. Entry at ${s.entry_price}, stop loss at ${s.stop_loss}${s.take_profit ? `, take profit at ${s.take_profit}` : " with trailing stop"}.`,
+              shortSummary: `${s.strategy_name.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())} — ${s.direction} ${s.asset}`,
+              status: s.status === "OPEN" ? "active" : "closed",
+              createdAt: s.created_at,
+              source: "strategy",
+              strategyName: s.strategy_name,
+            }));
+        }
+      } catch (e) {
+        console.error("[signals] Failed to fetch strategy signals:", e);
+      }
+
+      const combined = [...strategySignals, ...aiSignals];
+      combined.sort((a: any, b: any) => {
+        const da = new Date(a.createdAt).getTime();
+        const db = new Date(b.createdAt).getTime();
+        return db - da;
+      });
+
+      res.json(combined);
     } catch (error) {
       console.error("Error fetching signals:", error);
       res.status(500).json({ error: "Failed to fetch signals" });
