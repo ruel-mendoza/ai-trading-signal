@@ -147,6 +147,24 @@ class AdminUser(Base):
     cms_configs = relationship("UserCmsConfig", back_populates="owner_user", cascade="all, delete-orphan")
 
 
+class PartnerApiKey(Base):
+    __tablename__ = "partner_api_keys"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key_hash = Column(Text, nullable=False, unique=True)
+    label = Column(Text, nullable=False)
+    tier = Column(Text, nullable=False, server_default="standard")
+    rate_limit_per_minute = Column(Integer, nullable=False, server_default="120")
+    is_active = Column(Integer, nullable=False, server_default="1")
+    created_by = Column(Integer, ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True)
+    last_used_at = Column(Text, nullable=True)
+    created_at = Column(Text, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_partner_key_hash", "key_hash"),
+    )
+
+
 class AdminSession(Base):
     __tablename__ = "admin_sessions"
 

@@ -19,8 +19,9 @@ Key architectural decisions include:
 - **Production Hardening:**
   - **Webhook Notifications:** Configurable external alerting for critical events.
   - **Security Middleware (`security_middleware.py`):** Multi-layer leaky bucket rate limiting with: burst protection (20 req/2s → 5 min cooldown), standard limits (60/min, 1000/hr per IP), endpoint enumeration guard (5+ 404s in 60s → 24h IP block). Admin paths (`/admin/`) and health endpoints are exempt. Admin API provides `/admin/api/security/stats` and `/admin/api/security/unblock` for monitoring and manual IP management.
+  - **Partner API Key System:** SHA-256 hashed keys in `partner_api_keys` table with tiered rate limits (standard: 120/min, premium: 300/min, unlimited). Keys are validated via `X-API-KEY` header and bypass IP-based rate limiting. `REQUIRE_API_KEY=true` env flag rejects all `/api/v1/` requests without a valid key (auth/health endpoints exempt). Admin dashboard tab for key management (create/revoke/delete/activate).
   - **Rate Limiting:** SlowAPI middleware as a secondary layer enforcing 60/min default and 1000/hr application limits.
-  - **CORS:** Strict origin whitelist auto-configured.
+  - **CORS:** Locked down to `https://*.dailyforex.com`, Replit deployment URLs, and localhost (dev). Wildcard `*` is explicitly blocked. `X-API-KEY` header is whitelisted.
   - **Global Error Handler:** Centralized logging and structured JSON error responses.
   - **Security Headers:** Express uses `helmet` middleware.
   - **Health Endpoints:** Internal (`/health`) and public (`/api/v1/health/public`) endpoints for system status monitoring.

@@ -17,6 +17,7 @@ from trading_engine.database import (
     cleanup_expired_sessions, get_candles,
     get_all_open_positions, get_open_position,
     get_recent_job_logs, get_scheduler_health_summary,
+    create_partner_api_key, list_partner_api_keys, toggle_partner_api_key, delete_partner_api_key,
 )
 from trading_engine.indicators import IndicatorEngine
 
@@ -2597,6 +2598,7 @@ function showTab(tabName) {
     if (mobileEl) mobileEl.classList.add('active');
     if (tabName === 'settings') loadCreditMeter();
     if (tabName === 'notifications') loadNotifConfig();
+    if (tabName === 'apikeys') loadPartnerKeys();
     if (tabName === 'scheduler') loadSchedulerData();
     if (tabName === 'system') loadSystemStatus();
     if (tabName === 'users') loadRegistrationToggle();
@@ -2852,6 +2854,125 @@ async function toggleRegistration(enabled) {
         }
     } catch (e) {
         document.getElementById('registration-toggle').checked = !enabled;
+    }
+}
+
+async function loadPartnerKeys() {
+    try {
+        var res = await fetch(BASE + '/admin/api/partner-keys');
+        var data = await res.json();
+        document.getElementById('apikeys-loading').style.display = 'none';
+        document.getElementById('apikeys-content').style.display = 'block';
+
+        var banner = document.getElementById('require-apikey-banner');
+        if (data.require_api_key) {
+            banner.style.background = 'rgba(239,68,68,0.08)';
+            banner.style.border = '1px solid rgba(239,68,68,0.2)';
+            banner.innerHTML = '<span style="color:#ef4444;font-weight:600;">REQUIRE_API_KEY = ON</span><span style="color:#94a3b8;"> — All /api/v1/ requests without a valid X-API-KEY header are rejected (401).</span>';
+        } else {
+            banner.style.background = 'rgba(34,197,94,0.08)';
+            banner.style.border = '1px solid rgba(34,197,94,0.2)';
+            banner.innerHTML = '<span style="color:#22c55e;font-weight:600;">REQUIRE_API_KEY = OFF</span><span style="color:#94a3b8;"> — API is open; keys are optional but grant higher rate limits.</span>';
+        }
+
+        var keys = data.keys || [];
+        var tbody = document.getElementById('apikeys-rows');
+        if (keys.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#64748b;">No API keys created yet</td></tr>';
+        } else {
+            var rows = '';
+            keys.forEach(function(k) {
+                var tierColor = k.tier === 'premium' ? '#a855f7' : k.tier === 'unlimited' ? '#f59e0b' : '#3b82f6';
+                var statusBadge = k.is_active
+                    ? '<span class="badge status-open">Active</span>'
+                    : '<span class="badge status-closed">Revoked</span>';
+                var lastUsed = k.last_used_at ? k.last_used_at.replace('T', ' ').slice(0, 19) : 'Never';
+                var created = k.created_at ? k.created_at.replace('T', ' ').slice(0, 19) : '--';
+                var toggleBtn = k.is_active
+                    ? '<button class="btn" style="font-size:12px;padding:4px 10px;color:#f59e0b;" onclick="toggleKey(' + k.id + ',false)" data-testid="button-revoke-key-' + k.id + '">Revoke</button>'
+                    : '<button class="btn" style="font-size:12px;padding:4px 10px;color:#22c55e;" onclick="toggleKey(' + k.id + ',true)" data-testid="button-activate-key-' + k.id + '">Activate</button>';
+                var deleteBtn = '<button class="btn" style="font-size:12px;padding:4px 10px;color:#ef4444;" onclick="deleteKey(' + k.id + ')" data-testid="button-delete-key-' + k.id + '">Delete</button>';
+                rows += '<tr>';
+                rows += '<td style="color:#64748b;">' + k.id + '</td>';
+                rows += '<td style="font-weight:500;">' + k.label + '</td>';
+                rows += '<td><span style="color:' + tierColor + ';font-weight:600;text-transform:uppercase;font-size:12px;">' + k.tier + '</span></td>';
+                rows += '<td>' + k.rate_limit_per_minute + '/min</td>';
+                rows += '<td>' + statusBadge + '</td>';
+                rows += '<td style="font-size:13px;color:#94a3b8;">' + lastUsed + '</td>';
+                rows += '<td style="font-size:13px;color:#94a3b8;">' + created + '</td>';
+                rows += '<td style="display:flex;gap:6px;">' + toggleBtn + deleteBtn + '</td>';
+                rows += '</tr>';
+            });
+            tbody.innerHTML = rows;
+        }
+    } catch (e) {
+        document.getElementById('apikeys-loading').textContent = 'Failed to load API keys.';
+    }
+}
+
+function showCreateKeyModal() {
+    document.getElementById('create-key-modal').style.display = 'flex';
+    document.getElementById('key-label').value = '';
+    document.getElementById('key-tier').value = 'standard';
+    document.getElementById('key-rate-limit').value = '120';
+}
+
+function hideCreateKeyModal() {
+    document.getElementById('create-key-modal').style.display = 'none';
+}
+
+async function createPartnerKey() {
+    var label = document.getElementById('key-label').value.trim();
+    if (!label) { alert('Label is required'); return; }
+    var tier = document.getElementById('key-tier').value;
+    var rateLimit = parseInt(document.getElementById('key-rate-limit').value) || 120;
+    try {
+        var res = await fetch(BASE + '/admin/api/partner-keys', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({label: label, tier: tier, rate_limit_per_minute: rateLimit})
+        });
+        var data = await res.json();
+        if (data.error) { alert(data.error); return; }
+        hideCreateKeyModal();
+        document.getElementById('new-key-value').value = data.key;
+        document.getElementById('key-created-modal').style.display = 'flex';
+        loadPartnerKeys();
+    } catch (e) {
+        alert('Failed to create API key');
+    }
+}
+
+function hideKeyCreatedModal() {
+    document.getElementById('key-created-modal').style.display = 'none';
+}
+
+function copyNewKey() {
+    var input = document.getElementById('new-key-value');
+    input.select();
+    navigator.clipboard.writeText(input.value);
+}
+
+async function toggleKey(keyId, active) {
+    try {
+        await fetch(BASE + '/admin/api/partner-keys/' + keyId + '/toggle', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({active: active})
+        });
+        loadPartnerKeys();
+    } catch (e) {
+        alert('Failed to update key');
+    }
+}
+
+async function deleteKey(keyId) {
+    if (!confirm('Permanently delete this API key? This cannot be undone.')) return;
+    try {
+        await fetch(BASE + '/admin/api/partner-keys/' + keyId, {method: 'DELETE'});
+        loadPartnerKeys();
+    } catch (e) {
+        alert('Failed to delete key');
     }
 }
 
@@ -3461,6 +3582,7 @@ def admin_dashboard(
     svg_bell = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>'
     svg_calendar = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>'
     svg_shield = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>'
+    svg_key = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>'
     svg_book = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M8 7h6"/><path d="M8 11h8"/></svg>'
 
     analysis_link = _sidebar_link("analysis", "Signal Analysis", svg_analysis, tab, "sidebar-analysis") if is_admin else ""
@@ -3483,6 +3605,7 @@ def admin_dashboard(
         admin_system_links += _sidebar_link("settings", "Settings", svg_settings, tab, "sidebar-settings")
         admin_system_links += _sidebar_link("users", "User Settings", svg_users, tab, "sidebar-users")
         admin_system_links += _sidebar_link("notifications", "Notifications", svg_bell, tab, "sidebar-notifications")
+        admin_system_links += _sidebar_link("apikeys", "Partner API Keys", svg_key, tab, "sidebar-apikeys")
         admin_system_links += _sidebar_link("scheduler", "Scheduler Health", svg_calendar, tab, "sidebar-scheduler")
         admin_system_links += _sidebar_link("system", "System Status", svg_shield, tab, "sidebar-system")
 
@@ -3762,6 +3885,108 @@ def admin_dashboard(
                 </div>
             </div>
         </div>
+        <div id="tab-apikeys" class="tab-content {'hidden' if tab != 'apikeys' else ''}">
+            <div class="section">
+                <h2>Partner API Keys</h2>
+                <p style="color:#94a3b8;margin-bottom:20px;">Manage API keys for DailyForex frontend and partner integrations. Keys with valid <code style="background:#1e293b;padding:2px 6px;border-radius:4px;font-size:13px;">X-API-KEY</code> headers get higher rate limits and bypass standard IP-based throttling.</p>
+
+                <div id="apikeys-loading" style="text-align:center;padding:40px;color:#94a3b8;">Loading API keys...</div>
+                <div id="apikeys-content" style="display:none;">
+
+                <div id="require-apikey-banner" style="padding:12px 16px;border-radius:8px;margin-bottom:20px;font-size:14px;display:flex;align-items:center;gap:10px;" data-testid="status-require-apikey"></div>
+
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
+                    <div style="font-weight:600;color:#f1f5f9;font-size:15px;">Active Keys</div>
+                    <button class="btn btn-primary" onclick="showCreateKeyModal()" data-testid="button-create-key" style="font-size:13px;padding:8px 16px;">+ Create API Key</button>
+                </div>
+
+                <div style="overflow-x:auto;">
+                    <table class="data-table" data-testid="table-partner-keys">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Label</th>
+                                <th>Tier</th>
+                                <th>Rate Limit</th>
+                                <th>Status</th>
+                                <th>Last Used</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="apikeys-rows">
+                            <tr><td colspan="8" style="text-align:center;color:#64748b;">No API keys created yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="margin-top:24px;padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                    <div style="font-weight:600;color:#f1f5f9;margin-bottom:8px;">Rate Limit Tiers</div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;font-size:13px;color:#94a3b8;">
+                        <div><span style="color:#3b82f6;font-weight:600;">Standard:</span> 40 burst / 120/min / 5K/hr</div>
+                        <div><span style="color:#a855f7;font-weight:600;">Premium:</span> 100 burst / 300/min / 20K/hr</div>
+                        <div><span style="color:#f59e0b;font-weight:600;">Unlimited:</span> Virtually no limits</div>
+                    </div>
+                </div>
+
+                <div style="margin-top:16px;padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                    <div style="font-weight:600;color:#f1f5f9;margin-bottom:8px;">CORS Configuration</div>
+                    <div style="font-size:13px;color:#94a3b8;">
+                        Allowed origins: <code style="background:#1e293b;padding:2px 6px;border-radius:4px;">https://*.dailyforex.com</code>, Replit deployment URL, and localhost (dev only). Wildcard <code style="background:#1e293b;padding:2px 6px;border-radius:4px;">*</code> is explicitly blocked.
+                    </div>
+                </div>
+
+                <div style="margin-top:16px;padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                    <div style="font-weight:600;color:#f1f5f9;margin-bottom:8px;">Environment Flag</div>
+                    <div style="font-size:13px;color:#94a3b8;">
+                        Set <code style="background:#1e293b;padding:2px 6px;border-radius:4px;">REQUIRE_API_KEY=true</code> in environment to reject all <code>/api/v1/</code> requests without a valid <code>X-API-KEY</code> header. Auth and health endpoints remain open.
+                    </div>
+                </div>
+
+                </div>
+            </div>
+        </div>
+
+        <div id="create-key-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:9999;display:none;align-items:center;justify-content:center;" data-testid="modal-create-key">
+            <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:24px;max-width:440px;width:90%;">
+                <h3 style="margin:0 0 16px;color:#f1f5f9;">Create Partner API Key</h3>
+                <div style="margin-bottom:12px;">
+                    <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Label *</label>
+                    <input id="key-label" type="text" placeholder="e.g. DailyForex Production" style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;font-size:14px;" data-testid="input-key-label" />
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Tier</label>
+                    <select id="key-tier" style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;font-size:14px;" data-testid="select-key-tier">
+                        <option value="standard">Standard (120/min)</option>
+                        <option value="premium">Premium (300/min)</option>
+                        <option value="unlimited">Unlimited</option>
+                    </select>
+                </div>
+                <div style="margin-bottom:16px;">
+                    <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Custom Rate Limit (per minute)</label>
+                    <input id="key-rate-limit" type="number" value="120" min="1" max="100000" style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;font-size:14px;" data-testid="input-key-rate-limit" />
+                </div>
+                <div style="display:flex;gap:10px;justify-content:flex-end;">
+                    <button class="btn" onclick="hideCreateKeyModal()" data-testid="button-cancel-key">Cancel</button>
+                    <button class="btn btn-primary" onclick="createPartnerKey()" data-testid="button-submit-key">Create Key</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="key-created-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10000;align-items:center;justify-content:center;" data-testid="modal-key-created">
+            <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:24px;max-width:500px;width:90%;">
+                <h3 style="margin:0 0 8px;color:#22c55e;">API Key Created Successfully</h3>
+                <p style="color:#f59e0b;font-size:13px;margin-bottom:12px;">Copy this key now — it will not be shown again.</p>
+                <div style="position:relative;">
+                    <input id="new-key-value" type="text" readonly style="width:100%;padding:10px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#38bdf8;font-family:monospace;font-size:14px;" data-testid="text-new-key" />
+                    <button onclick="copyNewKey()" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);padding:4px 10px;background:#3b82f6;border:none;border-radius:4px;color:white;font-size:12px;cursor:pointer;" data-testid="button-copy-key">Copy</button>
+                </div>
+                <div style="text-align:right;margin-top:16px;">
+                    <button class="btn btn-primary" onclick="hideKeyCreatedModal()" data-testid="button-close-key-modal">Done</button>
+                </div>
+            </div>
+        </div>
+
         <div id="tab-scheduler" class="tab-content {'hidden' if tab != 'scheduler' else ''}">
             <div class="section">
                 <h2>Scheduler Health</h2>
@@ -4634,6 +4859,54 @@ def api_security_unblock(request: Request, body: dict = Body(...)):
     from trading_engine.security_middleware import unblock_ip
     result = unblock_ip(ip)
     return JSONResponse(content={"success": result, "ip": ip})
+
+
+@router.get("/api/partner-keys")
+def api_list_partner_keys(request: Request):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    keys = list_partner_api_keys()
+    from trading_engine.security_middleware import REQUIRE_API_KEY
+    return JSONResponse(content={"keys": keys, "require_api_key": REQUIRE_API_KEY})
+
+
+@router.post("/api/partner-keys")
+def api_create_partner_key(request: Request, body: dict = Body(...)):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    label = body.get("label", "").strip()
+    if not label:
+        return JSONResponse(content={"error": "Label is required"}, status_code=400)
+    tier = body.get("tier", "standard").strip()
+    if tier not in ("standard", "premium", "unlimited"):
+        return JSONResponse(content={"error": "Invalid tier"}, status_code=400)
+    rate_limit = int(body.get("rate_limit_per_minute", 120))
+    user = _get_session_user(request)
+    result = create_partner_api_key(label=label, tier=tier, rate_limit=rate_limit, created_by=user["user_id"] if user else None)
+    if not result:
+        return JSONResponse(content={"error": "Failed to create API key"}, status_code=500)
+    return JSONResponse(content=result)
+
+
+@router.post("/api/partner-keys/{key_id}/toggle")
+def api_toggle_partner_key(request: Request, key_id: int, body: dict = Body(...)):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    active = body.get("active", True)
+    ok = toggle_partner_api_key(key_id, active)
+    return JSONResponse(content={"success": ok})
+
+
+@router.delete("/api/partner-keys/{key_id}")
+def api_delete_partner_key(request: Request, key_id: int):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    ok = delete_partner_api_key(key_id)
+    return JSONResponse(content={"success": ok})
 
 
 @router.get("/api/scheduler/health")

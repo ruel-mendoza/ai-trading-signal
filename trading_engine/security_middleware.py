@@ -1,3 +1,4 @@
+import os
 import time
 import logging
 from collections import defaultdict
@@ -25,6 +26,10 @@ _ENUM_BLOCK_DURATION = 86400
 _EXEMPT_PATHS = frozenset({"/health", "/ws/signals"})
 _EXEMPT_PREFIXES = ("/admin/",)
 
+REQUIRE_API_KEY = os.environ.get("REQUIRE_API_KEY", "").lower() in ("true", "1", "yes")
+
+_API_KEY_PATHS = ("/api/v1/",)
+
 
 class _LeakyBucket:
     __slots__ = ("capacity", "leak_rate", "tokens", "last_leak")
@@ -46,22 +51,30 @@ class _LeakyBucket:
         return True
 
 
+_PARTNER_TIERS = {
+    "standard": {"burst": 40, "minute": 120, "hour": 5000},
+    "premium": {"burst": 100, "minute": 300, "hour": 20000},
+    "unlimited": {"burst": 10000, "minute": 100000, "hour": 1000000},
+}
+
+
 class _IPState:
     __slots__ = (
         "burst_bucket", "minute_bucket", "hour_bucket",
         "not_found_timestamps", "blocked_until", "cooldown_until",
     )
 
-    def __init__(self):
-        self.burst_bucket = _LeakyBucket(_BURST_LIMIT, _BURST_WINDOW)
-        self.minute_bucket = _LeakyBucket(_MINUTE_LIMIT, _MINUTE_WINDOW)
-        self.hour_bucket = _LeakyBucket(_HOUR_LIMIT, _HOUR_WINDOW)
+    def __init__(self, burst_limit=None, minute_limit=None, hour_limit=None):
+        self.burst_bucket = _LeakyBucket(burst_limit or _BURST_LIMIT, _BURST_WINDOW)
+        self.minute_bucket = _LeakyBucket(minute_limit or _MINUTE_LIMIT, _MINUTE_WINDOW)
+        self.hour_bucket = _LeakyBucket(hour_limit or _HOUR_LIMIT, _HOUR_WINDOW)
         self.not_found_timestamps: list[float] = []
         self.blocked_until: float = 0.0
         self.cooldown_until: float = 0.0
 
 
 _states: dict[str, _IPState] = defaultdict(_IPState)
+_apikey_states: dict[int, _IPState] = {}
 _lock = Lock()
 
 _CLEANUP_INTERVAL = 600
@@ -96,18 +109,60 @@ def _get_client_ip(request: Request) -> str:
     return "unknown"
 
 
+def _get_apikey_state(key_id: int, tier: str, rate_limit: int) -> _IPState:
+    if key_id not in _apikey_states:
+        tier_cfg = _PARTNER_TIERS.get(tier, _PARTNER_TIERS["standard"])
+        _apikey_states[key_id] = _IPState(
+            burst_limit=tier_cfg["burst"],
+            minute_limit=rate_limit if rate_limit else tier_cfg["minute"],
+            hour_limit=tier_cfg["hour"],
+        )
+    return _apikey_states[key_id]
+
+
 class SecurityMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
         if path in _EXEMPT_PATHS or any(path.startswith(p) for p in _EXEMPT_PREFIXES):
             return await call_next(request)
 
+        api_key_header = request.headers.get("x-api-key", "").strip()
+        is_api_path = any(path.startswith(p) for p in _API_KEY_PATHS)
+
+        if REQUIRE_API_KEY and is_api_path and not api_key_header:
+            if path in ("/api/v1/health/public", "/api/v1/auth/login", "/api/v1/auth/register"):
+                pass
+            else:
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": "API key required", "detail": "Provide a valid X-API-KEY header"},
+                )
+
+        partner_info = None
+        if api_key_header and is_api_path:
+            from trading_engine.database import validate_partner_api_key
+            partner_info = validate_partner_api_key(api_key_header)
+            if not partner_info:
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": "Invalid API key", "detail": "The provided X-API-KEY is not valid or has been revoked"},
+                )
+
         ip = _get_client_ip(request)
         now = time.monotonic()
 
         with _lock:
             _cleanup_states()
-            state = _states[ip]
+
+            if partner_info:
+                state = _get_apikey_state(
+                    partner_info["id"],
+                    partner_info["tier"],
+                    partner_info["rate_limit_per_minute"],
+                )
+                request.state.partner = partner_info
+            else:
+                state = _states[ip]
 
             if state.blocked_until > now:
                 remaining = int(state.blocked_until - now)
@@ -128,7 +183,8 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 
             if not state.burst_bucket.allow():
                 state.cooldown_until = now + _BURST_COOLDOWN
-                logger.warning(f"[SECURITY] Burst detected from {ip} — cooldown {_BURST_COOLDOWN}s")
+                id_label = f"key={partner_info['label']}" if partner_info else f"ip={ip}"
+                logger.warning(f"[SECURITY] Burst detected from {id_label} — cooldown {_BURST_COOLDOWN}s")
                 return JSONResponse(
                     status_code=429,
                     content={"error": "Too Many Requests", "reason": "Burst rate limit exceeded", "retry_after": _BURST_COOLDOWN},
@@ -136,7 +192,8 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 )
 
             if not state.minute_bucket.allow():
-                logger.info(f"[SECURITY] Minute limit hit for {ip}")
+                id_label = f"key={partner_info['label']}" if partner_info else f"ip={ip}"
+                logger.info(f"[SECURITY] Minute limit hit for {id_label}")
                 return JSONResponse(
                     status_code=429,
                     content={"error": "Too Many Requests", "reason": "Rate limit exceeded (per-minute)"},
@@ -144,7 +201,8 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 )
 
             if not state.hour_bucket.allow():
-                logger.info(f"[SECURITY] Hour limit hit for {ip}")
+                id_label = f"key={partner_info['label']}" if partner_info else f"ip={ip}"
+                logger.info(f"[SECURITY] Hour limit hit for {id_label}")
                 return JSONResponse(
                     status_code=429,
                     content={"error": "Too Many Requests", "reason": "Rate limit exceeded (per-hour)"},
@@ -153,7 +211,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
 
-        if response.status_code == 404:
+        if response.status_code == 404 and not partner_info:
             with _lock:
                 state = _states[ip]
                 cutoff = time.monotonic() - _ENUM_WINDOW
@@ -184,11 +242,14 @@ def get_security_stats() -> dict:
             ip for ip, s in _states.items()
             if s.cooldown_until > now and s.blocked_until <= now
         ]
+        active_api_keys = len(_apikey_states)
     return {
         "tracked_ips": total_tracked,
         "blocked_ips": len(blocked_ips),
         "blocked_ip_list": blocked_ips[:20],
         "cooled_down_ips": len(cooled_ips),
+        "active_api_key_sessions": active_api_keys,
+        "require_api_key": REQUIRE_API_KEY,
         "limits": {
             "burst": f"{_BURST_LIMIT} requests / {_BURST_WINDOW}s (cooldown: {_BURST_COOLDOWN}s)",
             "per_minute": f"{_MINUTE_LIMIT} requests / minute",

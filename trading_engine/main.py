@@ -638,20 +638,34 @@ _allowed_origins = [
 if not _allowed_origins:
     _replit_slug = _os.environ.get("REPL_SLUG", "")
     _replit_owner = _os.environ.get("REPL_OWNER", "")
+    _replit_id = _os.environ.get("REPL_ID", "")
     _allowed_origins = [
-        f"https://{_replit_slug}.{_replit_owner}.repl.co",
-        f"https://{_replit_slug}-00-{_replit_owner}.replit.dev" if _replit_slug else "",
-        "http://localhost:5000",
-        "http://127.0.0.1:5000",
+        "https://dailyforex.com",
+        "https://www.dailyforex.com",
     ]
+    if _replit_slug and _replit_owner:
+        _allowed_origins.append(f"https://{_replit_slug}.{_replit_owner}.repl.co")
+    if _replit_id:
+        _allowed_origins.append(f"https://{_replit_id}.id.repl.co")
+    if _replit_slug:
+        _allowed_origins.append(f"https://{_replit_slug}-00-{_replit_owner}.replit.dev" if _replit_owner else "")
+    _allowed_origins.append("http://localhost:5000")
+    _allowed_origins.append("http://localhost:5001")
+    _allowed_origins.append("http://127.0.0.1:5000")
+    _allowed_origins.append("http://127.0.0.1:5001")
     _allowed_origins = [o for o in _allowed_origins if o]
+
+if "*" in _allowed_origins:
+    _allowed_origins.remove("*")
+    logger.warning("[CORS] Wildcard (*) origin removed — explicit origins required")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
+    allow_origin_regex=r"^https://([a-zA-Z0-9-]+\.)*dailyforex\.com$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "Cookie"],
+    allow_headers=["Content-Type", "Authorization", "Cookie", "X-API-KEY"],
     expose_headers=["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
 )
 

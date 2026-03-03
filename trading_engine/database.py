@@ -51,6 +51,7 @@ from trading_engine.models import (
     AppSetting,
     AdminUser,
     AdminSession,
+    PartnerApiKey,
     SchedulerJobLog,
     SignalMetrics,
     SignalCmsPost,
@@ -895,6 +896,95 @@ def get_admin_by_id(admin_id: int) -> Optional[dict]:
         if user:
             return {"id": user.id, "username": user.username, "role": user.role or "CUSTOMER", "created_at": user.created_at}
         return None
+
+
+def _hash_api_key(raw_key: str) -> str:
+    return hashlib.sha256(raw_key.encode()).hexdigest()
+
+
+def create_partner_api_key(label: str, tier: str = "standard", rate_limit: int = 120, created_by: int = None) -> dict:
+    raw_key = "dfx_" + secrets.token_hex(24)
+    key_hash = _hash_api_key(raw_key)
+    with _get_session() as session:
+        try:
+            rec = PartnerApiKey(
+                key_hash=key_hash,
+                label=label,
+                tier=tier,
+                rate_limit_per_minute=rate_limit,
+                is_active=1,
+                created_by=created_by,
+            )
+            session.add(rec)
+            session.commit()
+            logger.info(f"[DB] Created partner API key id={rec.id} label={label} tier={tier}")
+            return {"id": rec.id, "key": raw_key, "label": label, "tier": tier, "rate_limit_per_minute": rate_limit}
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] Create partner API key failed: {e}")
+            return {}
+
+
+def validate_partner_api_key(raw_key: str) -> Optional[dict]:
+    key_hash = _hash_api_key(raw_key)
+    with _get_session() as session:
+        rec = session.query(PartnerApiKey).filter_by(key_hash=key_hash, is_active=1).first()
+        if rec:
+            rec.last_used_at = datetime.utcnow().isoformat()
+            session.commit()
+            return {
+                "id": rec.id,
+                "label": rec.label,
+                "tier": rec.tier,
+                "rate_limit_per_minute": rec.rate_limit_per_minute,
+            }
+        return None
+
+
+def list_partner_api_keys() -> list:
+    with _get_session() as session:
+        rows = session.query(PartnerApiKey).order_by(PartnerApiKey.id.desc()).all()
+        return [
+            {
+                "id": r.id,
+                "label": r.label,
+                "tier": r.tier,
+                "rate_limit_per_minute": r.rate_limit_per_minute,
+                "is_active": bool(r.is_active),
+                "last_used_at": r.last_used_at,
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ]
+
+
+def toggle_partner_api_key(key_id: int, active: bool) -> bool:
+    with _get_session() as session:
+        try:
+            rec = session.query(PartnerApiKey).filter_by(id=key_id).first()
+            if not rec:
+                return False
+            rec.is_active = 1 if active else 0
+            session.commit()
+            logger.info(f"[DB] Partner API key id={key_id} active={active}")
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] Toggle partner API key failed: {e}")
+            return False
+
+
+def delete_partner_api_key(key_id: int) -> bool:
+    with _get_session() as session:
+        try:
+            deleted = session.query(PartnerApiKey).filter_by(id=key_id).delete()
+            session.commit()
+            logger.info(f"[DB] Deleted partner API key id={key_id}")
+            return deleted > 0
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] Delete partner API key failed: {e}")
+            return False
 
 
 def create_job_log(job_id: str, strategy_name: str) -> int:
