@@ -4504,16 +4504,16 @@ def api_retry_publish(request: Request, signal_id: int):
     guard = _admin_role_guard(request)
     if guard:
         return guard
-    from trading_engine.services.cms_publisher import get_publisher
-    publisher = get_publisher()
-    if not publisher.is_configured:
+    from trading_engine.services.cms_publisher import publish_signal_to_all
+    results = publish_signal_to_all(signal_id)
+    if not results:
         return JSONResponse(
-            content={"status": "error", "message": "WordPress credentials not configured (WP_URL, WP_USERNAME, WP_APP_PASSWORD)"},
+            content={"status": "error", "message": "No active WordPress configurations found. Add credentials in the WordPress tab."},
             status_code=503,
         )
-    result = publisher.publish_signal(signal_id)
-    status_code = 200 if result["status"] in ("ok", "skipped") else 500
-    return JSONResponse(content=result, status_code=status_code)
+    any_ok = any(r["status"] in ("ok", "skipped") for r in results)
+    status_code = 200 if any_ok else 500
+    return JSONResponse(content={"status": "ok" if any_ok else "error", "results": results}, status_code=status_code)
 
 
 @router.post("/api/signals/{signal_id}/update-wp")
@@ -4521,16 +4521,16 @@ def api_update_wp_post(request: Request, signal_id: int):
     guard = _admin_role_guard(request)
     if guard:
         return guard
-    from trading_engine.services.cms_publisher import get_publisher
-    publisher = get_publisher()
-    if not publisher.is_configured:
+    from trading_engine.services.cms_publisher import update_closed_signal_on_all
+    results = update_closed_signal_on_all(signal_id)
+    if not results:
         return JSONResponse(
-            content={"status": "error", "message": "WordPress credentials not configured"},
+            content={"status": "error", "message": "No active WordPress configurations found. Add credentials in the WordPress tab."},
             status_code=503,
         )
-    result = publisher.update_closed_signal(signal_id)
-    status_code = 200 if result["status"] == "ok" else 500
-    return JSONResponse(content=result, status_code=status_code)
+    any_ok = any(r["status"] == "ok" for r in results)
+    status_code = 200 if any_ok else 500
+    return JSONResponse(content={"status": "ok" if any_ok else "error", "results": results}, status_code=status_code)
 
 
 @router.get("/api/user-cms-configs")

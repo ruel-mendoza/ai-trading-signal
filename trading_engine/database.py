@@ -53,6 +53,7 @@ from trading_engine.models import (
     AdminSession,
     SchedulerJobLog,
     SignalMetrics,
+    SignalCmsPost,
     UserCmsConfig,
     VALID_TIMEFRAMES,
 )
@@ -1302,6 +1303,30 @@ def get_user_cms_config_decrypted(config_id: int, user_id: Optional[int] = None)
         }
 
 
+def get_active_cms_configs_decrypted() -> list[dict]:
+    from trading_engine.services.encryption import decrypt
+    with _get_session() as session:
+        rows = (
+            session.query(UserCmsConfig)
+            .filter_by(is_active=1)
+            .order_by(UserCmsConfig.id)
+            .all()
+        )
+        results = []
+        for row in rows:
+            try:
+                results.append({
+                    "id": row.id,
+                    "user_id": row.user_id,
+                    "site_url": row.site_url,
+                    "wp_username": row.wp_username,
+                    "app_password": decrypt(row.encrypted_app_password),
+                })
+            except Exception as e:
+                logger.error(f"[DB] Failed to decrypt CMS config #{row.id}: {e}")
+        return results
+
+
 def _user_cms_to_dict(row: UserCmsConfig) -> dict:
     return {
         "id": row.id,
@@ -1312,3 +1337,53 @@ def _user_cms_to_dict(row: UserCmsConfig) -> dict:
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }
+
+
+def get_signal_cms_post(signal_id: int, cms_config_id: Optional[int]) -> Optional[dict]:
+    with _get_session() as session:
+        q = session.query(SignalCmsPost).filter_by(signal_id=signal_id, cms_config_id=cms_config_id)
+        row = q.first()
+        if not row:
+            return None
+        return {
+            "id": row.id,
+            "signal_id": row.signal_id,
+            "cms_config_id": row.cms_config_id,
+            "wp_post_id": row.wp_post_id,
+            "publish_status": row.publish_status,
+            "last_sync": row.last_sync,
+        }
+
+
+def upsert_signal_cms_post(signal_id: int, cms_config_id: Optional[int], fields: dict):
+    with _get_session() as session:
+        try:
+            row = session.query(SignalCmsPost).filter_by(
+                signal_id=signal_id, cms_config_id=cms_config_id
+            ).first()
+            if not row:
+                row = SignalCmsPost(signal_id=signal_id, cms_config_id=cms_config_id)
+                session.add(row)
+            if "wp_post_id" in fields:
+                row.wp_post_id = fields["wp_post_id"]
+            if "publish_status" in fields:
+                row.publish_status = fields["publish_status"]
+            if "last_sync" in fields:
+                row.last_sync = fields["last_sync"]
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] upsert_signal_cms_post failed signal={signal_id} config={cms_config_id}: {e}")
+
+
+def get_signal_cms_posts_for_signal(signal_id: int) -> list[dict]:
+    with _get_session() as session:
+        rows = session.query(SignalCmsPost).filter_by(signal_id=signal_id).all()
+        return [{
+            "id": r.id,
+            "signal_id": r.signal_id,
+            "cms_config_id": r.cms_config_id,
+            "wp_post_id": r.wp_post_id,
+            "publish_status": r.publish_status,
+            "last_sync": r.last_sync,
+        } for r in rows]

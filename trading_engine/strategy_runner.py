@@ -26,24 +26,20 @@ _cms_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cms_publish")
 
 def _cms_publish_signal(signal_id: int):
     try:
-        from trading_engine.services.cms_publisher import get_publisher
-        publisher = get_publisher()
-        if not publisher.is_configured:
-            return
-        result = publisher.publish_signal(signal_id)
-        logger.info(f"[CMS_HOOK] publish_signal({signal_id}) → {result.get('status')}")
+        from trading_engine.services.cms_publisher import publish_signal_to_all
+        results = publish_signal_to_all(signal_id)
+        if results:
+            logger.info(f"[CMS_HOOK] publish_signal({signal_id}) → {len(results)} config(s) processed")
     except Exception as e:
         logger.error(f"[CMS_HOOK] publish_signal({signal_id}) failed: {e}")
 
 
 def _cms_update_closed(signal_id: int):
     try:
-        from trading_engine.services.cms_publisher import get_publisher
-        publisher = get_publisher()
-        if not publisher.is_configured:
-            return
-        result = publisher.update_closed_signal(signal_id)
-        logger.info(f"[CMS_HOOK] update_closed_signal({signal_id}) → {result.get('status')}")
+        from trading_engine.services.cms_publisher import update_closed_signal_on_all
+        results = update_closed_signal_on_all(signal_id)
+        if results:
+            logger.info(f"[CMS_HOOK] update_closed_signal({signal_id}) → {len(results)} config(s) processed")
     except Exception as e:
         logger.error(f"[CMS_HOOK] update_closed_signal({signal_id}) failed: {e}")
 

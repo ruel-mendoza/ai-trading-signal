@@ -212,6 +212,24 @@ class SignalMetrics(Base):
     )
 
 
+class SignalCmsPost(Base):
+    __tablename__ = "signal_cms_posts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    signal_id = Column(Integer, ForeignKey("signals.id", ondelete="CASCADE"), nullable=False)
+    cms_config_id = Column(Integer, ForeignKey("user_cms_configs.id", ondelete="CASCADE"), nullable=True)
+    wp_post_id = Column(Integer, nullable=True)
+    publish_status = Column(Text, nullable=False, server_default="PENDING")
+    last_sync = Column(Text, nullable=True)
+    created_at = Column(Text, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("signal_id", "cms_config_id", name="uq_signal_cms_post"),
+        Index("idx_scp_signal_id", "signal_id"),
+        Index("idx_scp_config_id", "cms_config_id"),
+    )
+
+
 class UserCmsConfig(Base):
     __tablename__ = "user_cms_configs"
 

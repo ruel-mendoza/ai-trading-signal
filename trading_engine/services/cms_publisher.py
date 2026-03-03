@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -32,10 +31,11 @@ def _is_retryable(exc: BaseException) -> bool:
 
 
 class CmsPublisher:
-    def __init__(self):
-        self.wp_url = (os.environ.get("WP_URL") or "").rstrip("/")
-        self.wp_username = os.environ.get("WP_USERNAME") or ""
-        self.wp_password = os.environ.get("WP_APP_PASSWORD") or ""
+    def __init__(self, wp_url: str = "", wp_username: str = "", wp_password: str = "", config_id: Optional[int] = None):
+        self.wp_url = wp_url.rstrip("/")
+        self.wp_username = wp_username
+        self.wp_password = wp_password
+        self.config_id = config_id
         self._session = requests.Session()
         self._session.headers.update({
             "Content-Type": "application/json",
@@ -64,7 +64,7 @@ class CmsPublisher:
         return resp.json()
 
     def publish_signal(self, signal_id: int) -> dict:
-        from trading_engine.database import get_signal_by_id, update_signal_wp_fields
+        from trading_engine.database import get_signal_by_id, get_signal_cms_post, upsert_signal_cms_post
 
         if not self.is_configured:
             logger.error("[CMS] WordPress credentials not configured")
@@ -74,12 +74,13 @@ class CmsPublisher:
         if not signal:
             return {"status": "error", "message": f"Signal #{signal_id} not found"}
 
-        if signal.get("wp_post_id"):
-            logger.info(f"[CMS] Signal #{signal_id} already published (wp_post_id={signal['wp_post_id']})")
+        existing = get_signal_cms_post(signal_id, self.config_id)
+        if existing and existing.get("wp_post_id"):
+            logger.info(f"[CMS] Signal #{signal_id} already published to config={self.config_id} (wp_post_id={existing['wp_post_id']})")
             return {
                 "status": "skipped",
-                "message": "Already published",
-                "wp_post_id": signal["wp_post_id"],
+                "message": "Already published to this site",
+                "wp_post_id": existing["wp_post_id"],
             }
 
         html = self._format_signal_html(signal)
@@ -95,12 +96,13 @@ class CmsPublisher:
             result = self._wp_post(self._api_url("posts"), payload)
             wp_post_id = result.get("id")
             now_iso = datetime.now(timezone.utc).isoformat()
-            update_signal_wp_fields(signal_id, {
+            upsert_signal_cms_post(signal_id, self.config_id, {
                 "wp_post_id": wp_post_id,
                 "publish_status": "PUBLISHED",
-                "wp_last_sync": now_iso,
+                "last_sync": now_iso,
             })
-            logger.info(f"[CMS] Published signal #{signal_id} → WP post #{wp_post_id}")
+            self._backfill_signal_wp_fields(signal_id, wp_post_id, now_iso)
+            logger.info(f"[CMS] Published signal #{signal_id} → WP post #{wp_post_id} (config={self.config_id})")
             return {
                 "status": "ok",
                 "message": "Published successfully",
@@ -108,12 +110,13 @@ class CmsPublisher:
             }
         except Exception as e:
             now_iso = datetime.now(timezone.utc).isoformat()
-            update_signal_wp_fields(signal_id, {
+            upsert_signal_cms_post(signal_id, self.config_id, {
                 "publish_status": "FAILED",
-                "wp_last_sync": now_iso,
+                "last_sync": now_iso,
             })
             error_detail = {
                 "signal_id": signal_id,
+                "config_id": self.config_id,
                 "error_type": type(e).__name__,
                 "error_message": str(e),
                 "timestamp": now_iso,
@@ -123,7 +126,7 @@ class CmsPublisher:
             return {"status": "error", "message": str(e), "detail": error_detail}
 
     def update_closed_signal(self, signal_id: int) -> dict:
-        from trading_engine.database import get_signal_by_id, update_signal_wp_fields
+        from trading_engine.database import get_signal_by_id, get_signal_cms_post, upsert_signal_cms_post
 
         if not self.is_configured:
             return {"status": "error", "message": "WordPress credentials not configured"}
@@ -132,13 +135,14 @@ class CmsPublisher:
         if not signal:
             return {"status": "error", "message": f"Signal #{signal_id} not found"}
 
-        wp_post_id = signal.get("wp_post_id")
-        if not wp_post_id:
-            return {"status": "error", "message": f"Signal #{signal_id} has no WP post to update"}
-
         if signal.get("status") != "CLOSED":
             return {"status": "error", "message": f"Signal #{signal_id} is not CLOSED"}
 
+        existing = get_signal_cms_post(signal_id, self.config_id)
+        if not existing or not existing.get("wp_post_id"):
+            return {"status": "error", "message": f"Signal #{signal_id} has no WP post for config={self.config_id}"}
+
+        wp_post_id = existing["wp_post_id"]
         closing_html = self._format_closing_html(signal)
         original_html = self._fetch_existing_content(wp_post_id)
         updated_html = original_html + closing_html
@@ -148,19 +152,31 @@ class CmsPublisher:
         try:
             self._wp_post(self._api_url(f"posts/{wp_post_id}"), payload)
             now_iso = datetime.now(timezone.utc).isoformat()
-            update_signal_wp_fields(signal_id, {"wp_last_sync": now_iso})
-            logger.info(f"[CMS] Updated WP post #{wp_post_id} with close data for signal #{signal_id}")
+            upsert_signal_cms_post(signal_id, self.config_id, {"last_sync": now_iso})
+            logger.info(f"[CMS] Updated WP post #{wp_post_id} with close data for signal #{signal_id} (config={self.config_id})")
             return {"status": "ok", "message": "Post updated with closing data"}
         except Exception as e:
             error_detail = {
                 "signal_id": signal_id,
                 "wp_post_id": wp_post_id,
+                "config_id": self.config_id,
                 "error_type": type(e).__name__,
                 "error_message": str(e),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
             logger.error(f"[CMS] Update closed signal failed: {json.dumps(error_detail)}")
             return {"status": "error", "message": str(e), "detail": error_detail}
+
+    def _backfill_signal_wp_fields(self, signal_id: int, wp_post_id: int, now_iso: str):
+        from trading_engine.database import update_signal_wp_fields
+        try:
+            update_signal_wp_fields(signal_id, {
+                "wp_post_id": wp_post_id,
+                "publish_status": "PUBLISHED",
+                "wp_last_sync": now_iso,
+            })
+        except Exception:
+            pass
 
     def _fetch_existing_content(self, wp_post_id: int) -> str:
         try:
@@ -232,16 +248,113 @@ class CmsPublisher:
 </div>"""
 
 
-_publisher: Optional[CmsPublisher] = None
+def _get_publishers() -> list[CmsPublisher]:
+    from trading_engine.database import get_active_cms_configs_decrypted
+    publishers = []
+
+    configs = get_active_cms_configs_decrypted()
+    for cfg in configs:
+        pub = CmsPublisher(
+            wp_url=cfg["site_url"],
+            wp_username=cfg["wp_username"],
+            wp_password=cfg["app_password"],
+            config_id=cfg["id"],
+        )
+        publishers.append(pub)
+
+    if not publishers:
+        env_url = (os.environ.get("WP_URL") or "").rstrip("/")
+        env_user = os.environ.get("WP_USERNAME") or ""
+        env_pass = os.environ.get("WP_APP_PASSWORD") or ""
+        if env_url and env_user and env_pass:
+            publishers.append(CmsPublisher(
+                wp_url=env_url,
+                wp_username=env_user,
+                wp_password=env_pass,
+                config_id=None,
+            ))
+
+    return publishers
 
 
-def get_publisher() -> CmsPublisher:
-    global _publisher
-    if _publisher is None:
-        _publisher = CmsPublisher()
-    return _publisher
+def publish_signal_to_all(signal_id: int) -> list[dict]:
+    publishers = _get_publishers()
+    if not publishers:
+        logger.info(f"[CMS] No WordPress configs active — skipping publish for signal #{signal_id}")
+        return []
+
+    results = []
+    for pub in publishers:
+        result = pub.publish_signal(signal_id)
+        result["config_id"] = pub.config_id
+        results.append(result)
+        logger.info(f"[CMS] publish_signal({signal_id}) config={pub.config_id} → {result.get('status')}")
+    return results
+
+
+def update_closed_signal_on_all(signal_id: int) -> list[dict]:
+    from trading_engine.database import get_signal_cms_posts_for_signal
+    posts = get_signal_cms_posts_for_signal(signal_id)
+
+    if not posts:
+        logger.info(f"[CMS] No CMS posts found for signal #{signal_id} — skipping update")
+        return []
+
+    results = []
+    for post in posts:
+        if not post.get("wp_post_id"):
+            continue
+        config_id = post["cms_config_id"]
+        publishers = _get_publishers()
+        pub = None
+        for p in publishers:
+            if p.config_id == config_id:
+                pub = p
+                break
+
+        if not pub:
+            if config_id is not None:
+                from trading_engine.database import get_user_cms_config_decrypted
+                cfg = get_user_cms_config_decrypted(config_id)
+                if cfg:
+                    pub = CmsPublisher(
+                        wp_url=cfg["site_url"],
+                        wp_username=cfg["wp_username"],
+                        wp_password=cfg["app_password"],
+                        config_id=cfg["id"],
+                    )
+            else:
+                env_url = (os.environ.get("WP_URL") or "").rstrip("/")
+                env_user = os.environ.get("WP_USERNAME") or ""
+                env_pass = os.environ.get("WP_APP_PASSWORD") or ""
+                if env_url and env_user and env_pass:
+                    pub = CmsPublisher(wp_url=env_url, wp_username=env_user, wp_password=env_pass, config_id=None)
+
+        if pub:
+            result = pub.update_closed_signal(signal_id)
+            result["config_id"] = pub.config_id
+            results.append(result)
+            logger.info(f"[CMS] update_closed_signal({signal_id}) config={pub.config_id} → {result.get('status')}")
+    return results
+
+
+def get_publisher(config_id: Optional[int] = None) -> CmsPublisher:
+    if config_id is not None:
+        from trading_engine.database import get_user_cms_config_decrypted
+        cfg = get_user_cms_config_decrypted(config_id)
+        if cfg:
+            return CmsPublisher(
+                wp_url=cfg["site_url"],
+                wp_username=cfg["wp_username"],
+                wp_password=cfg["app_password"],
+                config_id=cfg["id"],
+            )
+
+    env_url = (os.environ.get("WP_URL") or "").rstrip("/")
+    env_user = os.environ.get("WP_USERNAME") or ""
+    env_pass = os.environ.get("WP_APP_PASSWORD") or ""
+    return CmsPublisher(wp_url=env_url, wp_username=env_user, wp_password=env_pass)
 
 
 def reset_publisher():
-    global _publisher
-    _publisher = None
+    pass
