@@ -17,6 +17,14 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.pool import QueuePool
 
+def _invalidate_signal_cache():
+    try:
+        from trading_engine.api_v1 import invalidate_signal_caches
+        invalidate_signal_caches()
+    except Exception:
+        pass
+
+
 from trading_engine.models import (
     Base,
     Candle,
@@ -314,6 +322,7 @@ def insert_signal(signal: dict) -> Optional[int]:
             session.add(obj)
             session.commit()
             logger.info(f"[DB] Inserted signal #{obj.id}: {signal['strategy_name']} {signal['direction']} {signal['asset']}")
+            _invalidate_signal_cache()
             return obj.id
         except Exception as e:
             session.rollback()
@@ -344,6 +353,7 @@ def close_signal(signal_id: int, exit_reason: str = "", exit_price: Optional[flo
                     sig.exit_price = exit_price
                 session.commit()
                 logger.info(f"[DB] Closed signal #{signal_id}: {exit_reason} | exit_price={exit_price}")
+                _invalidate_signal_cache()
         except Exception as e:
             session.rollback()
             logger.error(f"[DB] Close signal failed: {e}")

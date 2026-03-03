@@ -271,6 +271,19 @@ class CachePool:
                     with self._pool_locks[ttl_val][i]:
                         self._pools[ttl_val][i].clear()
 
+    def flush_prefix(self, prefix: str):
+        count = 0
+        with self._global_lock:
+            pool_keys = list(self._pools.keys())
+        for ttl_val in pool_keys:
+            for i in range(self._pool_size):
+                with self._pool_locks[ttl_val][i]:
+                    to_delete = [k for k in self._pools[ttl_val][i] if k.startswith(prefix)]
+                    for k in to_delete:
+                        del self._pools[ttl_val][i][k]
+                        count += 1
+        return count
+
     def get_stats(self) -> dict:
         total_size = 0
         ttl_pools = []
@@ -300,6 +313,30 @@ class CachePool:
 
 
 cache_pool = CachePool()
+
+
+SIGNAL_CACHE_PREFIXES = [
+    "signals_latest",
+    "signals_history",
+    "signals_active",
+    "signals_all",
+    "signal_detail",
+    "public_signals",
+    "public_signals_active",
+    "public_signal_detail",
+    "public_assets",
+    "strategies",
+    "positions",
+]
+
+
+def invalidate_signal_caches():
+    total = 0
+    for prefix in SIGNAL_CACHE_PREFIXES:
+        total += cache_pool.flush_prefix(prefix)
+    if total > 0:
+        logger.info(f"[CACHE] Invalidated {total} signal cache entries")
+    return total
 
 
 def _build_cache_key(prefix: str, params: dict) -> str:

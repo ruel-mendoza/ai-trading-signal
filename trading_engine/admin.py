@@ -3637,7 +3637,7 @@ def admin_dashboard(
                             <div style="font-weight:600;color:#f1f5f9;font-size:14px;">Rate Limiting</div>
                             <span class="badge status-open" data-testid="status-rate-limiting">Active</span>
                         </div>
-                        <div style="color:#94a3b8;font-size:13px;">slowapi middleware enforcing <strong style="color:#f1f5f9;">120 requests/minute</strong> per IP on all FastAPI endpoints.</div>
+                        <div style="color:#94a3b8;font-size:13px;">slowapi middleware enforcing <strong style="color:#f1f5f9;">60 requests/minute</strong> per IP on all FastAPI endpoints.</div>
                     </div>
 
                     <div class="sys-card" style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
