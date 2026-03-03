@@ -4316,3 +4316,37 @@ def api_test_webhook(request: Request):
         fields={"Test": "Successful"},
     )
     return JSONResponse(content={"status": "ok", "message": "Test notification sent"})
+
+
+@router.post("/api/signals/{signal_id}/retry-publish")
+def api_retry_publish(request: Request, signal_id: int):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from trading_engine.services.cms_publisher import get_publisher
+    publisher = get_publisher()
+    if not publisher.is_configured:
+        return JSONResponse(
+            content={"status": "error", "message": "WordPress credentials not configured (WP_URL, WP_USERNAME, WP_APP_PASSWORD)"},
+            status_code=503,
+        )
+    result = publisher.publish_signal(signal_id)
+    status_code = 200 if result["status"] in ("ok", "skipped") else 500
+    return JSONResponse(content=result, status_code=status_code)
+
+
+@router.post("/api/signals/{signal_id}/update-wp")
+def api_update_wp_post(request: Request, signal_id: int):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from trading_engine.services.cms_publisher import get_publisher
+    publisher = get_publisher()
+    if not publisher.is_configured:
+        return JSONResponse(
+            content={"status": "error", "message": "WordPress credentials not configured"},
+            status_code=503,
+        )
+    result = publisher.update_closed_signal(signal_id)
+    status_code = 200 if result["status"] == "ok" else 500
+    return JSONResponse(content=result, status_code=status_code)

@@ -381,6 +381,31 @@ def close_signal(signal_id: int, exit_reason: str = "", exit_price: Optional[flo
             raise
 
 
+def get_signal_by_id(signal_id: int) -> Optional[dict]:
+    with _get_session() as session:
+        sig = session.query(Signal).filter_by(id=signal_id).first()
+        if sig:
+            return _signal_to_dict(sig)
+        return None
+
+
+def update_signal_wp_fields(signal_id: int, fields: dict):
+    with _get_session() as session:
+        try:
+            sig = session.query(Signal).filter_by(id=signal_id).first()
+            if not sig:
+                logger.warning(f"[DB] update_signal_wp_fields: Signal #{signal_id} not found")
+                return
+            for key in ("wp_post_id", "publish_status", "wp_last_sync"):
+                if key in fields:
+                    setattr(sig, key, fields[key])
+            session.commit()
+            logger.info(f"[DB] Updated WP fields for signal #{signal_id}: {fields}")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] update_signal_wp_fields failed for #{signal_id}: {e}")
+
+
 def get_all_signals(strategy_name: Optional[str] = None, asset: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> list[dict]:
     with _get_session() as session:
         from sqlalchemy import func, or_

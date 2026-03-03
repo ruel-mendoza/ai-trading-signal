@@ -60,9 +60,23 @@ Separate isolated router at `/api/v1/public` (`trading_engine/api/v1/public_sign
   - `GET /api/v1/public/signals/{id}` — Single signal by ID
   - `GET /api/v1/public/assets` — Asset list with active signal counts and strategy coverage
 
+## WordPress CMS Publisher
+- **Service**: `trading_engine/services/cms_publisher.py` — `CmsPublisher` class for publishing signals to WordPress via REST API.
+- **Authentication**: WordPress Application Passwords via `WP_URL`, `WP_USERNAME`, `WP_APP_PASSWORD` secrets.
+- **Retry Logic**: `tenacity` library with exponential backoff (3 attempts, 2-30s delays) on 5xx errors and connection timeouts.
+- **Fail Gracefully**: On exhausted retries, sets `publish_status=FAILED` and logs structured JSON error.
+- **DB Fields**: `signals` table has `wp_post_id` (Integer, nullable), `publish_status` (Text, default `PENDING`), `wp_last_sync` (Text, nullable).
+- **DB Helpers**: `get_signal_by_id(id)` returns dict; `update_signal_wp_fields(id, fields)` updates WP-related columns.
+- **Admin Endpoints**:
+  - `POST /admin/api/signals/{id}/retry-publish` — Manually publish or retry a failed signal to WordPress.
+  - `POST /admin/api/signals/{id}/update-wp` — Update a closed signal's WordPress post with exit data.
+- **Idempotency**: `publish_signal()` checks `wp_post_id` before creating; skips if already published.
+
 ## External Dependencies
 - **OpenAI:** Used for AI-powered signal generation.
 - **FCSAPI v4:** Provides OHLC (Open-High-Low-Close) data and real-time quotes for forex, crypto, commodities (with `type=commodity`), and stock indices (with `type=index`). Commodity symbols (XAU/USD, XAG/USD, XPT/USD, XPD/USD, XCU/USD, NATGAS/USD, CORN/USD, SOYBEAN/USD, WHEAT/USD, SUGAR/USD) use the forex endpoint with `type=commodity`. Stock indices (SPX, NDX, DJI, RUT) use the stock endpoint with `type=index` and plain symbols (no exchange prefix). WTI/USD and BRENT/USD are not available on FCSAPI and are marked unsupported.
+- **WordPress REST API:** Signal publishing and updates via Application Passwords.
 - **PostgreSQL:** Primary database for storing trading signals and user-related data.
 - **SQLite:** Used for storing OHLC candle data, strategy-specific signals, API usage statistics, and internal engine data.
 - **`holidays` Python package:** Utilized for detecting US and Japanese public holidays to inform strategy execution.
+- **`tenacity` Python package:** Retry library with exponential backoff for WordPress API calls.
