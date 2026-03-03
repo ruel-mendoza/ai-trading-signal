@@ -191,10 +191,16 @@ class HealthResponse(BaseModel):
     cache: dict
     timestamp: str
 
+class SecurityStatusResponse(BaseModel):
+    total_blocked_requests_24h: int = Field(..., example=0)
+    current_active_ip_bans: int = Field(..., example=0)
+
+
 class HealthPublicResponse(BaseModel):
     status: str = Field(..., example="UP")
     version: str = Field(..., example="v1")
     timestamp: str
+    security_status: SecurityStatusResponse
 
 class CacheFlushResponse(BaseModel):
     status: str = Field(..., example="flushed")
@@ -874,13 +880,15 @@ def api_health_public():
     """
     Public liveness check — safe for external monitoring.
 
-    Returns only status (UP/DOWN), version, and timestamp.
-    No internal metadata, database status, or cache stats are exposed.
+    Returns status (UP/DOWN), version, timestamp, and non-sensitive
+    security telemetry (blocked request count, active IP bans).
     """
+    from trading_engine.security_middleware import get_public_security_status
     return {
         "status": "UP",
         "version": "v1",
         "timestamp": datetime.utcnow().isoformat() + "Z",
+        "security_status": get_public_security_status(),
     }
 
 

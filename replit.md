@@ -25,7 +25,7 @@ Key architectural decisions include:
   - **Global Error Handler:** Centralized logging and structured JSON error responses.
   - **Security Headers:** Express uses `helmet` middleware. FastAPI `SecurityHeadersMiddleware` injects X-Content-Type-Options (nosniff), X-Frame-Options (DENY), Content-Security-Policy (default-src 'self'), Strict-Transport-Security (HSTS 1yr), Referrer-Policy, Permissions-Policy, and X-XSS-Protection on every response.
   - **Payload Limits:** `PayloadLimitMiddleware` enforces 1MB max request body on public API (`/api/v1/`) POST/PUT/PATCH to prevent memory exhaustion from oversized payloads.
-  - **Health Endpoints:** Internal (`/health`) and public (`/api/v1/health/public`) endpoints for system status monitoring.
+  - **Health Endpoints:** Internal (`/health`) and public (`/api/v1/health/public`) endpoints for system status monitoring. Public health includes `security_status` with `total_blocked_requests_24h` and `current_active_ip_bans` telemetry. All security blocks emit structured JSON logs with masked IPs, reason codes (BURST, SCANNING, INVALID_KEY, RATE_LIMIT, MISSING_KEY), and timestamps.
   - **WebSocket Signal Stream:** Real-time signal push via `ws://host/ws/signals`.
 - **Public API v1:** Read-only API with cached responses (`cache_response(ttl)` decorator) for various data points including signals, strategies, market data, positions, and metrics.
 - **Public Signals API (Hardened):** A separate, isolated router (`/api/v1/public`) with strict Pydantic schemas to prevent internal field leaks and enforce read-only access.

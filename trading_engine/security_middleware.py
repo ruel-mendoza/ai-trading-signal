@@ -1,7 +1,9 @@
+import json as _json
 import os
 import time
 import logging
-from collections import defaultdict
+from collections import defaultdict, deque
+from datetime import datetime, timezone
 from threading import Lock
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -77,6 +79,53 @@ _states: dict[str, _IPState] = defaultdict(_IPState)
 _apikey_states: dict[int, _IPState] = {}
 _lock = Lock()
 
+_EVENT_WINDOW = 86400
+_blocked_events: deque = deque(maxlen=10000)
+
+
+def _mask_ip(ip: str) -> str:
+    parts = ip.split(".")
+    if len(parts) == 4:
+        return f"{parts[0]}.{parts[1]}.xxx.xxx"
+    if ":" in ip:
+        segments = ip.split(":")
+        return ":".join(segments[:3]) + "::xxx"
+    return "xxx.xxx.xxx.xxx"
+
+
+def _log_security_event(ip: str, reason: str, detail: str = ""):
+    now_ts = time.time()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    masked = _mask_ip(ip)
+    event = {
+        "timestamp": now_iso,
+        "mono": now_ts,
+        "ip_masked": masked,
+        "reason": reason,
+        "detail": detail,
+    }
+    _blocked_events.append(event)
+    logger.warning(_json.dumps({
+        "event": "SECURITY_BLOCK",
+        "timestamp": now_iso,
+        "ip": masked,
+        "reason": reason,
+        "detail": detail,
+    }))
+
+
+def get_public_security_status() -> dict:
+    cutoff = time.time() - _EVENT_WINDOW
+    now = time.monotonic()
+    with _lock:
+        recent_count = sum(1 for e in _blocked_events if e["mono"] > cutoff)
+        active_bans = sum(1 for s in _states.values() if s.blocked_until > now)
+    return {
+        "total_blocked_requests_24h": recent_count,
+        "current_active_ip_bans": active_bans,
+    }
+
+
 _CLEANUP_INTERVAL = 600
 _last_cleanup: float = time.monotonic()
 
@@ -129,10 +178,13 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         api_key_header = request.headers.get("x-api-key", "").strip()
         is_api_path = any(path.startswith(p) for p in _API_KEY_PATHS)
 
+        ip = _get_client_ip(request)
+
         if REQUIRE_API_KEY and is_api_path and not api_key_header:
             if path in ("/api/v1/health/public", "/api/v1/auth/login", "/api/v1/auth/register"):
                 pass
             else:
+                _log_security_event(ip, "MISSING_KEY", f"path={path}")
                 return JSONResponse(
                     status_code=401,
                     content={"error": "API key required", "detail": "Provide a valid X-API-KEY header"},
@@ -143,12 +195,12 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             from trading_engine.database import validate_partner_api_key
             partner_info = validate_partner_api_key(api_key_header)
             if not partner_info:
+                _log_security_event(ip, "INVALID_KEY", f"path={path}")
                 return JSONResponse(
                     status_code=401,
                     content={"error": "Invalid API key", "detail": "The provided X-API-KEY is not valid or has been revoked"},
                 )
 
-        ip = _get_client_ip(request)
         now = time.monotonic()
 
         with _lock:
@@ -166,7 +218,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 
             if state.blocked_until > now:
                 remaining = int(state.blocked_until - now)
-                logger.warning(f"[SECURITY] Blocked IP {ip} — {remaining}s remaining (endpoint enumeration)")
+                _log_security_event(ip, "SCANNING", f"blocked {remaining}s remaining")
                 return JSONResponse(
                     status_code=403,
                     content={"error": "Temporarily blocked", "reason": "Suspicious activity detected"},
@@ -175,6 +227,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 
             if state.cooldown_until > now:
                 remaining = int(state.cooldown_until - now)
+                _log_security_event(ip, "BURST", f"cooldown {remaining}s remaining")
                 return JSONResponse(
                     status_code=429,
                     content={"error": "Too Many Requests", "reason": "Burst rate limit exceeded", "retry_after": remaining},
@@ -183,8 +236,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 
             if not state.burst_bucket.allow():
                 state.cooldown_until = now + _BURST_COOLDOWN
-                id_label = f"key={partner_info['label']}" if partner_info else f"ip={ip}"
-                logger.warning(f"[SECURITY] Burst detected from {id_label} — cooldown {_BURST_COOLDOWN}s")
+                _log_security_event(ip, "BURST", f"triggered cooldown {_BURST_COOLDOWN}s")
                 return JSONResponse(
                     status_code=429,
                     content={"error": "Too Many Requests", "reason": "Burst rate limit exceeded", "retry_after": _BURST_COOLDOWN},
@@ -192,8 +244,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 )
 
             if not state.minute_bucket.allow():
-                id_label = f"key={partner_info['label']}" if partner_info else f"ip={ip}"
-                logger.info(f"[SECURITY] Minute limit hit for {id_label}")
+                _log_security_event(ip, "RATE_LIMIT", "per-minute limit exceeded")
                 return JSONResponse(
                     status_code=429,
                     content={"error": "Too Many Requests", "reason": "Rate limit exceeded (per-minute)"},
@@ -201,8 +252,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 )
 
             if not state.hour_bucket.allow():
-                id_label = f"key={partner_info['label']}" if partner_info else f"ip={ip}"
-                logger.info(f"[SECURITY] Hour limit hit for {id_label}")
+                _log_security_event(ip, "RATE_LIMIT", "per-hour limit exceeded")
                 return JSONResponse(
                     status_code=429,
                     content={"error": "Too Many Requests", "reason": "Rate limit exceeded (per-hour)"},
@@ -222,10 +272,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 if len(state.not_found_timestamps) > _ENUM_LIMIT:
                     state.blocked_until = time.monotonic() + _ENUM_BLOCK_DURATION
                     state.not_found_timestamps.clear()
-                    logger.warning(
-                        f"[SECURITY] IP {ip} blocked for {_ENUM_BLOCK_DURATION}s — "
-                        f"endpoint enumeration detected ({_ENUM_LIMIT}+ 404s in {_ENUM_WINDOW}s)"
-                    )
+                    _log_security_event(ip, "SCANNING", f"blocked {_ENUM_BLOCK_DURATION}s — {_ENUM_LIMIT}+ 404s in {_ENUM_WINDOW}s")
 
         return response
 
