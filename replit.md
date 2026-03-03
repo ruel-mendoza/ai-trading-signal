@@ -60,6 +60,19 @@ Separate isolated router at `/api/v1/public` (`trading_engine/api/v1/public_sign
   - `GET /api/v1/public/signals/{id}` — Single signal by ID
   - `GET /api/v1/public/assets` — Asset list with active signal counts and strategy coverage
 
+## WordPress Integrations Page (React Frontend)
+- **Route**: `/wordpress` (`client/src/pages/wordpress-integrations.tsx`)
+- **Access**: Admin-only — navbar shows "WordPress" button when authenticated
+- **Features**:
+  - **List View**: Displays all registered WordPress sites for the current user with Site URL, WP Username, Active/Inactive badge, and creation date
+  - **Add/Edit Modal**: Dialog form for site credentials (Site URL, WP Username, Application Password with masked input and eye toggle)
+  - **Async Validation**: Before saving, calls `POST /admin/api/wordpress/validate-credentials` to verify credentials are valid. Fails closed — blocks save on validation error
+  - **Connection Testing**: Per-site "Test" button calls `POST /admin/api/user-cms-configs/{id}/test` and shows inline result
+  - **Delete Confirmation**: AlertDialog with warning that automated publishing will stop
+  - **Password Update**: Edit modal allows updating password without recreating the entry (leave blank to keep existing)
+- **API Base**: `/api/engine/admin/api/user-cms-configs` (proxied through Express to Python engine)
+- **Backend Endpoint**: `POST /admin/api/wordpress/validate-credentials` — accepts `{site_url, wp_username, app_password}`, calls `verify_wp_connection()`, returns `{status, message, site_name}`
+
 ## WordPress CMS Publisher
 - **Service**: `trading_engine/services/cms_publisher.py` — `CmsPublisher` class for publishing signals to WordPress via REST API.
 - **Authentication**: WordPress Application Passwords via `WP_URL`, `WP_USERNAME`, `WP_APP_PASSWORD` secrets.

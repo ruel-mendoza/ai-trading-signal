@@ -4752,7 +4752,7 @@ def api_create_user_cms_config(request: Request, body: dict = Body(...)):
             return JSONResponse(content={"status": "error", "message": f"Missing required field: {f}"}, status_code=400)
     from trading_engine.database import create_user_cms_config
     try:
-        body["user_id"] = body.get("user_id", user["id"])
+        body["user_id"] = body.get("user_id", user["user_id"])
         config_id = create_user_cms_config(body)
         return JSONResponse(content={"status": "ok", "id": config_id})
     except Exception as e:
@@ -4779,6 +4779,23 @@ def api_update_user_cms_config(request: Request, config_id: int, body: dict = Bo
     if update_user_cms_config(config_id, body):
         return JSONResponse(content={"status": "ok"})
     return JSONResponse(content={"status": "error", "message": "Config not found"}, status_code=404)
+
+
+@router.post("/api/wordpress/validate-credentials")
+def api_validate_wp_credentials(request: Request, body: dict = Body(...)):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    site_url = body.get("site_url", "").strip()
+    wp_username = body.get("wp_username", "").strip()
+    app_password = body.get("app_password", "").strip()
+    if not site_url or not wp_username or not app_password:
+        return JSONResponse(content={"status": "error", "message": "All fields required"}, status_code=400)
+    from trading_engine.services.wp_connection import verify_wp_connection
+    ok, message, site_name = verify_wp_connection(site_url, wp_username, app_password)
+    if ok:
+        return JSONResponse(content={"status": "ok", "message": message, "site_name": site_name or ""})
+    return JSONResponse(content={"status": "error", "message": message})
 
 
 @router.post("/api/user-cms-configs/{config_id}/test")
