@@ -11,7 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     func,
 )
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, relationship
 
 logger = logging.getLogger("trading_engine.models")
 
@@ -139,7 +139,10 @@ class AdminUser(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(Text, nullable=False, unique=True)
     password_hash = Column(Text, nullable=False)
+    role = Column(Text, nullable=False, server_default="CUSTOMER")
     created_at = Column(Text, server_default=func.now())
+
+    cms_configs = relationship("UserCmsConfig", back_populates="owner_user", cascade="all, delete-orphan")
 
 
 class AdminSession(Base):
@@ -231,6 +234,8 @@ class UserCmsConfig(Base):
     is_active = Column(Integer, nullable=False, server_default="1")
     created_at = Column(Text, server_default=func.now())
     updated_at = Column(Text, server_default=func.now(), onupdate=func.now())
+
+    owner_user = relationship("AdminUser", back_populates="cms_configs")
 
     __table_args__ = (
         Index("idx_user_cms_user_id", "user_id"),

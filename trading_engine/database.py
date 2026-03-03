@@ -150,6 +150,7 @@ def _migrate_schema():
     migrations = [
         ("signals", "exit_price", "REAL"),
         ("signals", "exit_reason", "TEXT"),
+        ("admin_users", "role", "TEXT DEFAULT 'CUSTOMER'"),
     ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:
@@ -159,6 +160,17 @@ def _migrate_schema():
                 logger.info(f"[DB] MIGRATE: Adding column {table}.{column} ({col_type})")
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
                 conn.commit()
+
+        try:
+            result = conn.execute(text(
+                "SELECT id FROM admin_users WHERE role IS NULL"
+            )).fetchall()
+            if result:
+                conn.execute(text("UPDATE admin_users SET role = 'ADMIN' WHERE role IS NULL"))
+                conn.commit()
+                logger.info(f"[DB] MIGRATE: Set {len(result)} existing user(s) to ADMIN role")
+        except Exception:
+            pass
 
 
 def _purge_unsupported_symbols():
@@ -719,7 +731,7 @@ def _seed_default_admin(session: Session):
     count = session.query(AdminUser).count()
     if count == 0:
         pw_hash = _hash_password("pass123")
-        session.add(AdminUser(username="admin", password_hash=pw_hash))
+        session.add(AdminUser(username="admin", password_hash=pw_hash, role="ADMIN"))
         session.commit()
         logger.info("[DB] Seeded default admin user")
 
@@ -728,7 +740,7 @@ def authenticate_admin(username: str, password: str) -> Optional[dict]:
     with _get_session() as session:
         user = session.query(AdminUser).filter_by(username=username).first()
         if user and _verify_password(password, user.password_hash):
-            return {"id": user.id, "username": user.username, "created_at": user.created_at}
+            return {"id": user.id, "username": user.username, "role": user.role or "CUSTOMER", "created_at": user.created_at}
         return None
 
 
@@ -754,7 +766,9 @@ def validate_session(token: str) -> Optional[dict]:
         now_iso = datetime.utcnow().isoformat()
         row = session.execute(
             text("""
-                SELECT s.*, u.username FROM admin_sessions s
+                SELECT s.id, s.token, s.user_id, s.expires_at, s.created_at,
+                       u.username, u.role
+                FROM admin_sessions s
                 JOIN admin_users u ON s.user_id = u.id
                 WHERE s.token = :token AND s.expires_at > :now
             """),
@@ -768,6 +782,7 @@ def validate_session(token: str) -> Optional[dict]:
                 "expires_at": row[3],
                 "created_at": row[4],
                 "username": row[5],
+                "role": row[6] or "CUSTOMER",
             }
         return None
 
@@ -801,7 +816,7 @@ def cleanup_expired_sessions():
 def get_all_admins() -> list[dict]:
     with _get_session() as session:
         rows = session.query(AdminUser).order_by(AdminUser.id).all()
-        return [{"id": r.id, "username": r.username, "created_at": r.created_at} for r in rows]
+        return [{"id": r.id, "username": r.username, "role": r.role or "CUSTOMER", "created_at": r.created_at} for r in rows]
 
 
 def create_admin(username: str, password: str) -> Optional[int]:
@@ -1276,14 +1291,15 @@ def get_user_cms_configs(user_id: int) -> list[dict]:
         return [_user_cms_to_dict(r) for r in rows]
 
 
-def get_all_user_cms_configs() -> list[dict]:
+def get_all_user_cms_configs(user_id: Optional[int] = None) -> list[dict]:
     with _get_session() as session:
-        rows = (
+        q = (
             session.query(UserCmsConfig, AdminUser.username)
             .join(AdminUser, UserCmsConfig.user_id == AdminUser.id)
-            .order_by(UserCmsConfig.id)
-            .all()
         )
+        if user_id is not None:
+            q = q.filter(UserCmsConfig.user_id == user_id)
+        rows = q.order_by(UserCmsConfig.id).all()
         return [{**_user_cms_to_dict(r), "owner": u} for r, u in rows]
 
 

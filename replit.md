@@ -13,7 +13,7 @@ Key architectural decisions include:
 - **Modular Design:** Clear separation between frontend, Node.js backend, and Python trading engine.
 - **Data Caching:** Optimized caching in the Python engine for OHLC data.
 - **Idempotent Strategy Execution:** Strategies are designed for consistent signal and position management, including ATR State Lock.
-- **Admin Interface:** A comprehensive dashboard for monitoring signals, managing API keys, tracking credit usage, and configuring user settings, including detailed "Signal Analysis," "Scheduler Health," "System Status," "WordPress" integration, and individual strategy dashboards.
+- **Admin Interface:** A comprehensive dashboard for monitoring signals, managing API keys, tracking credit usage, and configuring user settings, including detailed "Signal Analysis," "Scheduler Health," "System Status," "WordPress" integration, and individual strategy dashboards. Role-based access control (ADMIN/CUSTOMER) enforces endpoint-level authorization: Scheduler Health, System Status, and User Management endpoints require ADMIN role; CMS configs are scoped to the logged-in user for CUSTOMER role.
 - **Robust Scheduling:** APScheduler manages background tasks for strategy evaluations and data refreshes with timezone awareness and misfire recovery. A watchdog thread monitors and auto-restarts the scheduler.
 - **Scalable Data Handling:** Local storage of OHLC candle data across multiple timeframes for rapid indicator calculations.
 - **Production Hardening:**

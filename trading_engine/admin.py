@@ -4359,6 +4359,15 @@ def _auth_guard(request: Request):
     return None
 
 
+def _admin_role_guard(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
+    if user.get("role") != "ADMIN":
+        return JSONResponse(content={"error": "Forbidden: Admin access required"}, status_code=403)
+    return None
+
+
 @router.get("/export")
 def export_signals(
     request: Request,
@@ -4458,7 +4467,7 @@ def get_settings(request: Request):
 
 @router.post("/api/users")
 def api_create_admin(request: Request, body: dict = Body(...)):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     username = body.get("username", "").strip()
@@ -4475,7 +4484,7 @@ def api_create_admin(request: Request, body: dict = Body(...)):
 
 @router.put("/api/users/{admin_id}")
 def api_update_admin(request: Request, admin_id: int, body: dict = Body(...)):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     username = body.get("username", "").strip()
@@ -4495,7 +4504,7 @@ def api_update_admin(request: Request, admin_id: int, body: dict = Body(...)):
 
 @router.delete("/api/users/{admin_id}")
 def api_delete_admin(request: Request, admin_id: int):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     existing = get_admin_by_id(admin_id)
@@ -4527,7 +4536,7 @@ def api_list_admins(request: Request):
 
 @router.get("/api/scheduler/health")
 def api_scheduler_health(request: Request):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     summary = get_scheduler_health_summary()
@@ -4536,7 +4545,7 @@ def api_scheduler_health(request: Request):
 
 @router.get("/api/scheduler/jobs")
 def api_scheduler_job_logs(request: Request, limit: int = Query(50, ge=1, le=200)):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     logs = get_recent_job_logs(limit)
@@ -4736,8 +4745,10 @@ def api_list_user_cms_configs(request: Request):
     guard = _auth_guard(request)
     if guard:
         return guard
+    user = _get_session_user(request)
     from trading_engine.database import get_all_user_cms_configs
-    return JSONResponse(content=get_all_user_cms_configs())
+    scope_user_id = None if user and user.get("role") == "ADMIN" else (user["user_id"] if user else None)
+    return JSONResponse(content=get_all_user_cms_configs(user_id=scope_user_id))
 
 
 @router.post("/api/user-cms-configs")
@@ -4752,7 +4763,10 @@ def api_create_user_cms_config(request: Request, body: dict = Body(...)):
             return JSONResponse(content={"status": "error", "message": f"Missing required field: {f}"}, status_code=400)
     from trading_engine.database import create_user_cms_config
     try:
-        body["user_id"] = body.get("user_id", user["user_id"])
+        if user.get("role") == "ADMIN" and body.get("user_id"):
+            body["user_id"] = body["user_id"]
+        else:
+            body["user_id"] = user["user_id"]
         config_id = create_user_cms_config(body)
         return JSONResponse(content={"status": "ok", "id": config_id})
     except Exception as e:
@@ -4764,8 +4778,10 @@ def api_delete_user_cms_config(request: Request, config_id: int):
     guard = _auth_guard(request)
     if guard:
         return guard
+    user = _get_session_user(request)
     from trading_engine.database import delete_user_cms_config
-    if delete_user_cms_config(config_id):
+    owner_filter = None if user and user.get("role") == "ADMIN" else (user["user_id"] if user else None)
+    if delete_user_cms_config(config_id, user_id=owner_filter):
         return JSONResponse(content={"status": "ok"})
     return JSONResponse(content={"status": "error", "message": "Config not found"}, status_code=404)
 
@@ -4775,8 +4791,10 @@ def api_update_user_cms_config(request: Request, config_id: int, body: dict = Bo
     guard = _auth_guard(request)
     if guard:
         return guard
+    user = _get_session_user(request)
     from trading_engine.database import update_user_cms_config
-    if update_user_cms_config(config_id, body):
+    owner_filter = None if user and user.get("role") == "ADMIN" else (user["user_id"] if user else None)
+    if update_user_cms_config(config_id, body, user_id=owner_filter):
         return JSONResponse(content={"status": "ok"})
     return JSONResponse(content={"status": "error", "message": "Config not found"}, status_code=404)
 
