@@ -1,8 +1,11 @@
 import csv
 import io
 import json
+import logging
 import os
 from datetime import datetime, timezone, timedelta
+
+logger = logging.getLogger("trading_engine.admin")
 from fastapi import APIRouter, Query, Body, Request, Response, Cookie, Depends
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from typing import Optional
@@ -351,6 +354,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 def _build_login_page(error: str = "", success: str = "") -> str:
     error_html = f'<div class="error-msg">{error}</div>' if error else ""
     success_html = f'<div class="success-msg" data-testid="text-login-success">{success}</div>' if success else ""
+    reg_val = get_setting("registration_enabled")
+    reg_enabled = reg_val != "false"
+    reg_link = '<div class="link-row">Don\'t have an account? <a href="/api/v1/auth/register" data-testid="link-register">Create one</a></div>' if reg_enabled else ""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -380,7 +386,7 @@ def _build_login_page(error: str = "", success: str = "") -> str:
             </div>
             <button type="submit" class="login-btn" data-testid="button-login">Sign In</button>
         </form>
-        <div class="link-row">Don't have an account? <a href="/api/v1/auth/register" data-testid="link-register">Create one</a></div>
+        {reg_link}
     </div>
 </body>
 </html>"""
@@ -2593,6 +2599,7 @@ function showTab(tabName) {
     if (tabName === 'notifications') loadNotifConfig();
     if (tabName === 'scheduler') loadSchedulerData();
     if (tabName === 'system') loadSystemStatus();
+    if (tabName === 'users') loadRegistrationToggle();
     if (tabName === 'wordpress') { loadUserCmsConfigs(); }
 }
 
@@ -2797,17 +2804,54 @@ async function saveEditAdmin() {
 }
 
 async function deleteAdmin(id, username) {
-    if (!confirm('Are you sure you want to delete admin "' + username + '"?')) return;
+    if (!confirm('Are you sure you want to delete user "' + username + '"?')) return;
     try {
         const res = await fetch(BASE + '/admin/api/users/' + id, {method: 'DELETE'});
         const data = await res.json();
         if (data.success) {
             window.location.reload();
         } else {
-            alert(data.error || 'Failed to delete admin.');
+            alert(data.error || 'Failed to delete user.');
         }
     } catch (e) {
         alert('Error: ' + e.message);
+    }
+}
+
+async function loadRegistrationToggle() {
+    try {
+        const res = await fetch(BASE + '/admin/api/settings/registration');
+        const data = await res.json();
+        document.getElementById('registration-toggle').checked = data.enabled;
+    } catch (e) {}
+}
+
+async function toggleRegistration(enabled) {
+    const msgEl = document.getElementById('reg-toggle-msg');
+    try {
+        const res = await fetch(BASE + '/admin/api/settings/registration', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled})
+        });
+        const data = await res.json();
+        if (data.success) {
+            msgEl.style.display = 'block';
+            msgEl.style.background = 'rgba(34,197,94,0.1)';
+            msgEl.style.border = '1px solid rgba(34,197,94,0.3)';
+            msgEl.style.color = '#22c55e';
+            msgEl.textContent = enabled ? 'Registration enabled. New users can register from the login page.' : 'Registration disabled. Only admins can create new accounts.';
+            setTimeout(() => { msgEl.style.display = 'none'; }, 4000);
+        } else {
+            msgEl.style.display = 'block';
+            msgEl.style.background = 'rgba(239,68,68,0.1)';
+            msgEl.style.border = '1px solid rgba(239,68,68,0.3)';
+            msgEl.style.color = '#ef4444';
+            msgEl.textContent = data.error || 'Failed to update setting.';
+            document.getElementById('registration-toggle').checked = !enabled;
+        }
+    } catch (e) {
+        document.getElementById('registration-toggle').checked = !enabled;
     }
 }
 
@@ -3121,6 +3165,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (activeTab && activeTab.getAttribute('data-tab') === 'notifications') loadNotifConfig();
     if (activeTab && activeTab.getAttribute('data-tab') === 'scheduler') loadSchedulerData();
     if (activeTab && activeTab.getAttribute('data-tab') === 'system') loadSystemStatus();
+    if (activeTab && activeTab.getAttribute('data-tab') === 'users') loadRegistrationToggle();
     if (activeTab && activeTab.getAttribute('data-tab') === 'wordpress') { loadUserCmsConfigs(); }
 });
 
@@ -3600,6 +3645,19 @@ def admin_dashboard(
         </div>
 
         <div id="tab-users" class="tab-content {'hidden' if tab != 'users' else ''}">
+            <div class="section" style="margin-bottom:20px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                    <div>
+                        <div style="font-weight:600;color:#f1f5f9;font-size:15px;">Public Registration</div>
+                        <div style="color:#94a3b8;font-size:13px;margin-top:2px;">Allow new users to register from the login page. When disabled, only admins can create accounts.</div>
+                    </div>
+                    <label class="toggle-switch" data-testid="toggle-registration">
+                        <input type="checkbox" id="registration-toggle" onchange="toggleRegistration(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div id="reg-toggle-msg" style="display:none;margin-top:10px;padding:8px 14px;border-radius:6px;font-size:13px;" data-testid="text-registration-status"></div>
+            </div>
             <div class="section">
                 <h2>User Settings</h2>
                 {users_html}
@@ -4440,6 +4498,26 @@ def get_settings(request: Request):
         "api_key_configured": has_db_key or has_env_key,
         "key_source": source,
     })
+
+
+@router.get("/api/settings/registration")
+def api_get_registration_setting(request: Request):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    val = get_setting("registration_enabled")
+    return JSONResponse(content={"enabled": val != "false"})
+
+
+@router.put("/api/settings/registration")
+def api_set_registration_setting(request: Request, body: dict = Body(...)):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    enabled = body.get("enabled", True)
+    set_setting("registration_enabled", "true" if enabled else "false")
+    logger.info(f"[ADMIN] Registration {'enabled' if enabled else 'disabled'}")
+    return JSONResponse(content={"success": True, "enabled": enabled})
 
 
 @router.post("/api/users")

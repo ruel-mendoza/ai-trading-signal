@@ -9,6 +9,7 @@ from trading_engine.database import (
     get_user_by_username,
     get_user_by_email,
     create_admin,
+    get_setting,
 )
 
 logger = logging.getLogger("trading_engine.auth")
@@ -54,8 +55,18 @@ def _read_register_template(error: str = "", success: str = "") -> str:
     return template.replace(_FLASH_MARKER, flash)
 
 
+def _registration_enabled() -> bool:
+    val = get_setting("registration_enabled")
+    return val != "false"
+
+
 @router.get("/register", response_class=HTMLResponse)
 def register_page():
+    if not _registration_enabled():
+        return HTMLResponse(
+            content=_read_register_template(error="Registration is currently disabled. Please contact an administrator."),
+            status_code=403,
+        )
     return HTMLResponse(content=_read_register_template())
 
 
@@ -68,6 +79,12 @@ async def register_submit(
     password: str = Form(...),
     confirm_password: str = Form(...),
 ):
+    if not _registration_enabled():
+        return HTMLResponse(
+            content=_read_register_template(error="Registration is currently disabled. Please contact an administrator."),
+            status_code=403,
+        )
+
     full_name = full_name.strip()
     username = username.strip()
     email = email.strip().lower()
