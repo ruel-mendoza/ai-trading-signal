@@ -6,6 +6,12 @@ import httpx
 logger = logging.getLogger("trading_engine.wp_connection")
 
 
+_WP_HEADERS = {
+    "User-Agent": "DailyForex-SignalEngine/1.0",
+    "Accept": "application/json",
+}
+
+
 def verify_wp_connection(
     url: str,
     username: str,
@@ -14,7 +20,7 @@ def verify_wp_connection(
 ) -> tuple[bool, str, Optional[str]]:
     url = url.rstrip("/")
     try:
-        with httpx.Client(timeout=timeout) as client:
+        with httpx.Client(timeout=timeout, headers=_WP_HEADERS) as client:
             resp = client.get(
                 f"{url}/wp-json/wp/v2/users/me",
                 auth=(username, password),

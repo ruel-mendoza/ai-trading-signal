@@ -40,6 +40,7 @@ class CmsPublisher:
         self._session.headers.update({
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "User-Agent": "DailyForex-SignalEngine/1.0",
         })
         if self.wp_username and self.wp_password:
             self._session.auth = (self.wp_username, self.wp_password)
