@@ -45,6 +45,7 @@ from trading_engine.indicators import IndicatorEngine
 from trading_engine.strategy_engine import StrategyEngine
 from trading_engine.admin import router as admin_router
 from trading_engine.api_v1 import router as api_v1_router
+from trading_engine.api.v1.public_signals import router as public_signals_router
 from trading_engine.strategies.trend_forex import TARGET_SYMBOLS as TREND_FOREX_SYMBOLS
 from trading_engine.strategies.trend_non_forex import TARGET_SYMBOLS as TREND_NON_FOREX_SYMBOLS
 from trading_engine.strategies.multi_timeframe import ALL_ASSETS as MTF_EMA_ASSETS
@@ -598,6 +599,10 @@ API_TAGS_METADATA = [
         "name": "State Management",
         "description": "Cache control operations. Flush the 4-shard TTLCache to force fresh data on subsequent requests.",
     },
+    {
+        "name": "Public Signals",
+        "description": "Hardened, read-only signal and asset endpoints with strict Pydantic schemas. No internal fields are exposed. POST/PUT/DELETE/PATCH requests are blocked.",
+    },
 ]
 
 app = FastAPI(
@@ -679,6 +684,7 @@ async def global_exception_handler(request: StarletteRequest, exc: Exception):
 
 app.include_router(admin_router)
 app.include_router(api_v1_router)
+app.include_router(public_signals_router)
 
 
 @app.get("/health")

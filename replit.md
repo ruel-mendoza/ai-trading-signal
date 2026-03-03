@@ -51,6 +51,14 @@ Read-only API for the DailyForex frontend (`trading_engine/api_v1.py`), mounted 
   - `POST /api/v1/cache/flush` — Clear all cache shards
 - **Response format**: `/v1/signals/latest` returns `{count, data: [{asset, direction (LONG/SHORT), entry, stop_loss, strategy, published_at, meta: {atr_entry, highest_close, lowest_close}}]}`. Internal endpoints (`/signals/history`, `/signals/active`, `/signals`) use legacy format with `signals` array, `entry_price`, `BUY/SELL` direction, `opened_at`
 
+## Public Signals API (Hardened)
+Separate isolated router at `/api/v1/public` (`trading_engine/api/v1/public_signals.py`) with strict Pydantic schemas (`SignalRead`, `AssetRead`) that prevent internal field leaks (no `atr_at_entry`, `raw_json`, `fcsapi_id`). POST/PUT/DELETE/PATCH are blocked at the router level (405). Uses dict-safe `_g()` accessor since database functions return dicts.
+- **Endpoints**:
+  - `GET /api/v1/public/signals` — Filtered signals with `SignalRead` schema (LONG/SHORT direction, `trailing_stop` flag)
+  - `GET /api/v1/public/signals/active` — Open signals only
+  - `GET /api/v1/public/signals/{id}` — Single signal by ID
+  - `GET /api/v1/public/assets` — Asset list with active signal counts and strategy coverage
+
 ## External Dependencies
 - **OpenAI:** Used for AI-powered signal generation.
 - **FCSAPI v4:** Provides OHLC (Open-High-Low-Close) data and real-time quotes for forex, crypto, commodities (with `type=commodity`), and stock indices (with `type=index`). Commodity symbols (XAU/USD, XAG/USD, XPT/USD, XPD/USD, XCU/USD, NATGAS/USD, CORN/USD, SOYBEAN/USD, WHEAT/USD, SUGAR/USD) use the forex endpoint with `type=commodity`. Stock indices (SPX, NDX, DJI, RUT) use the stock endpoint with `type=index` and plain symbols (no exchange prefix). WTI/USD and BRENT/USD are not available on FCSAPI and are marked unsupported.
