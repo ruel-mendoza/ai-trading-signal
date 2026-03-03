@@ -687,7 +687,7 @@ app.include_router(api_v1_router)
 app.include_router(public_signals_router)
 
 
-@app.get("/health")
+@app.get("/health", include_in_schema=False)
 def health_endpoint():
     from trading_engine.database import get_scheduler_health_summary as _health_summary, _get_session
     db_ok = False
@@ -767,7 +767,7 @@ class RefreshResponse(BaseModel):
     message: str
 
 
-@app.get("/", response_model=StatusResponse)
+@app.get("/", response_model=StatusResponse, include_in_schema=False)
 def health_check():
     return StatusResponse(
         status="running",
@@ -777,7 +777,7 @@ def health_check():
     )
 
 
-@app.get("/api/candles", response_model=CandleResponse)
+@app.get("/api/candles", response_model=CandleResponse, include_in_schema=False)
 def get_candle_data(
     symbol: str = Query(..., description="Trading pair symbol, e.g. EUR/USD"),
     timeframe: str = Query(..., description="Timeframe: 30m, 1H, 4H, or D1"),
@@ -799,7 +799,7 @@ def get_candle_data(
     )
 
 
-@app.get("/api/indicators", response_model=IndicatorResponse)
+@app.get("/api/indicators", response_model=IndicatorResponse, include_in_schema=False)
 def get_indicators(
     symbol: str = Query(..., description="Trading pair symbol, e.g. EUR/USD"),
     timeframe: str = Query(..., description="Timeframe: 30m, 1H, 4H, or D1"),
@@ -834,7 +834,7 @@ def get_indicators(
     )
 
 
-@app.post("/api/candles/refresh", response_model=RefreshResponse)
+@app.post("/api/candles/refresh", response_model=RefreshResponse, include_in_schema=False)
 def refresh_candles(
     symbol: str = Query(..., description="Trading pair symbol, e.g. EUR/USD"),
     timeframe: str = Query(..., description="Timeframe: 30m, 1H, 4H, or D1"),
@@ -857,7 +857,7 @@ def refresh_candles(
     )
 
 
-@app.get("/api/symbols")
+@app.get("/api/symbols", include_in_schema=False)
 def list_symbols():
     try:
         symbols = api_client.get_available_symbols()
@@ -866,7 +866,7 @@ def list_symbols():
         raise HTTPException(status_code=500, detail=f"Failed to fetch symbols: {str(e)}")
 
 
-@app.get("/api/cache/status")
+@app.get("/api/cache/status", include_in_schema=False)
 def cache_status(
     symbol: str = Query(..., description="Trading pair symbol"),
     timeframe: str = Query(..., description="Timeframe: 30m, 1H, 4H, or D1"),
@@ -891,7 +891,7 @@ def cache_status(
     }
 
 
-@app.get("/api/credit-control/status")
+@app.get("/api/credit-control/status", include_in_schema=False)
 def credit_control_status():
     from trading_engine.credit_control import check_credit_thresholds, is_api_blocked
     projection = check_credit_thresholds()
@@ -899,7 +899,7 @@ def credit_control_status():
     return projection
 
 
-@app.post("/api/credit-control/reset-kill-switch")
+@app.post("/api/credit-control/reset-kill-switch", include_in_schema=False)
 def reset_credit_kill_switch():
     from trading_engine.credit_control import reset_kill_switch, is_api_blocked
     reset_kill_switch()
@@ -909,7 +909,7 @@ def reset_credit_kill_switch():
 VALID_QUOTE_PERIODS = {"30m", "1h", "4h", "1d", "1H", "4H", "D1"}
 
 
-@app.get("/api/quotes")
+@app.get("/api/quotes", include_in_schema=False)
 def get_quotes(
     symbols: str = Query(..., description="Comma-separated list of symbols, e.g. EUR/USD,SPX,BTC/USD"),
     period: str = Query("1h", description="Timeframe period: 30m, 1h, 4h, 1d"),
@@ -938,7 +938,7 @@ def get_quotes(
     }
 
 
-@app.post("/api/strategies/evaluate")
+@app.post("/api/strategies/evaluate", include_in_schema=False)
 def evaluate_strategies(
     symbols: Optional[str] = Query(None, description="Comma-separated list of symbols to evaluate"),
 ):
@@ -951,7 +951,7 @@ def evaluate_strategies(
     }
 
 
-@app.post("/api/strategies/evaluate/{strategy_name}")
+@app.post("/api/strategies/evaluate/{strategy_name}", include_in_schema=False)
 def evaluate_single_strategy(
     strategy_name: str,
     symbol: str = Query(..., description="Symbol to evaluate"),
@@ -1001,7 +1001,7 @@ def evaluate_single_strategy(
     }
 
 
-@app.post("/api/strategies/check-exits")
+@app.post("/api/strategies/check-exits", include_in_schema=False)
 def check_exit_conditions():
     closed = strategy_engine.check_exit_conditions()
     return {
@@ -1010,7 +1010,7 @@ def check_exit_conditions():
     }
 
 
-@app.get("/api/strategy-signals")
+@app.get("/api/strategy-signals", include_in_schema=False)
 def list_strategy_signals(
     strategy: Optional[str] = Query(None, description="Filter by strategy name"),
     symbol: Optional[str] = Query(None, description="Filter by symbol"),
@@ -1024,7 +1024,7 @@ def list_strategy_signals(
     }
 
 
-@app.get("/api/strategy-signals/active")
+@app.get("/api/strategy-signals/active", include_in_schema=False)
 def list_active_signals(
     strategy: Optional[str] = Query(None, description="Filter by strategy name"),
     symbol: Optional[str] = Query(None, description="Filter by symbol"),

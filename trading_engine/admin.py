@@ -17,7 +17,7 @@ from trading_engine.database import (
 )
 from trading_engine.indicators import IndicatorEngine
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(prefix="/admin", tags=["admin"], include_in_schema=False)
 
 
 def _get_session_user(request: Request) -> Optional[dict]:
