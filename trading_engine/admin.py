@@ -2547,6 +2547,8 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
     .tables-row { grid-template-columns: 1fr; }
     .stats-grid { grid-template-columns: 1fr 1fr; }
 }
+.btn-copy { background: rgba(56,189,248,0.1); color: #38bdf8; border: 1px solid rgba(56,189,248,0.25); padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+.btn-copy:hover { background: rgba(56,189,248,0.2); border-color: #38bdf8; }
 """
 
 ADMIN_JS = """
@@ -3086,6 +3088,19 @@ document.addEventListener('DOMContentLoaded', function() {
     if (activeTab && activeTab.getAttribute('data-tab') === 'scheduler') loadSchedulerData();
     if (activeTab && activeTab.getAttribute('data-tab') === 'system') loadSystemStatus();
 });
+
+function copyApiUrl(path) {
+    var fullUrl = window.location.origin + path;
+    navigator.clipboard.writeText(fullUrl).then(function() {
+        var toast = document.getElementById('copy-toast');
+        if (toast) {
+            toast.style.display = 'block';
+            setTimeout(function() { toast.style.display = 'none'; }, 2000);
+        }
+    }).catch(function() {
+        prompt('Copy this URL:', fullUrl);
+    });
+}
 """
 
 

@@ -925,6 +925,7 @@ def _parse_ts(ts_str):
 
 def compute_signal_metrics():
     now_dt = datetime.utcnow()
+    now_iso = now_dt.isoformat()
     cutoff_7d = now_dt - timedelta(days=7)
     cutoff_30d = now_dt - timedelta(days=30)
 
