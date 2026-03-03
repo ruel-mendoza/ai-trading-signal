@@ -212,19 +212,6 @@ class SignalMetrics(Base):
     )
 
 
-class WordPressCredential(Base):
-    __tablename__ = "wordpress_credentials"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    label = Column(Text, nullable=False)
-    wp_url = Column(Text, nullable=False)
-    wp_username = Column(Text, nullable=False)
-    app_password_encrypted = Column(Text, nullable=False)
-    is_active = Column(Integer, nullable=False, server_default="1")
-    created_at = Column(Text, server_default=func.now())
-    updated_at = Column(Text, server_default=func.now(), onupdate=func.now())
-
-
 class UserCmsConfig(Base):
     __tablename__ = "user_cms_configs"
 
