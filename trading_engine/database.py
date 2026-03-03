@@ -25,6 +25,22 @@ def _invalidate_signal_cache():
         pass
 
 
+def _ws_broadcast_new(signal_dict: dict):
+    try:
+        from trading_engine.websocket import broadcaster
+        broadcaster.broadcast_signal_new(signal_dict)
+    except Exception:
+        pass
+
+
+def _ws_broadcast_closed(signal_id: int, exit_reason: str = "", exit_price=None):
+    try:
+        from trading_engine.websocket import broadcaster
+        broadcaster.broadcast_signal_closed(signal_id, exit_reason, exit_price)
+    except Exception:
+        pass
+
+
 from trading_engine.models import (
     Base,
     Candle,
@@ -323,6 +339,10 @@ def insert_signal(signal: dict) -> Optional[int]:
             session.commit()
             logger.info(f"[DB] Inserted signal #{obj.id}: {signal['strategy_name']} {signal['direction']} {signal['asset']}")
             _invalidate_signal_cache()
+            broadcast_data = {**signal, "id": obj.id, "status": "OPEN"}
+            if obj.created_at:
+                broadcast_data["created_at"] = obj.created_at.isoformat()
+            _ws_broadcast_new(broadcast_data)
             return obj.id
         except Exception as e:
             session.rollback()
@@ -354,6 +374,7 @@ def close_signal(signal_id: int, exit_reason: str = "", exit_price: Optional[flo
                 session.commit()
                 logger.info(f"[DB] Closed signal #{signal_id}: {exit_reason} | exit_price={exit_price}")
                 _invalidate_signal_cache()
+                _ws_broadcast_closed(signal_id, exit_reason, exit_price)
         except Exception as e:
             session.rollback()
             logger.error(f"[DB] Close signal failed: {e}")

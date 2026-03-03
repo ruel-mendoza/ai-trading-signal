@@ -25,8 +25,9 @@ Key architectural decisions include:
   - **CORS**: Strict origin whitelist auto-configured from Replit environment variables (`REPL_SLUG`, `REPL_OWNER`). Override via `CORS_ALLOWED_ORIGINS` env var (comma-separated). Only allows `GET`, `POST`, `OPTIONS` methods. Exposes rate-limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`).
   - **Global Error Handler**: Catch-all exception handler logs unhandled errors with full traceback and returns structured JSON error responses.
   - **Security Headers**: Express uses `helmet` middleware (HSTS, X-Content-Type-Options, X-Frame-Options, etc.) with CSP disabled for SPA compatibility.
-  - **Health Endpoint**: `GET /health` returns scheduler status, database connectivity, 24h job success/failure counts, watchdog heartbeat, and API key status. Returns `"healthy"` or `"degraded"` with specific failed checks.
+  - **Health Endpoint**: `GET /health` returns scheduler status, database connectivity, 24h job success/failure counts, watchdog heartbeat, WebSocket client count, and API key status. Returns `"healthy"` or `"degraded"` with specific failed checks.
   - **Public Health**: `GET /api/v1/health/public` returns only `status: "UP"/"DOWN"` and `version` — no internal metadata exposed. Safe for external monitoring.
+  - **WebSocket Signal Stream** (`trading_engine/websocket.py`): Real-time signal push at `ws://host/ws/signals`. `SignalBroadcaster` manages connected clients and broadcasts `signal:new` / `signal:closed` events when `insert_signal()` or `close_signal()` fire in `database.py`. Express proxies WebSocket upgrade requests on `/ws/signals` to the Python engine on port 5001 via raw TCP pipe. Frontend `useSignalStream` hook (React, `client/src/hooks/use-signal-stream.ts`) auto-connects, auto-reconnects with 5s backoff, and invalidates React Query signal caches on events. Admin dashboard System Status tab shows WebSocket Stream card and live client count.
 
 ## Public API v1
 Read-only API for the DailyForex frontend (`trading_engine/api_v1.py`), mounted at `/api/v1` on the Python engine (proxied through Express at `/api/v1`).

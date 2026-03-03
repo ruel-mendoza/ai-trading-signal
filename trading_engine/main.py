@@ -5,7 +5,7 @@ import threading
 import traceback
 from datetime import datetime
 from functools import wraps
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -540,6 +540,11 @@ async def lifespan(app: FastAPI):
     )
     scheduler.start()
 
+    import asyncio as _asyncio
+    from trading_engine.websocket import broadcaster as _ws_broadcaster
+    _ws_broadcaster.set_loop(_asyncio.get_running_loop())
+    logger.info("[WS] Signal broadcaster initialized")
+
     try:
         compute_signal_metrics()
         logger.info("[METRICS] Initial metrics computation completed on startup")
@@ -687,6 +692,19 @@ app.include_router(api_v1_router)
 app.include_router(public_signals_router)
 
 
+@app.websocket("/ws/signals")
+async def websocket_signals(ws: WebSocket):
+    from trading_engine.websocket import broadcaster
+    await broadcaster.connect(ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await broadcaster.disconnect(ws)
+
+
 @app.get("/health", include_in_schema=False)
 def health_endpoint():
     from trading_engine.database import get_scheduler_health_summary as _health_summary, _get_session
@@ -717,6 +735,13 @@ def health_endpoint():
         status = "degraded"
         checks_failed.append("database_error")
 
+    ws_clients = 0
+    try:
+        from trading_engine.websocket import broadcaster as _ws_b
+        ws_clients = _ws_b.client_count
+    except Exception:
+        pass
+
     return {
         "status": status,
         "checks_failed": checks_failed,
@@ -733,6 +758,9 @@ def health_endpoint():
         },
         "watchdog": {
             "last_heartbeat": _scheduler_heartbeat.get("last_tick"),
+        },
+        "websocket": {
+            "clients": ws_clients,
         },
         "api_key_configured": bool(api_client.api_key),
         "timestamp": datetime.utcnow().isoformat() + "Z",

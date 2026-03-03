@@ -2948,6 +2948,9 @@ async function loadSystemStatus() {
         var ts = health.timestamp || '';
         document.getElementById('sys-timestamp').textContent = ts ? ts.replace('T', ' ').slice(0, 19) + ' UTC' : '--';
 
+        var wsClients = (health.websocket && health.websocket.clients !== undefined) ? health.websocket.clients : '--';
+        document.getElementById('sys-ws-clients').textContent = wsClients;
+
     } catch (e) {
         document.getElementById('sys-loading').textContent = 'Failed to load system status.';
     }
@@ -3713,6 +3716,14 @@ def admin_dashboard(
                         <div style="color:#94a3b8;font-size:13px;">All scheduled jobs have <strong style="color:#f1f5f9;">120s misfire_grace_time</strong>. Per-asset retry: 2 attempts with 5s delay.</div>
                     </div>
 
+                    <div class="sys-card" style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <div style="font-weight:600;color:#f1f5f9;font-size:14px;">WebSocket Stream</div>
+                            <span class="badge status-open" data-testid="status-websocket">Active</span>
+                        </div>
+                        <div style="color:#94a3b8;font-size:13px;">Real-time signal push via <strong style="color:#f1f5f9;">/ws/signals</strong>. Broadcasts <code>signal:new</code> and <code>signal:closed</code> events. Auto-reconnect with 5s backoff.</div>
+                    </div>
+
                 </div>
 
                 <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:12px;">Live Status</div>
@@ -3733,6 +3744,10 @@ def admin_dashboard(
                         <div>
                             <div style="font-size:12px;color:#64748b;text-transform:uppercase;">Last Health Check</div>
                             <div id="sys-timestamp" style="font-size:14px;font-weight:500;color:#f1f5f9;margin-top:2px;" data-testid="text-sys-timestamp">--</div>
+                        </div>
+                        <div>
+                            <div style="font-size:12px;color:#64748b;text-transform:uppercase;">WebSocket Clients</div>
+                            <div id="sys-ws-clients" style="font-size:14px;font-weight:500;color:#f1f5f9;margin-top:2px;" data-testid="text-sys-ws-clients">--</div>
                         </div>
                     </div>
                 </div>

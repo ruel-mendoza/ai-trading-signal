@@ -4,6 +4,7 @@ import helmet from "helmet";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { createConnection } from "net";
 
 process.on("SIGHUP", () => {});
 
@@ -294,6 +295,28 @@ app.get("/api/engine-status", (_req: Request, res: Response) => {
     const { setupVite } = await import("./vite");
     await setupVite(httpServer, app);
   }
+
+  httpServer.on("upgrade", (req, socket, head) => {
+    if (req.url === "/ws/signals") {
+      const proxy = createConnection(5001, "127.0.0.1", () => {
+        const rawHeaders = Object.entries(req.headers)
+          .filter(([, v]) => v !== undefined)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join("\r\n");
+        proxy.write(
+          `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n${rawHeaders}\r\n\r\n`,
+        );
+        if (head && head.length) proxy.write(head);
+        socket.pipe(proxy).pipe(socket);
+      });
+      proxy.on("error", () => {
+        socket.end();
+      });
+      socket.on("error", () => {
+        proxy.end();
+      });
+    }
+  });
 
   const port = parseInt(process.env.PORT || "5000", 10);
   httpServer.listen(
