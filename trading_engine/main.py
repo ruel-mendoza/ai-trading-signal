@@ -46,6 +46,7 @@ from trading_engine.strategy_engine import StrategyEngine
 from trading_engine.admin import router as admin_router
 from trading_engine.api_v1 import router as api_v1_router
 from trading_engine.api.v1.public_signals import router as public_signals_router
+from trading_engine.api.v1.auth import router as auth_router
 from trading_engine.strategies.trend_forex import TARGET_SYMBOLS as TREND_FOREX_SYMBOLS
 from trading_engine.strategies.trend_non_forex import TARGET_SYMBOLS as TREND_NON_FOREX_SYMBOLS
 from trading_engine.strategies.multi_timeframe import ALL_ASSETS as MTF_EMA_ASSETS
@@ -690,6 +691,7 @@ async def global_exception_handler(request: StarletteRequest, exc: Exception):
 app.include_router(admin_router)
 app.include_router(api_v1_router)
 app.include_router(public_signals_router)
+app.include_router(auth_router)
 
 
 @app.websocket("/ws/signals")

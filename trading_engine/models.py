@@ -138,6 +138,7 @@ class AdminUser(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(Text, nullable=False, unique=True)
+    email = Column(Text, nullable=True, unique=True)
     password_hash = Column(Text, nullable=False)
     role = Column(Text, nullable=False, server_default="CUSTOMER")
     created_at = Column(Text, server_default=func.now())

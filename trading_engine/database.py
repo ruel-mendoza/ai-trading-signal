@@ -151,6 +151,7 @@ def _migrate_schema():
         ("signals", "exit_price", "REAL"),
         ("signals", "exit_reason", "TEXT"),
         ("admin_users", "role", "TEXT DEFAULT 'CUSTOMER'"),
+        ("admin_users", "email", "TEXT"),
     ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:
@@ -819,11 +820,27 @@ def get_all_admins() -> list[dict]:
         return [{"id": r.id, "username": r.username, "role": r.role or "CUSTOMER", "created_at": r.created_at} for r in rows]
 
 
-def create_admin(username: str, password: str) -> Optional[int]:
+def get_user_by_username(username: str) -> Optional[dict]:
+    with _get_session() as session:
+        user = session.query(AdminUser).filter_by(username=username).first()
+        if user:
+            return {"id": user.id, "username": user.username, "email": user.email, "role": user.role or "CUSTOMER", "created_at": user.created_at}
+        return None
+
+
+def get_user_by_email(email: str) -> Optional[dict]:
+    with _get_session() as session:
+        user = session.query(AdminUser).filter(AdminUser.email == email).first()
+        if user:
+            return {"id": user.id, "username": user.username, "email": user.email, "role": user.role or "CUSTOMER", "created_at": user.created_at}
+        return None
+
+
+def create_admin(username: str, password: str, email: Optional[str] = None) -> Optional[int]:
     pw_hash = _hash_password(password)
     with _get_session() as session:
         try:
-            user = AdminUser(username=username, password_hash=pw_hash)
+            user = AdminUser(username=username, password_hash=pw_hash, email=email)
             session.add(user)
             session.commit()
             logger.info(f"[DB] Created admin user: {username}")

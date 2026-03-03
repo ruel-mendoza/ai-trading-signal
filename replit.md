@@ -26,6 +26,7 @@ Key architectural decisions include:
   - **WebSocket Signal Stream:** Real-time signal push via `ws://host/ws/signals`.
 - **Public API v1:** Read-only API with cached responses (`cache_response(ttl)` decorator) for various data points including signals, strategies, market data, positions, and metrics.
 - **Public Signals API (Hardened):** A separate, isolated router (`/api/v1/public`) with strict Pydantic schemas to prevent internal field leaks and enforce read-only access.
+- **User Registration:** Public registration endpoint at `POST /api/v1/auth/register` with server-side form validation (username uniqueness, email uniqueness, password confirmation). New users are assigned the CUSTOMER role. The login page links to registration, and successful registration redirects to login with a success message.
 - **WordPress Integrations:** Frontend interface (`/wordpress`) for managing WordPress site credentials, with async validation and connection testing.
 - **WordPress CMS Publisher:** A service (`CmsPublisher`) for publishing signals to WordPress via REST API, including retry logic and graceful failure handling.
 

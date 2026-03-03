@@ -166,20 +166,65 @@ app.use("/api/v1", async (req: Request, res: Response) => {
     const queryString = new URLSearchParams(req.query as Record<string, string>).toString();
     const url = `${PYTHON_ENGINE_URL}${targetPath}${queryString ? "?" + queryString : ""}`;
 
+    const headers: Record<string, string> = {};
+    if (req.headers.cookie) {
+      headers["cookie"] = req.headers.cookie;
+    }
+
+    const isFormPost = (req.headers["content-type"] || "").includes("application/x-www-form-urlencoded");
+
+    if (isFormPost) {
+      headers["content-type"] = "application/x-www-form-urlencoded";
+    } else {
+      headers["content-type"] = "application/json";
+    }
+
     const fetchOptions: RequestInit = {
       method: req.method,
-      headers: { "content-type": "application/json" },
+      headers,
+      redirect: "manual",
     };
 
-    if (req.method !== "GET" && req.method !== "HEAD" && req.body) {
-      fetchOptions.body = JSON.stringify(req.body);
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      if (isFormPost && req.body) {
+        const params = new URLSearchParams();
+        for (const [key, val] of Object.entries(req.body)) {
+          params.append(key, String(val));
+        }
+        fetchOptions.body = params.toString();
+      } else if (req.body) {
+        fetchOptions.body = JSON.stringify(req.body);
+      }
     }
 
     const response = await fetch(url, fetchOptions);
     const contentType = response.headers.get("content-type") || "application/json";
-    res.status(response.status).set("content-type", contentType);
-    const body = await response.text();
-    res.send(body);
+
+    const setCookies = response.headers.getSetCookie?.() || [];
+    for (const cookie of setCookies) {
+      res.appendHeader("set-cookie", cookie);
+    }
+
+    if (response.status >= 300 && response.status < 400) {
+      let location = response.headers.get("location") || "/";
+      try {
+        const parsed = new URL(location);
+        location = parsed.pathname + parsed.search;
+      } catch {}
+      if (location.startsWith("/admin")) {
+        location = "/api/engine" + location;
+      }
+      return res.redirect(response.status, location);
+    }
+
+    if (contentType.includes("text/html")) {
+      const html = await response.text();
+      res.status(response.status).type("html").send(html);
+    } else {
+      res.status(response.status).set("content-type", contentType);
+      const body = await response.text();
+      res.send(body);
+    }
   } catch (error) {
     console.error("[v1-proxy] Error:", error);
     res.status(502).json({ error: "Trading engine unavailable" });

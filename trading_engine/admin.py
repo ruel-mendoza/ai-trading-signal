@@ -348,21 +348,27 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 """
 
 
-def _build_login_page(error: str = "") -> str:
+def _build_login_page(error: str = "", success: str = "") -> str:
     error_html = f'<div class="error-msg">{error}</div>' if error else ""
+    success_html = f'<div class="success-msg" data-testid="text-login-success">{success}</div>' if success else ""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trading Engine Admin - Login</title>
-    <style>{LOGIN_CSS}</style>
+    <style>{LOGIN_CSS}
+.success-msg {{ background: #052e16; border: 1px solid #166534; color: #86efac; padding: 10px 14px; border-radius: 6px; font-size: 0.85rem; margin-bottom: 16px; text-align: center; }}
+.link-row {{ text-align: center; margin-top: 16px; font-size: 0.85rem; color: #94a3b8; }}
+.link-row a {{ color: #3b82f6; text-decoration: none; }}
+.link-row a:hover {{ text-decoration: underline; }}</style>
 </head>
 <body>
     <div class="login-card">
         <h1>Trading Engine Admin</h1>
         <p>Sign in to access the dashboard</p>
         {error_html}
+        {success_html}
         <form method="POST" action="login">
             <div class="form-group">
                 <label for="username">Username</label>
@@ -374,6 +380,7 @@ def _build_login_page(error: str = "") -> str:
             </div>
             <button type="submit" class="login-btn" data-testid="button-login">Sign In</button>
         </form>
+        <div class="link-row">Don't have an account? <a href="/api/v1/auth/register" data-testid="link-register">Create one</a></div>
     </div>
 </body>
 </html>"""
@@ -3326,11 +3333,12 @@ def auth_status(request: Request):
 
 
 @router.get("/login", response_class=HTMLResponse)
-def login_page(request: Request, error: str = Query("")):
+def login_page(request: Request, error: str = Query(""), registered: str = Query("")):
     user = _get_session_user(request)
     if user:
         return RedirectResponse(url=request.scope.get("root_path", "") + "/admin/", status_code=302)
-    return HTMLResponse(content=_build_login_page(error))
+    success = "Account created successfully! Please sign in." if registered == "1" else ""
+    return HTMLResponse(content=_build_login_page(error, success))
 
 
 @router.post("/login")
