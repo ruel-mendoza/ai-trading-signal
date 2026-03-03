@@ -1,5 +1,6 @@
 import logging
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -19,6 +20,32 @@ from trading_engine.database import (
 )
 
 logger = logging.getLogger("trading_engine.strategy_runner")
+
+_cms_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cms_publish")
+
+
+def _cms_publish_signal(signal_id: int):
+    try:
+        from trading_engine.services.cms_publisher import get_publisher
+        publisher = get_publisher()
+        if not publisher.is_configured:
+            return
+        result = publisher.publish_signal(signal_id)
+        logger.info(f"[CMS_HOOK] publish_signal({signal_id}) → {result.get('status')}")
+    except Exception as e:
+        logger.error(f"[CMS_HOOK] publish_signal({signal_id}) failed: {e}")
+
+
+def _cms_update_closed(signal_id: int):
+    try:
+        from trading_engine.services.cms_publisher import get_publisher
+        publisher = get_publisher()
+        if not publisher.is_configured:
+            return
+        result = publisher.update_closed_signal(signal_id)
+        logger.info(f"[CMS_HOOK] update_closed_signal({signal_id}) → {result.get('status')}")
+    except Exception as e:
+        logger.error(f"[CMS_HOOK] update_closed_signal({signal_id}) failed: {e}")
 
 STRATEGY_ASSET_CONFIG: dict[str, dict] = {
     "mtf_ema": {
@@ -169,6 +196,8 @@ def _handle_entry(
         f"ATR_locked={atr_locked} | signal_id={signal_id} | position_id={pos_id}"
     )
 
+    _cms_pool.submit(_cms_publish_signal, signal_id)
+
     signal["id"] = signal_id
     signal["status"] = "OPEN"
     return signal
@@ -193,6 +222,9 @@ def _handle_exit(
         strategy_name, asset, "EXIT",
         f"@ {exit_price:.6f} | reason={exit_reason} | closed {len(active_sigs)} signal(s)"
     )
+
+    for sig in active_sigs:
+        _cms_pool.submit(_cms_update_closed, sig["id"])
 
     return {
         **pos,
