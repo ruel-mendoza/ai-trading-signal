@@ -3310,6 +3310,10 @@ def admin_dashboard(
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                         System Status
                     </a>
+                    <a class="sidebar-link {'active' if tab == 'api_catalog' else ''}" data-tab="api_catalog" onclick="showTab('api_catalog')" data-testid="sidebar-api-catalog">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M8 7h6"/><path d="M8 11h8"/></svg>
+                        API Catalog
+                    </a>
                 </div>
             </nav>
             <div class="sidebar-footer">
@@ -3719,6 +3723,269 @@ def admin_dashboard(
                 </div>
 
                 </div>
+            </div>
+        </div>
+        <div id="tab-api_catalog" class="tab-content {'hidden' if tab != 'api_catalog' else ''}">
+            <div class="section">
+                <h2>API Catalog</h2>
+                <p style="color:#94a3b8;margin-bottom:8px;">Complete reference of all Public API v1 endpoints. All endpoints are read-only (except cache flush) and serve data from the local SQLite database.</p>
+                <p style="color:#64748b;font-size:13px;margin-bottom:24px;">Base URL: <code style="background:#1e293b;padding:2px 8px;border-radius:4px;color:#38bdf8;">/api/v1</code> &mdash; Cache: 4-shard TTLCache (60s default, 30s for scheduler endpoints)</p>
+
+                <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:4px;">Signals</div>
+                <p style="color:#64748b;font-size:12px;margin-bottom:12px;">Trading signal endpoints &mdash; active, historical, and filtered views</p>
+                <div style="overflow-x:auto;margin-bottom:28px;">
+                    <table class="data-table" data-testid="table-api-catalog-signals">
+                        <thead>
+                            <tr>
+                                <th style="width:90px;">Method</th>
+                                <th>Path</th>
+                                <th>Description</th>
+                                <th>Cache</th>
+                                <th>Parameters</th>
+                                <th style="width:70px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><span class="badge status-open">GET</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/signals/latest</td>
+                                <td>Fetch active signals in public format (LONG/SHORT, enriched with position metadata)</td>
+                                <td><span style="color:#22c55e;">60s</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">asset, strategy, asset_class</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/signals/latest')" data-testid="copy-signals-latest">Copy</button></td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge status-open">GET</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/signals/history</td>
+                                <td>Paginated signal history with full filtering (legacy format)</td>
+                                <td><span style="color:#22c55e;">60s</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">asset, strategy, status, asset_class, page, size</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/signals/history')" data-testid="copy-signals-history">Copy</button></td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge status-open">GET</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/signals/active</td>
+                                <td>Currently open signals only (legacy format with BUY/SELL direction)</td>
+                                <td><span style="color:#22c55e;">60s</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">strategy, asset, category</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/signals/active')" data-testid="copy-signals-active">Copy</button></td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge status-open">GET</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/signals/&lbrace;id&rbrace;</td>
+                                <td>Single signal by database ID (returns 404 if not found)</td>
+                                <td><span style="color:#22c55e;">60s</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">signal_id (path)</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/signals/1')" data-testid="copy-signal-detail">Copy</button></td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge status-open">GET</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/signals</td>
+                                <td>All signals (OPEN + CLOSED) with optional filters, max 200 results</td>
+                                <td><span style="color:#22c55e;">60s</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">strategy, asset, status, category, limit</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/signals')" data-testid="copy-signals-all">Copy</button></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:4px;">Market Data</div>
+                <p style="color:#64748b;font-size:12px;margin-bottom:12px;">OHLC candles and computed technical indicators from local storage</p>
+                <div style="overflow-x:auto;margin-bottom:28px;">
+                    <table class="data-table" data-testid="table-api-catalog-market">
+                        <thead>
+                            <tr>
+                                <th style="width:90px;">Method</th>
+                                <th>Path</th>
+                                <th>Description</th>
+                                <th>Cache</th>
+                                <th>Parameters</th>
+                                <th style="width:70px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><span class="badge status-open">GET</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/market/candles</td>
+                                <td>OHLC candle data for an asset/timeframe (pre-fetched by scheduler)</td>
+                                <td><span style="color:#22c55e;">60s</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">asset (required), timeframe, limit</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/market/candles?asset=EUR/USD&timeframe=D1')" data-testid="copy-candles">Copy</button></td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge status-open">GET</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/market/indicators</td>
+                                <td>Technical indicators: SMA/EMA (20/50/100/200), RSI (14/20), ATR (14/100)</td>
+                                <td><span style="color:#22c55e;">60s</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">asset (required), timeframe</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/market/indicators?asset=EUR/USD&timeframe=D1')" data-testid="copy-indicators">Copy</button></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:4px;">Strategies &amp; Positions</div>
+                <p style="color:#64748b;font-size:12px;margin-bottom:12px;">Strategy summaries and open position tracking with trailing-stop data</p>
+                <div style="overflow-x:auto;margin-bottom:28px;">
+                    <table class="data-table" data-testid="table-api-catalog-strategies">
+                        <thead>
+                            <tr>
+                                <th style="width:90px;">Method</th>
+                                <th>Path</th>
+                                <th>Description</th>
+                                <th>Cache</th>
+                                <th>Parameters</th>
+                                <th style="width:70px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><span class="badge status-open">GET</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/strategies</td>
+                                <td>List all strategies with open/closed signal counts</td>
+                                <td><span style="color:#22c55e;">60s</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">&mdash;</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/strategies')" data-testid="copy-strategies">Copy</button></td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge status-open">GET</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/positions</td>
+                                <td>Open positions with ATR at entry, highest/lowest price since entry</td>
+                                <td><span style="color:#22c55e;">60s</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">strategy, asset</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/positions')" data-testid="copy-positions">Copy</button></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:4px;">Performance Metrics</div>
+                <p style="color:#64748b;font-size:12px;margin-bottom:12px;">Win rate, gain/loss averages &mdash; recomputed every 5 minutes by background worker</p>
+                <div style="overflow-x:auto;margin-bottom:28px;">
+                    <table class="data-table" data-testid="table-api-catalog-metrics">
+                        <thead>
+                            <tr>
+                                <th style="width:90px;">Method</th>
+                                <th>Path</th>
+                                <th>Description</th>
+                                <th>Cache</th>
+                                <th>Parameters</th>
+                                <th style="width:70px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><span class="badge status-open">GET</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/metrics</td>
+                                <td>Signal performance metrics (per-asset + aggregate by default)</td>
+                                <td><span style="color:#22c55e;">60s</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">strategy, asset, period, summary_only</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/metrics')" data-testid="copy-metrics">Copy</button></td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge status-open">GET</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/metrics/summary</td>
+                                <td>Overall platform win rate, total won/lost, per-strategy breakdown</td>
+                                <td><span style="color:#22c55e;">60s</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">&mdash;</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/metrics/summary')" data-testid="copy-metrics-summary">Copy</button></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:4px;">Scheduler</div>
+                <p style="color:#64748b;font-size:12px;margin-bottom:12px;">APScheduler monitoring &mdash; 30s cache for near-real-time data</p>
+                <div style="overflow-x:auto;margin-bottom:28px;">
+                    <table class="data-table" data-testid="table-api-catalog-scheduler">
+                        <thead>
+                            <tr>
+                                <th style="width:90px;">Method</th>
+                                <th>Path</th>
+                                <th>Description</th>
+                                <th>Cache</th>
+                                <th>Parameters</th>
+                                <th style="width:70px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><span class="badge status-open">GET</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/scheduler/status</td>
+                                <td>24h success/failure counts and last job execution record</td>
+                                <td><span style="color:#f59e0b;">30s</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">&mdash;</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/scheduler/status')" data-testid="copy-sched-status">Copy</button></td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge status-open">GET</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/scheduler/jobs</td>
+                                <td>Recent job logs with strategy, status, duration, and error details</td>
+                                <td><span style="color:#f59e0b;">30s</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">limit</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/scheduler/jobs')" data-testid="copy-sched-jobs">Copy</button></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:4px;">Health &amp; State Management</div>
+                <p style="color:#64748b;font-size:12px;margin-bottom:12px;">Liveness checks and cache control</p>
+                <div style="overflow-x:auto;margin-bottom:28px;">
+                    <table class="data-table" data-testid="table-api-catalog-health">
+                        <thead>
+                            <tr>
+                                <th style="width:90px;">Method</th>
+                                <th>Path</th>
+                                <th>Description</th>
+                                <th>Cache</th>
+                                <th>Parameters</th>
+                                <th style="width:70px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><span class="badge status-open">GET</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/health</td>
+                                <td>API health with cache pool stats (shard count, hit rate, TTL)</td>
+                                <td><span style="color:#94a3b8;">None</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">&mdash;</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/health')" data-testid="copy-health">Copy</button></td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge status-open">GET</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/health/public</td>
+                                <td>Public liveness check &mdash; returns only UP/DOWN, no internal data</td>
+                                <td><span style="color:#94a3b8;">None</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">&mdash;</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/health/public')" data-testid="copy-health-public">Copy</button></td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge" style="background:rgba(59,130,246,0.15);color:#60a5fa;border-color:#3b82f6;">POST</span></td>
+                                <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/cache/flush</td>
+                                <td>Flush all 4 TTLCache shards &mdash; forces fresh data on next request</td>
+                                <td><span style="color:#94a3b8;">N/A</span></td>
+                                <td style="font-size:12px;color:#94a3b8;">&mdash;</td>
+                                <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/cache/flush')" data-testid="copy-cache-flush">Copy</button></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                    <div style="font-weight:600;color:#f1f5f9;font-size:14px;margin-bottom:8px;">Quick Reference</div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;font-size:13px;color:#94a3b8;">
+                        <div><strong style="color:#e2e8f0;">Timeframes:</strong> 30m, 1H, 4H, D1</div>
+                        <div><strong style="color:#e2e8f0;">Strategies:</strong> mtf_ema, trend_forex, trend_non_forex, sp500_momentum, highest_lowest_fx</div>
+                        <div><strong style="color:#e2e8f0;">Asset Classes:</strong> forex, crypto, commodities, indices</div>
+                        <div><strong style="color:#e2e8f0;">Signal Status:</strong> OPEN, CLOSED</div>
+                        <div><strong style="color:#e2e8f0;">Metric Periods:</strong> all_time, 7d, 30d</div>
+                        <div><strong style="color:#e2e8f0;">Swagger Docs:</strong> <a href="/docs" target="_blank" style="color:#38bdf8;text-decoration:underline;" data-testid="link-swagger-docs">/docs</a></div>
+                    </div>
+                </div>
+
+                <div id="copy-toast" style="display:none;position:fixed;bottom:24px;right:24px;background:#22c55e;color:#fff;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:500;box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:9999;" data-testid="toast-copy-success">URL copied to clipboard</div>
             </div>
         </div>
         </main>
