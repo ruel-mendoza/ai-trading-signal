@@ -435,6 +435,9 @@ def _signal_to_dict(sig: Signal) -> dict:
         "signal_timestamp": sig.signal_timestamp,
         "created_at": sig.created_at,
         "updated_at": sig.updated_at,
+        "wp_post_id": sig.wp_post_id,
+        "publish_status": sig.publish_status,
+        "wp_last_sync": sig.wp_last_sync,
     }
 
 

@@ -61,6 +61,9 @@ class Signal(Base):
     signal_timestamp = Column(Text, nullable=False)
     created_at = Column(Text, server_default=func.now())
     updated_at = Column(Text, server_default=func.now(), onupdate=func.now())
+    wp_post_id = Column(Integer, nullable=True)
+    publish_status = Column(Text, nullable=False, server_default="PENDING")
+    wp_last_sync = Column(Text, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("asset", "strategy_name", "signal_timestamp", name="uq_signal_idempotency"),
