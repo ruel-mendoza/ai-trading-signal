@@ -6,17 +6,26 @@ import { TrendingUp, Menu, Shield, LogIn, Globe } from "lucide-react";
 
 export function Navbar() {
   const [location] = useLocation();
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [userRole, setUserRole] = useState<string>("");
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     fetch("/api/engine/admin/api/auth-status", { credentials: "include" })
       .then((res) => res.json())
-      .then((data) => setIsAdmin(data.authenticated === true))
-      .catch(() => setIsAdmin(false));
+      .then((data) => {
+        setIsAuthenticated(data.authenticated === true);
+        setUserRole(data.role || "");
+      })
+      .catch(() => {
+        setIsAuthenticated(false);
+        setUserRole("");
+      });
   }, [location]);
 
-  const adminHref = isAdmin
+  const isAdmin = isAuthenticated && userRole === "ADMIN";
+
+  const adminHref = isAuthenticated
     ? "/api/engine/admin/"
     : "/api/engine/admin/login";
 
@@ -41,7 +50,7 @@ export function Navbar() {
           </Link>
 
           <div className="hidden sm:flex items-center gap-2">
-            {isAdmin && (
+            {isAuthenticated && (
               <Link href="/wordpress" data-testid="link-wordpress-desktop">
                 <Button variant="outline" size="sm">
                   <Globe className="w-4 h-4 mr-2" />
@@ -54,10 +63,10 @@ export function Navbar() {
               data-testid="link-admin-desktop"
             >
               <Button variant="default" size="sm">
-                {isAdmin ? (
+                {isAuthenticated ? (
                   <>
                     <Shield className="w-4 h-4 mr-2" />
-                    Admin Dashboard
+                    {isAdmin ? "Admin Dashboard" : "Dashboard"}
                   </>
                 ) : (
                   <>
@@ -92,7 +101,7 @@ export function Navbar() {
                       <span className="font-medium">Signals</span>
                     </div>
                   </Link>
-                  {isAdmin && (
+                  {isAuthenticated && (
                     <Link
                       href="/wordpress"
                       onClick={() => setMobileOpen(false)}
@@ -110,10 +119,10 @@ export function Navbar() {
                     data-testid="link-admin-mobile"
                   >
                     <div className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-accent cursor-pointer">
-                      {isAdmin ? (
+                      {isAuthenticated ? (
                         <>
                           <Shield className="w-5 h-5" />
-                          <span className="font-medium">Admin Dashboard</span>
+                          <span className="font-medium">{isAdmin ? "Admin Dashboard" : "Dashboard"}</span>
                         </>
                       ) : (
                         <>

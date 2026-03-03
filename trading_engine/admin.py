@@ -3321,7 +3321,7 @@ async function ucmsTest(id) {
 def auth_status(request: Request):
     user = _get_session_user(request)
     if user:
-        return JSONResponse(content={"authenticated": True, "username": user.get("username", "")})
+        return JSONResponse(content={"authenticated": True, "username": user.get("username", ""), "role": user.get("role", "CUSTOMER")})
     return JSONResponse(content={"authenticated": False})
 
 
@@ -3449,6 +3449,71 @@ def admin_dashboard(
         alert_badge = f' <span class="badge status-{"closed" if usage_stats["alert_level"] == "critical" else "expired"}">{level}</span>'
 
     logged_in_username = user["username"]
+    user_role = user.get("role", "CUSTOMER")
+    is_admin = user_role == "ADMIN"
+
+    if not is_admin and tab in ("analysis", "mtf", "trend_following", "spx", "forex_trend", "hlc_fx", "credits", "settings", "users", "notifications", "scheduler", "system"):
+        tab = "signals"
+
+    def _sidebar_link(tab_name, label, svg, active_tab, testid):
+        active_cls = "active" if active_tab == tab_name else ""
+        return f'<a class="sidebar-link {active_cls}" data-tab="{tab_name}" onclick="showTab(\'{tab_name}\')" data-testid="{testid}">{svg}{label}</a>'
+
+    def _mobile_tab(tab_name, label, active_tab):
+        active_cls = "active" if active_tab == tab_name else ""
+        return f'<a class="tab {active_cls}" data-tab="{tab_name}" onclick="showTab(\'{tab_name}\')">{label}</a>'
+
+    svg_analysis = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 21H4.6c-.56 0-.84 0-1.054-.109a1 1 0 0 1-.437-.437C3 20.24 3 19.96 3 19.4V3"/><path d="m7 14 4-4 4 4 6-6"/></svg>'
+    svg_mtf = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/><path d="M22 4v16"/></svg>'
+    svg_trend = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>'
+    svg_spx = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>'
+    svg_globe = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>'
+    svg_hlc = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>'
+    svg_credits = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/></svg>'
+    svg_clock = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'
+    svg_settings = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>'
+    svg_users = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>'
+    svg_bell = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>'
+    svg_calendar = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>'
+    svg_shield = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>'
+    svg_book = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M8 7h6"/><path d="M8 11h8"/></svg>'
+
+    analysis_link = _sidebar_link("analysis", "Signal Analysis", svg_analysis, tab, "sidebar-analysis") if is_admin else ""
+
+    strategies_block = ""
+    if is_admin:
+        strategies_block = '<div class="sidebar-group"><div class="sidebar-group-label">Strategies</div>'
+        strategies_block += _sidebar_link("mtf", "MTF EMA", svg_mtf, tab, "sidebar-mtf")
+        strategies_block += _sidebar_link("trend_following", "Trend Non-Forex", svg_trend, tab, "sidebar-trend")
+        strategies_block += _sidebar_link("spx", "SP500 Momentum", svg_spx, tab, "sidebar-spx")
+        strategies_block += _sidebar_link("forex_trend", "Trend Forex", svg_globe, tab, "sidebar-forex-trend")
+        strategies_block += _sidebar_link("hlc_fx", "Highest/Lowest FX", svg_hlc, tab, "sidebar-hlc-fx")
+        strategies_block += "</div>"
+
+    system_group_label = "System" if is_admin else "Tools"
+    admin_system_links = ""
+    if is_admin:
+        admin_system_links += _sidebar_link("credits", f"Credit Monitor{alert_badge}", svg_credits, tab, "sidebar-credits")
+        admin_system_links += _sidebar_link("timezone", "Market Hours", svg_clock, tab, "sidebar-timezone")
+        admin_system_links += _sidebar_link("settings", "Settings", svg_settings, tab, "sidebar-settings")
+        admin_system_links += _sidebar_link("users", "User Settings", svg_users, tab, "sidebar-users")
+        admin_system_links += _sidebar_link("notifications", "Notifications", svg_bell, tab, "sidebar-notifications")
+        admin_system_links += _sidebar_link("scheduler", "Scheduler Health", svg_calendar, tab, "sidebar-scheduler")
+        admin_system_links += _sidebar_link("system", "System Status", svg_shield, tab, "sidebar-system")
+
+    admin_mobile_tabs = ""
+    if is_admin:
+        admin_mobile_tabs += _mobile_tab("analysis", "Analysis", tab)
+        admin_mobile_tabs += _mobile_tab("spx", "SP500", tab)
+        admin_mobile_tabs += _mobile_tab("forex_trend", "Trend FX", tab)
+        admin_mobile_tabs += _mobile_tab("hlc_fx", "HLC FX", tab)
+        admin_mobile_tabs += _mobile_tab("credits", "Credits", tab)
+        admin_mobile_tabs += _mobile_tab("timezone", "Hours", tab)
+        admin_mobile_tabs += _mobile_tab("settings", "Settings", tab)
+        admin_mobile_tabs += _mobile_tab("users", "Users", tab)
+        admin_mobile_tabs += _mobile_tab("notifications", "Alerts", tab)
+        admin_mobile_tabs += _mobile_tab("scheduler", "Scheduler", tab)
+        admin_mobile_tabs += _mobile_tab("system", "System", tab)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -3476,76 +3541,15 @@ def admin_dashboard(
             <nav class="sidebar-nav">
                 <div class="sidebar-group">
                     <div class="sidebar-group-label">Overview</div>
-                    <a class="sidebar-link {'active' if tab == 'signals' else ''}" data-tab="signals" onclick="showTab('signals')" data-testid="sidebar-signals">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
-                        Global Overview
-                    </a>
-                    <a class="sidebar-link {'active' if tab == 'analysis' else ''}" data-tab="analysis" onclick="showTab('analysis')" data-testid="sidebar-analysis">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 21H4.6c-.56 0-.84 0-1.054-.109a1 1 0 0 1-.437-.437C3 20.24 3 19.96 3 19.4V3"/><path d="m7 14 4-4 4 4 6-6"/></svg>
-                        Signal Analysis
-                    </a>
+                    {_sidebar_link("signals", "My Signals", '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>', tab, "sidebar-signals")}
+                    {analysis_link}
                 </div>
+                {strategies_block}
                 <div class="sidebar-group">
-                    <div class="sidebar-group-label">Strategies</div>
-                    <a class="sidebar-link {'active' if tab == 'mtf' else ''}" data-tab="mtf" onclick="showTab('mtf')" data-testid="sidebar-mtf">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/><path d="M22 4v16"/></svg>
-                        MTF EMA
-                    </a>
-                    <a class="sidebar-link {'active' if tab == 'trend_following' else ''}" data-tab="trend_following" onclick="showTab('trend_following')" data-testid="sidebar-trend">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
-                        Trend Non-Forex
-                    </a>
-                    <a class="sidebar-link {'active' if tab == 'spx' else ''}" data-tab="spx" onclick="showTab('spx')" data-testid="sidebar-spx">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
-                        SP500 Momentum
-                    </a>
-                    <a class="sidebar-link {'active' if tab == 'forex_trend' else ''}" data-tab="forex_trend" onclick="showTab('forex_trend')" data-testid="sidebar-forex-trend">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                        Trend Forex
-                    </a>
-                    <a class="sidebar-link {'active' if tab == 'hlc_fx' else ''}" data-tab="hlc_fx" onclick="showTab('hlc_fx')" data-testid="sidebar-hlc-fx">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
-                        Highest/Lowest FX
-                    </a>
-                </div>
-                <div class="sidebar-group">
-                    <div class="sidebar-group-label">System</div>
-                    <a class="sidebar-link {'active' if tab == 'credits' else ''}" data-tab="credits" onclick="showTab('credits')" data-testid="sidebar-credits">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/></svg>
-                        Credit Monitor{alert_badge}
-                    </a>
-                    <a class="sidebar-link {'active' if tab == 'timezone' else ''}" data-tab="timezone" onclick="showTab('timezone')" data-testid="sidebar-timezone">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                        Market Hours
-                    </a>
-                    <a class="sidebar-link {'active' if tab == 'settings' else ''}" data-tab="settings" onclick="showTab('settings')" data-testid="sidebar-settings">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-                        Settings
-                    </a>
-                    <a class="sidebar-link {'active' if tab == 'users' else ''}" data-tab="users" onclick="showTab('users')" data-testid="sidebar-users">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                        User Settings
-                    </a>
-                    <a class="sidebar-link {'active' if tab == 'notifications' else ''}" data-tab="notifications" onclick="showTab('notifications')" data-testid="sidebar-notifications">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-                        Notifications
-                    </a>
-                    <a class="sidebar-link {'active' if tab == 'scheduler' else ''}" data-tab="scheduler" onclick="showTab('scheduler')" data-testid="sidebar-scheduler">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
-                        Scheduler Health
-                    </a>
-                    <a class="sidebar-link {'active' if tab == 'system' else ''}" data-tab="system" onclick="showTab('system')" data-testid="sidebar-system">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                        System Status
-                    </a>
-                    <a class="sidebar-link {'active' if tab == 'wordpress' else ''}" data-tab="wordpress" onclick="showTab('wordpress')" data-testid="sidebar-wordpress">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                        WordPress
-                    </a>
-                    <a class="sidebar-link {'active' if tab == 'api_catalog' else ''}" data-tab="api_catalog" onclick="showTab('api_catalog')" data-testid="sidebar-api-catalog">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M8 7h6"/><path d="M8 11h8"/></svg>
-                        API Catalog
-                    </a>
+                    <div class="sidebar-group-label">{system_group_label}</div>
+                    {admin_system_links}
+                    {_sidebar_link("wordpress", "WordPress", svg_globe, tab, "sidebar-wordpress")}
+                    {_sidebar_link("api_catalog", "API Catalog", svg_book, tab, "sidebar-api-catalog")}
                 </div>
             </nav>
             <div class="sidebar-footer">
@@ -3557,19 +3561,10 @@ def admin_dashboard(
         </aside>
         <main class="main-content">
             <div class="mobile-tab-bar">
-                <a class="tab {'active' if tab == 'signals' else ''}" data-tab="signals" onclick="showTab('signals')">Overview</a>
-                <a class="tab {'active' if tab == 'analysis' else ''}" data-tab="analysis" onclick="showTab('analysis')">Analysis</a>
-                <a class="tab {'active' if tab == 'spx' else ''}" data-tab="spx" onclick="showTab('spx')">SP500</a>
-                <a class="tab {'active' if tab == 'forex_trend' else ''}" data-tab="forex_trend" onclick="showTab('forex_trend')">Trend FX</a>
-                <a class="tab {'active' if tab == 'hlc_fx' else ''}" data-tab="hlc_fx" onclick="showTab('hlc_fx')">HLC FX</a>
-                <a class="tab {'active' if tab == 'credits' else ''}" data-tab="credits" onclick="showTab('credits')">Credits</a>
-                <a class="tab {'active' if tab == 'timezone' else ''}" data-tab="timezone" onclick="showTab('timezone')">Hours</a>
-                <a class="tab {'active' if tab == 'settings' else ''}" data-tab="settings" onclick="showTab('settings')">Settings</a>
-                <a class="tab {'active' if tab == 'users' else ''}" data-tab="users" onclick="showTab('users')">Users</a>
-                <a class="tab {'active' if tab == 'notifications' else ''}" data-tab="notifications" onclick="showTab('notifications')">Alerts</a>
-                <a class="tab {'active' if tab == 'scheduler' else ''}" data-tab="scheduler" onclick="showTab('scheduler')">Scheduler</a>
-                <a class="tab {'active' if tab == 'system' else ''}" data-tab="system" onclick="showTab('system')">System</a>
-                <a class="tab {'active' if tab == 'wordpress' else ''}" data-tab="wordpress" onclick="showTab('wordpress')">WordPress</a>
+                {_mobile_tab("signals", "My Signals", tab)}
+                {admin_mobile_tabs}
+                {_mobile_tab("wordpress", "WordPress", tab)}
+                {_mobile_tab("api_catalog", "API", tab)}
             </div>
 
             <div id="tab-signals" class="tab-content {'hidden' if tab != 'signals' else ''}">
@@ -4376,7 +4371,7 @@ def export_signals(
     status: Optional[str] = Query(None),
     symbol: Optional[str] = Query(None),
 ):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
 
@@ -4410,7 +4405,7 @@ def export_signals(
 
 @router.get("/api/usage")
 def api_usage_stats(request: Request):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     stats = get_api_usage_stats()
@@ -4428,7 +4423,7 @@ def market_times(request: Request):
 
 @router.post("/api/settings/key")
 def save_api_key(request: Request, body: dict = Body(...)):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     api_key = body.get("api_key", "").strip()
@@ -4440,7 +4435,7 @@ def save_api_key(request: Request, body: dict = Body(...)):
 
 @router.post("/api/settings/test-connection")
 def test_api_connection(request: Request):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     from trading_engine.fcsapi_client import FCSAPIClient
@@ -4451,7 +4446,7 @@ def test_api_connection(request: Request):
 
 @router.get("/api/settings")
 def get_settings(request: Request):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     db_key = get_setting("fcsapi_key")
@@ -4518,7 +4513,7 @@ def api_delete_admin(request: Request, admin_id: int):
 
 @router.get("/api/spx-momentum")
 def api_spx_momentum(request: Request):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     data = _get_spx_momentum_data()
@@ -4527,7 +4522,7 @@ def api_spx_momentum(request: Request):
 
 @router.get("/api/users")
 def api_list_admins(request: Request):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     admins = get_all_admins()
@@ -4554,7 +4549,7 @@ def api_scheduler_job_logs(request: Request, limit: int = Query(50, ge=1, le=200
 
 @router.get("/api/notifications")
 def api_get_notification_config(request: Request):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     from trading_engine.notifications import get_full_config, NOTIFICATION_CATEGORIES
@@ -4565,7 +4560,7 @@ def api_get_notification_config(request: Request):
 
 @router.post("/api/notifications")
 def api_update_notification_config(request: Request, body: dict = Body(...)):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     from trading_engine.notifications import (
@@ -4607,7 +4602,7 @@ def api_update_notification_config(request: Request, body: dict = Body(...)):
 
 @router.get("/api/webhook")
 def api_get_webhook(request: Request):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     from trading_engine.notifications import get_webhook_url
@@ -4620,7 +4615,7 @@ def api_get_webhook(request: Request):
 
 @router.post("/api/webhook")
 def api_set_webhook(request: Request, body: dict = Body(...)):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     from trading_engine.notifications import configure_webhook
@@ -4638,7 +4633,7 @@ def api_set_webhook(request: Request, body: dict = Body(...)):
 
 @router.post("/api/webhook/test")
 def api_test_webhook(request: Request):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     from trading_engine.notifications import send_alert, get_webhook_url
@@ -4655,7 +4650,7 @@ def api_test_webhook(request: Request):
 
 @router.post("/api/signals/{signal_id}/retry-publish")
 def api_retry_publish(request: Request, signal_id: int):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     from trading_engine.services.cms_publisher import get_publisher
@@ -4672,7 +4667,7 @@ def api_retry_publish(request: Request, signal_id: int):
 
 @router.post("/api/signals/{signal_id}/update-wp")
 def api_update_wp_post(request: Request, signal_id: int):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     from trading_engine.services.cms_publisher import get_publisher
@@ -4689,7 +4684,7 @@ def api_update_wp_post(request: Request, signal_id: int):
 
 @router.get("/api/wordpress/credentials")
 def api_list_wp_credentials(request: Request):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     from trading_engine.database import get_all_wp_credentials
@@ -4698,7 +4693,7 @@ def api_list_wp_credentials(request: Request):
 
 @router.post("/api/wordpress/credentials")
 def api_create_wp_credential(request: Request, body: dict = Body(...)):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     required = ["label", "wp_url", "wp_username", "app_password"]
@@ -4715,7 +4710,7 @@ def api_create_wp_credential(request: Request, body: dict = Body(...)):
 
 @router.delete("/api/wordpress/credentials/{cred_id}")
 def api_delete_wp_credential(request: Request, cred_id: int):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     from trading_engine.database import delete_wp_credential
@@ -4726,7 +4721,7 @@ def api_delete_wp_credential(request: Request, cred_id: int):
 
 @router.post("/api/wordpress/credentials/{cred_id}/test")
 def api_test_wp_credential(request: Request, cred_id: int):
-    guard = _auth_guard(request)
+    guard = _admin_role_guard(request)
     if guard:
         return guard
     from trading_engine.database import get_wp_credential_decrypted
