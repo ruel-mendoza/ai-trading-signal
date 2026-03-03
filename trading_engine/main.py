@@ -565,10 +565,55 @@ async def lifespan(app: FastAPI):
     logger.info("[SCHEDULER] APScheduler + watchdog shut down")
 
 
+API_TAGS_METADATA = [
+    {
+        "name": "Signals",
+        "description": "Retrieve trading signals — active, historical, and per-asset. All data is read from the local SQLite database with no external API calls.",
+    },
+    {
+        "name": "Market Data",
+        "description": "OHLC candle data and computed technical indicators (SMA, EMA, RSI, ATR) for supported assets and timeframes.",
+    },
+    {
+        "name": "Positions",
+        "description": "Open position tracking with trailing-stop metadata (ATR at entry, highest/lowest price since entry).",
+    },
+    {
+        "name": "Metrics",
+        "description": "Signal performance analytics — win rate, gain/loss averages, and per-strategy breakdowns. Computed every 5 minutes by a background worker.",
+    },
+    {
+        "name": "Strategies",
+        "description": "Strategy summary with open/closed signal counts for each registered trading strategy.",
+    },
+    {
+        "name": "Scheduler",
+        "description": "APScheduler health monitoring — 24h success/failure counts and recent job execution logs.",
+    },
+    {
+        "name": "Health",
+        "description": "API liveness and readiness checks. The public health endpoint exposes no internal metadata.",
+    },
+    {
+        "name": "State Management",
+        "description": "Cache control operations. Flush the 4-shard TTLCache to force fresh data on subsequent requests.",
+    },
+]
+
 app = FastAPI(
-    title="Trading Signal Engine",
-    description="Python-based trading signal engine with OHLC data, caching, and technical indicators",
-    version="2.0.0",
+    title="DailyForex Premium API",
+    version="1.0.0",
+    description=(
+        "**DailyForex Premium** — Read-only trading signals API for forex, crypto, commodities, and indices.\n\n"
+        "All data is served from a local SQLite database with a 4-shard TTLCache (60s default). "
+        "No external API calls are made on request — OHLC data and signals are pre-computed by a background scheduler.\n\n"
+        "**Credit Limit:** The platform operates under a 500,000 FCSAPI credit cap. "
+        "A kill switch automatically halts outbound data fetches at 495,000 credits to prevent overages.\n\n"
+        "**Internal Use Only:** This API is designed for the DailyForex frontend and is not intended for public redistribution.\n\n"
+        "**Strategies:** MTF EMA (multi-timeframe), Trend Following (forex & non-forex), SP500 Momentum, Highest/Lowest Close FX.\n\n"
+        "**Assets:** EUR/USD, GBP/USD, USD/JPY, AUD/USD, BTC/USD, ETH/USD, XAU/USD, XAG/USD, SPX, NDX, RUT, and more."
+    ),
+    openapi_tags=API_TAGS_METADATA,
     lifespan=lifespan,
 )
 
