@@ -837,21 +837,21 @@ def get_user_by_email(email: str) -> Optional[dict]:
         return None
 
 
-def create_admin(username: str, password: str, email: Optional[str] = None, full_name: Optional[str] = None) -> Optional[int]:
+def create_admin(username: str, password: str, email: Optional[str] = None, full_name: Optional[str] = None, role: str = "CUSTOMER") -> Optional[int]:
     pw_hash = _hash_password(password)
     with _get_session() as session:
         try:
-            user = AdminUser(username=username, password_hash=pw_hash, email=email, full_name=full_name)
+            user = AdminUser(username=username, password_hash=pw_hash, email=email, full_name=full_name, role=role)
             session.add(user)
             session.commit()
-            logger.info(f"[DB] Created admin user: {username}")
+            logger.info(f"[DB] Created user: {username} (role={role})")
             return user.id
         except Exception:
             session.rollback()
             return None
 
 
-def update_admin(admin_id: int, username: Optional[str] = None, password: Optional[str] = None) -> bool:
+def update_admin(admin_id: int, username: Optional[str] = None, password: Optional[str] = None, role: Optional[str] = None) -> bool:
     with _get_session() as session:
         try:
             user = session.query(AdminUser).filter_by(id=admin_id).first()
@@ -861,6 +861,8 @@ def update_admin(admin_id: int, username: Optional[str] = None, password: Option
                 user.username = username
             if password:
                 user.password_hash = _hash_password(password)
+            if role and role in ("ADMIN", "CUSTOMER"):
+                user.role = role
             session.commit()
             return True
         except Exception:
@@ -891,7 +893,7 @@ def get_admin_by_id(admin_id: int) -> Optional[dict]:
     with _get_session() as session:
         user = session.query(AdminUser).filter_by(id=admin_id).first()
         if user:
-            return {"id": user.id, "username": user.username, "created_at": user.created_at}
+            return {"id": user.id, "username": user.username, "role": user.role or "CUSTOMER", "created_at": user.created_at}
         return None
 
 

@@ -2399,26 +2399,32 @@ def _build_users_html(current_user_id: int) -> str:
     for a in admins:
         is_self = a["id"] == current_user_id
         self_badge = ' <span class="badge status-active">YOU</span>' if is_self else ""
+        role = a.get("role", "CUSTOMER")
+        role_color = "#3b82f6" if role == "ADMIN" else "#22c55e"
+        role_bg = "rgba(59,130,246,0.15)" if role == "ADMIN" else "rgba(34,197,94,0.15)"
+        role_badge = f'<span style="display:inline-block;padding:2px 10px;border-radius:9999px;font-size:11px;font-weight:600;color:{role_color};background:{role_bg};border:1px solid {role_color}33;">{role}</span>'
         rows += f"""
         <tr data-testid="row-admin-{a['id']}">
             <td>{a['id']}</td>
             <td>{a['username']}{self_badge}</td>
+            <td>{role_badge}</td>
             <td>{a['created_at']}</td>
             <td>
-                <button class="btn btn-secondary btn-sm" onclick="editAdmin({a['id']}, '{a['username']}')" data-testid="button-edit-admin-{a['id']}">Edit</button>
+                <button class="btn btn-secondary btn-sm" onclick="editAdmin({a['id']}, '{a['username']}', '{role}')" data-testid="button-edit-admin-{a['id']}">Edit</button>
                 <button class="btn btn-danger btn-sm" onclick="deleteAdmin({a['id']}, '{a['username']}')" data-testid="button-delete-admin-{a['id']}" {'disabled style="opacity:0.5;cursor:not-allowed;"' if len(admins) <= 1 else ''}>Delete</button>
             </td>
         </tr>"""
 
     return f"""
     <div class="settings-section">
-        <h3>Admin Users</h3>
-        <p class="settings-desc">Manage admin accounts that can access this dashboard.</p>
+        <h3>User Management</h3>
+        <p class="settings-desc">Manage user accounts and assign roles. Admins have full dashboard access; Customers can manage their own settings and WordPress connections.</p>
         <table class="data-table" data-testid="admin-users-table" style="margin-top:12px;">
             <thead>
                 <tr>
                     <th>ID</th>
                     <th>Username</th>
+                    <th>Role</th>
                     <th>Created</th>
                     <th>Actions</th>
                 </tr>
@@ -2428,25 +2434,38 @@ def _build_users_html(current_user_id: int) -> str:
     </div>
 
     <div class="settings-section" style="margin-top:20px;">
-        <h3>Add New Admin</h3>
+        <h3>Add New User</h3>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;">
             <input type="text" id="new-admin-username" placeholder="Username" data-testid="input-new-admin-username"
                 style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:10px 14px;border-radius:6px;font-size:0.9rem;width:200px;">
             <input type="password" id="new-admin-password" placeholder="Password" data-testid="input-new-admin-password"
                 style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:10px 14px;border-radius:6px;font-size:0.9rem;width:200px;">
-            <button class="btn btn-primary" onclick="addAdmin()" data-testid="button-add-admin">Add Admin</button>
+            <select id="new-admin-role" data-testid="select-new-admin-role"
+                style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:10px 14px;border-radius:6px;font-size:0.9rem;width:160px;cursor:pointer;">
+                <option value="CUSTOMER">Customer</option>
+                <option value="ADMIN">Admin</option>
+            </select>
+            <button class="btn btn-primary" onclick="addAdmin()" data-testid="button-add-admin">Add User</button>
         </div>
         <div id="add-admin-result" style="margin-top:12px;"></div>
     </div>
 
     <div id="edit-modal" class="modal-overlay hidden">
         <div class="modal-card">
-            <h3>Edit Admin</h3>
+            <h3>Edit User</h3>
             <input type="hidden" id="edit-admin-id">
             <div class="form-group" style="margin-top:12px;">
                 <label style="font-size:0.85rem;color:#94a3b8;margin-bottom:4px;display:block;">Username</label>
                 <input type="text" id="edit-admin-username" data-testid="input-edit-admin-username"
                     style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:10px 14px;border-radius:6px;font-size:0.9rem;width:100%;">
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label style="font-size:0.85rem;color:#94a3b8;margin-bottom:4px;display:block;">Role</label>
+                <select id="edit-admin-role" data-testid="select-edit-admin-role"
+                    style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:10px 14px;border-radius:6px;font-size:0.9rem;width:100%;cursor:pointer;">
+                    <option value="CUSTOMER">Customer</option>
+                    <option value="ADMIN">Admin</option>
+                </select>
             </div>
             <div class="form-group" style="margin-top:12px;">
                 <label style="font-size:0.85rem;color:#94a3b8;margin-bottom:4px;display:block;">New Password (leave blank to keep current)</label>
@@ -2699,6 +2718,7 @@ async function loadCreditMeter() {
 async function addAdmin() {
     const username = document.getElementById('new-admin-username').value.trim();
     const password = document.getElementById('new-admin-password').value;
+    const role = document.getElementById('new-admin-role').value;
     const resultDiv = document.getElementById('add-admin-result');
     if (!username || !password) {
         resultDiv.innerHTML = '<div class="result-error">Both username and password are required.</div>';
@@ -2712,25 +2732,27 @@ async function addAdmin() {
         const res = await fetch(BASE + '/admin/api/users', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({username, password})
+            body: JSON.stringify({username, password, role})
         });
         const data = await res.json();
         if (data.success) {
-            resultDiv.innerHTML = '<div class="result-success">Admin "' + username + '" created successfully.</div>';
+            resultDiv.innerHTML = '<div class="result-success">User "' + username + '" created as ' + role + '.</div>';
             document.getElementById('new-admin-username').value = '';
             document.getElementById('new-admin-password').value = '';
+            document.getElementById('new-admin-role').value = 'CUSTOMER';
             setTimeout(() => window.location.reload(), 1000);
         } else {
-            resultDiv.innerHTML = '<div class="result-error">' + (data.error || 'Failed to create admin.') + '</div>';
+            resultDiv.innerHTML = '<div class="result-error">' + (data.error || 'Failed to create user.') + '</div>';
         }
     } catch (e) {
         resultDiv.innerHTML = '<div class="result-error">Error: ' + e.message + '</div>';
     }
 }
 
-function editAdmin(id, username) {
+function editAdmin(id, username, role) {
     document.getElementById('edit-admin-id').value = id;
     document.getElementById('edit-admin-username').value = username;
+    document.getElementById('edit-admin-role').value = role || 'CUSTOMER';
     document.getElementById('edit-admin-password').value = '';
     document.getElementById('edit-admin-result').innerHTML = '';
     document.getElementById('edit-modal').classList.remove('hidden');
@@ -2743,6 +2765,7 @@ function closeEditModal() {
 async function saveEditAdmin() {
     const id = document.getElementById('edit-admin-id').value;
     const username = document.getElementById('edit-admin-username').value.trim();
+    const role = document.getElementById('edit-admin-role').value;
     const password = document.getElementById('edit-admin-password').value;
     const resultDiv = document.getElementById('edit-admin-result');
     if (!username) {
@@ -2754,7 +2777,7 @@ async function saveEditAdmin() {
         return;
     }
     try {
-        const body = {username};
+        const body = {username, role};
         if (password) body.password = password;
         const res = await fetch(BASE + '/admin/api/users/' + id, {
             method: 'PUT',
@@ -2763,10 +2786,10 @@ async function saveEditAdmin() {
         });
         const data = await res.json();
         if (data.success) {
-            resultDiv.innerHTML = '<div class="result-success">Admin updated successfully.</div>';
+            resultDiv.innerHTML = '<div class="result-success">User updated successfully.</div>';
             setTimeout(() => { closeEditModal(); window.location.reload(); }, 1000);
         } else {
-            resultDiv.innerHTML = '<div class="result-error">' + (data.error || 'Failed to update admin.') + '</div>';
+            resultDiv.innerHTML = '<div class="result-error">' + (data.error || 'Failed to update user.') + '</div>';
         }
     } catch (e) {
         resultDiv.innerHTML = '<div class="result-error">Error: ' + e.message + '</div>';
@@ -4426,11 +4449,14 @@ def api_create_admin(request: Request, body: dict = Body(...)):
         return guard
     username = body.get("username", "").strip()
     password = body.get("password", "")
+    role = body.get("role", "CUSTOMER").strip().upper()
+    if role not in ("ADMIN", "CUSTOMER"):
+        role = "CUSTOMER"
     if not username or not password:
         return JSONResponse(content={"success": False, "error": "Username and password are required."})
     if len(password) < 4:
         return JSONResponse(content={"success": False, "error": "Password must be at least 4 characters."})
-    admin_id = create_admin(username, password)
+    admin_id = create_admin(username, password, role=role)
     if admin_id is None:
         return JSONResponse(content={"success": False, "error": f'Username "{username}" already exists.'})
     return JSONResponse(content={"success": True, "id": admin_id})
@@ -4443,14 +4469,22 @@ def api_update_admin(request: Request, admin_id: int, body: dict = Body(...)):
         return guard
     username = body.get("username", "").strip()
     password = body.get("password", "")
+    role = body.get("role", "").strip().upper() or None
+    if role and role not in ("ADMIN", "CUSTOMER"):
+        role = None
     if not username:
         return JSONResponse(content={"success": False, "error": "Username cannot be empty."})
     if password and len(password) < 4:
         return JSONResponse(content={"success": False, "error": "Password must be at least 4 characters."})
     existing = get_admin_by_id(admin_id)
     if not existing:
-        return JSONResponse(content={"success": False, "error": "Admin not found."})
-    success = update_admin(admin_id, username=username, password=password if password else None)
+        return JSONResponse(content={"success": False, "error": "User not found."})
+    if role == "CUSTOMER" and existing.get("role") == "ADMIN":
+        all_users = get_all_admins()
+        admin_count = sum(1 for u in all_users if u.get("role") == "ADMIN")
+        if admin_count <= 1:
+            return JSONResponse(content={"success": False, "error": "Cannot demote the last admin user."})
+    success = update_admin(admin_id, username=username, password=password if password else None, role=role)
     if not success:
         return JSONResponse(content={"success": False, "error": f'Username "{username}" already exists.'})
     return JSONResponse(content={"success": True})
