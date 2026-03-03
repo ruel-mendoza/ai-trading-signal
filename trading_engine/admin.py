@@ -2567,6 +2567,7 @@ function showTab(tabName) {
     if (tabName === 'notifications') loadNotifConfig();
     if (tabName === 'scheduler') loadSchedulerData();
     if (tabName === 'system') loadSystemStatus();
+    if (tabName === 'wordpress') loadWpCredentials();
 }
 
 function showStrategyTab(strategyName) {
@@ -3090,6 +3091,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (activeTab && activeTab.getAttribute('data-tab') === 'notifications') loadNotifConfig();
     if (activeTab && activeTab.getAttribute('data-tab') === 'scheduler') loadSchedulerData();
     if (activeTab && activeTab.getAttribute('data-tab') === 'system') loadSystemStatus();
+    if (activeTab && activeTab.getAttribute('data-tab') === 'wordpress') loadWpCredentials();
 });
 
 function copyApiUrl(path) {
@@ -3103,6 +3105,109 @@ function copyApiUrl(path) {
     }).catch(function() {
         prompt('Copy this URL:', fullUrl);
     });
+}
+
+function wpShowMsg(msg, isError) {
+    var el = document.getElementById('wp-status-msg');
+    el.textContent = msg;
+    el.style.display = 'block';
+    el.style.background = isError ? '#7f1d1d' : '#14532d';
+    el.style.color = isError ? '#fca5a5' : '#86efac';
+    setTimeout(function() { el.style.display = 'none'; }, 5000);
+}
+
+async function loadWpCredentials() {
+    try {
+        var resp = await fetch(BASE + '/admin/api/wordpress/credentials');
+        if (!resp.ok) throw new Error('Failed to load');
+        var data = await resp.json();
+        var tbody = document.getElementById('wp-creds-body');
+        if (!data.length) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#64748b;">No WordPress credentials configured</td></tr>';
+            return;
+        }
+        tbody.innerHTML = data.map(function(c) {
+            var statusBadge = c.is_active
+                ? '<span style="background:#14532d;color:#86efac;padding:2px 10px;border-radius:9999px;font-size:12px;">Active</span>'
+                : '<span style="background:#7f1d1d;color:#fca5a5;padding:2px 10px;border-radius:9999px;font-size:12px;">Inactive</span>';
+            return '<tr data-testid="row-wp-cred-' + c.id + '">' +
+                '<td>' + c.id + '</td>' +
+                '<td>' + (c.label || '') + '</td>' +
+                '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">' + (c.wp_url || '') + '</td>' +
+                '<td>' + (c.wp_username || '') + '</td>' +
+                '<td>' + statusBadge + '</td>' +
+                '<td style="font-size:12px;color:#94a3b8;">' + (c.created_at || '') + '</td>' +
+                '<td style="display:flex;gap:6px;">' +
+                    '<button class="btn btn-primary" style="padding:4px 10px;font-size:12px;" onclick="wpTest(' + c.id + ')" data-testid="btn-wp-test-' + c.id + '">Test</button>' +
+                    '<button class="btn" style="padding:4px 10px;font-size:12px;background:#7f1d1d;color:#fca5a5;" onclick="wpDelete(' + c.id + ')" data-testid="btn-wp-delete-' + c.id + '">Delete</button>' +
+                '</td></tr>';
+        }).join('');
+    } catch(e) {
+        document.getElementById('wp-creds-body').innerHTML = '<tr><td colspan="7" style="text-align:center;color:#f87171;">Error loading credentials</td></tr>';
+    }
+}
+
+async function wpCreate() {
+    var label = document.getElementById('wp-label').value.trim();
+    var url = document.getElementById('wp-url').value.trim();
+    var username = document.getElementById('wp-username').value.trim();
+    var password = document.getElementById('wp-password').value.trim();
+    if (!label || !url || !username || !password) {
+        wpShowMsg('All fields are required', true);
+        return;
+    }
+    try {
+        var resp = await fetch(BASE + '/admin/api/wordpress/credentials', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({label: label, wp_url: url, wp_username: username, app_password: password})
+        });
+        var data = await resp.json();
+        if (resp.ok) {
+            wpShowMsg('Credential created (ID: ' + data.id + ')', false);
+            document.getElementById('wp-add-form').style.display = 'none';
+            document.getElementById('wp-label').value = '';
+            document.getElementById('wp-url').value = '';
+            document.getElementById('wp-username').value = '';
+            document.getElementById('wp-password').value = '';
+            loadWpCredentials();
+        } else {
+            wpShowMsg(data.message || 'Create failed', true);
+        }
+    } catch(e) {
+        wpShowMsg('Network error', true);
+    }
+}
+
+async function wpDelete(id) {
+    if (!confirm('Delete WordPress credential #' + id + '?')) return;
+    try {
+        var resp = await fetch(BASE + '/admin/api/wordpress/credentials/' + id, {method: 'DELETE'});
+        var data = await resp.json();
+        if (resp.ok) {
+            wpShowMsg('Credential deleted', false);
+            loadWpCredentials();
+        } else {
+            wpShowMsg(data.message || 'Delete failed', true);
+        }
+    } catch(e) {
+        wpShowMsg('Network error', true);
+    }
+}
+
+async function wpTest(id) {
+    wpShowMsg('Testing connection...', false);
+    try {
+        var resp = await fetch(BASE + '/admin/api/wordpress/credentials/' + id + '/test', {method: 'POST'});
+        var data = await resp.json();
+        if (data.status === 'ok') {
+            wpShowMsg('Connection successful! Site: ' + (data.site_name || 'OK'), false);
+        } else {
+            wpShowMsg('Connection failed: ' + (data.message || 'Unknown error'), true);
+        }
+    } catch(e) {
+        wpShowMsg('Network error during test', true);
+    }
 }
 """
 
@@ -3328,6 +3433,10 @@ def admin_dashboard(
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                         System Status
                     </a>
+                    <a class="sidebar-link {'active' if tab == 'wordpress' else ''}" data-tab="wordpress" onclick="showTab('wordpress')" data-testid="sidebar-wordpress">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                        WordPress
+                    </a>
                     <a class="sidebar-link {'active' if tab == 'api_catalog' else ''}" data-tab="api_catalog" onclick="showTab('api_catalog')" data-testid="sidebar-api-catalog">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M8 7h6"/><path d="M8 11h8"/></svg>
                         API Catalog
@@ -3355,6 +3464,7 @@ def admin_dashboard(
                 <a class="tab {'active' if tab == 'notifications' else ''}" data-tab="notifications" onclick="showTab('notifications')">Alerts</a>
                 <a class="tab {'active' if tab == 'scheduler' else ''}" data-tab="scheduler" onclick="showTab('scheduler')">Scheduler</a>
                 <a class="tab {'active' if tab == 'system' else ''}" data-tab="system" onclick="showTab('system')">System</a>
+                <a class="tab {'active' if tab == 'wordpress' else ''}" data-tab="wordpress" onclick="showTab('wordpress')">WordPress</a>
             </div>
 
             <div id="tab-signals" class="tab-content {'hidden' if tab != 'signals' else ''}">
@@ -4018,6 +4128,63 @@ def admin_dashboard(
                 <div id="copy-toast" style="display:none;position:fixed;bottom:24px;right:24px;background:#22c55e;color:#fff;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:500;box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:9999;" data-testid="toast-copy-success">URL copied to clipboard</div>
             </div>
         </div>
+
+        <div id="tab-wordpress" class="tab-content {'hidden' if tab != 'wordpress' else ''}">
+            <div class="section">
+                <h2>WordPress Credentials</h2>
+                <p style="color:#94a3b8;margin-bottom:16px;">Manage WordPress site connections for signal publishing. Passwords are encrypted at rest.</p>
+
+                <div style="display:flex;gap:12px;margin-bottom:24px;">
+                    <button class="btn btn-primary" onclick="document.getElementById('wp-add-form').style.display='block'" data-testid="btn-wp-add">Add Credential</button>
+                </div>
+
+                <div id="wp-add-form" style="display:none;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:20px;margin-bottom:24px;">
+                    <h3 style="margin-bottom:16px;color:#f1f5f9;">New WordPress Configuration</h3>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+                        <div>
+                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Label</label>
+                            <input type="text" id="wp-label" placeholder="e.g. DailyForex Blog" style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;" data-testid="input-wp-label">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">WordPress URL</label>
+                            <input type="text" id="wp-url" placeholder="https://yourdomain.com" style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;" data-testid="input-wp-url">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Username</label>
+                            <input type="text" id="wp-username" placeholder="admin" style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;" data-testid="input-wp-username">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Application Password</label>
+                            <input type="password" id="wp-password" placeholder="xxxx xxxx xxxx xxxx" style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;" data-testid="input-wp-password">
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <button class="btn btn-primary" onclick="wpCreate()" data-testid="btn-wp-save">Save</button>
+                        <button class="btn" onclick="document.getElementById('wp-add-form').style.display='none'" data-testid="btn-wp-cancel">Cancel</button>
+                    </div>
+                </div>
+
+                <div id="wp-status-msg" style="display:none;padding:10px 16px;border-radius:6px;margin-bottom:16px;font-size:14px;" data-testid="text-wp-status"></div>
+
+                <table class="signal-table" data-testid="table-wp-credentials">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Label</th>
+                            <th>URL</th>
+                            <th>Username</th>
+                            <th>Status</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="wp-creds-body">
+                        <tr><td colspan="7" style="text-align:center;color:#64748b;">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         </main>
     </div>
     <script>{ADMIN_JS}</script>
@@ -4350,3 +4517,82 @@ def api_update_wp_post(request: Request, signal_id: int):
     result = publisher.update_closed_signal(signal_id)
     status_code = 200 if result["status"] == "ok" else 500
     return JSONResponse(content=result, status_code=status_code)
+
+
+@router.get("/api/wordpress/credentials")
+def api_list_wp_credentials(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import get_all_wp_credentials
+    return JSONResponse(content=get_all_wp_credentials())
+
+
+@router.post("/api/wordpress/credentials")
+def api_create_wp_credential(request: Request, body: dict = Body(...)):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    required = ["label", "wp_url", "wp_username", "app_password"]
+    for f in required:
+        if not body.get(f, "").strip():
+            return JSONResponse(content={"status": "error", "message": f"Missing required field: {f}"}, status_code=400)
+    from trading_engine.database import create_wp_credential
+    try:
+        cred_id = create_wp_credential(body)
+        return JSONResponse(content={"status": "ok", "id": cred_id})
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
+
+@router.delete("/api/wordpress/credentials/{cred_id}")
+def api_delete_wp_credential(request: Request, cred_id: int):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import delete_wp_credential
+    if delete_wp_credential(cred_id):
+        return JSONResponse(content={"status": "ok"})
+    return JSONResponse(content={"status": "error", "message": "Credential not found"}, status_code=404)
+
+
+@router.post("/api/wordpress/credentials/{cred_id}/test")
+def api_test_wp_credential(request: Request, cred_id: int):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import get_wp_credential_decrypted
+    cred = get_wp_credential_decrypted(cred_id)
+    if not cred:
+        return JSONResponse(content={"status": "error", "message": "Credential not found"}, status_code=404)
+    import httpx
+    wp_url = cred["wp_url"].rstrip("/")
+    try:
+        with httpx.Client(timeout=15) as client:
+            resp = client.get(
+                f"{wp_url}/wp-json/wp/v2/users/me",
+                auth=(cred["wp_username"], cred["app_password"]),
+            )
+            if resp.status_code == 200:
+                user_data = resp.json()
+                site_resp = client.get(f"{wp_url}/wp-json", timeout=10)
+                site_name = ""
+                if site_resp.status_code == 200:
+                    site_name = site_resp.json().get("name", "")
+                return JSONResponse(content={
+                    "status": "ok",
+                    "message": "Connection successful",
+                    "site_name": site_name,
+                    "wp_user": user_data.get("name", ""),
+                })
+            else:
+                return JSONResponse(content={
+                    "status": "error",
+                    "message": f"HTTP {resp.status_code}: {resp.text[:200]}",
+                }, status_code=200)
+    except httpx.ConnectError as e:
+        return JSONResponse(content={"status": "error", "message": f"Connection failed: {e}"}, status_code=200)
+    except httpx.TimeoutException:
+        return JSONResponse(content={"status": "error", "message": "Connection timed out"}, status_code=200)
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=200)

@@ -53,6 +53,7 @@ from trading_engine.models import (
     AdminSession,
     SchedulerJobLog,
     SignalMetrics,
+    WordPressCredential,
     VALID_TIMEFRAMES,
 )
 
@@ -1160,3 +1161,109 @@ def get_all_signal_metrics() -> list[dict]:
             }
             for r in rows
         ]
+
+
+def get_all_wp_credentials() -> list[dict]:
+    with _get_session() as session:
+        rows = session.query(WordPressCredential).order_by(WordPressCredential.id).all()
+        return [_wp_cred_to_dict(r) for r in rows]
+
+
+def get_wp_credential(cred_id: int) -> Optional[dict]:
+    with _get_session() as session:
+        row = session.query(WordPressCredential).filter_by(id=cred_id).first()
+        if row:
+            return _wp_cred_to_dict(row)
+        return None
+
+
+def create_wp_credential(data: dict) -> int:
+    from trading_engine.services.encryption import encrypt
+    with _get_session() as session:
+        try:
+            obj = WordPressCredential(
+                label=data["label"],
+                wp_url=data["wp_url"].rstrip("/"),
+                wp_username=data["wp_username"],
+                app_password_encrypted=encrypt(data["app_password"]),
+                is_active=1 if data.get("is_active", True) else 0,
+            )
+            session.add(obj)
+            session.commit()
+            logger.info(f"[DB] Created WP credential #{obj.id}: {data['label']}")
+            return obj.id
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] Create WP credential failed: {e}")
+            raise
+
+
+def delete_wp_credential(cred_id: int) -> bool:
+    with _get_session() as session:
+        try:
+            row = session.query(WordPressCredential).filter_by(id=cred_id).first()
+            if not row:
+                return False
+            session.delete(row)
+            session.commit()
+            logger.info(f"[DB] Deleted WP credential #{cred_id}")
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] Delete WP credential failed: {e}")
+            return False
+
+
+def update_wp_credential(cred_id: int, data: dict) -> bool:
+    with _get_session() as session:
+        try:
+            row = session.query(WordPressCredential).filter_by(id=cred_id).first()
+            if not row:
+                return False
+            if "label" in data:
+                row.label = data["label"]
+            if "wp_url" in data:
+                row.wp_url = data["wp_url"].rstrip("/")
+            if "wp_username" in data:
+                row.wp_username = data["wp_username"]
+            if "app_password" in data and data["app_password"]:
+                from trading_engine.services.encryption import encrypt
+                row.app_password_encrypted = encrypt(data["app_password"])
+            if "is_active" in data:
+                row.is_active = 1 if data["is_active"] else 0
+            session.commit()
+            logger.info(f"[DB] Updated WP credential #{cred_id}")
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] Update WP credential failed: {e}")
+            return False
+
+
+def get_wp_credential_decrypted(cred_id: int) -> Optional[dict]:
+    from trading_engine.services.encryption import decrypt
+    with _get_session() as session:
+        row = session.query(WordPressCredential).filter_by(id=cred_id).first()
+        if not row:
+            return None
+        return {
+            "id": row.id,
+            "label": row.label,
+            "wp_url": row.wp_url,
+            "wp_username": row.wp_username,
+            "app_password": decrypt(row.app_password_encrypted),
+            "is_active": bool(row.is_active),
+            "created_at": row.created_at,
+        }
+
+
+def _wp_cred_to_dict(row: WordPressCredential) -> dict:
+    return {
+        "id": row.id,
+        "label": row.label,
+        "wp_url": row.wp_url,
+        "wp_username": row.wp_username,
+        "is_active": bool(row.is_active),
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }

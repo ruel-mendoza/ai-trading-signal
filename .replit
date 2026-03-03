@@ -4,7 +4,7 @@ hidden = [".config", ".git", "generated-icon.png", "node_modules", "dist"]
 
 [nix]
 channel = "stable-24_05"
-packages = ["glibcLocales", "libxcrypt"]
+packages = ["cargo", "glibcLocales", "libiconv", "libxcrypt", "openssl", "pkg-config", "rustc"]
 
 [[ports]]
 localPort = 5000
@@ -46,3 +46,8 @@ waitForPort = 5000
 
 [agent]
 integrations = ["javascript_openai_ai_integrations:2.0.0"]
+
+[userenv]
+
+[userenv.shared]
+WP_ENCRYPTION_KEY = "Gf2t5i64rSexcTG73z9291goVGcyDvJugSD_ZMOXEck="
