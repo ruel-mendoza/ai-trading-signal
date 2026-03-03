@@ -2924,14 +2924,16 @@ async function loadSchedulerData() {
 
 async function loadSystemStatus() {
     try {
-        var [healthRes, notifRes, creditRes] = await Promise.all([
+        var [healthRes, notifRes, creditRes, secRes] = await Promise.all([
             fetch(BASE + '/health'),
             fetch(BASE + '/admin/api/notifications').catch(function() { return null; }),
-            fetch(BASE + '/admin/api/usage').catch(function() { return null; })
+            fetch(BASE + '/admin/api/usage').catch(function() { return null; }),
+            fetch(BASE + '/admin/api/security/stats').catch(function() { return null; })
         ]);
         var health = await healthRes.json();
         var notif = notifRes ? await notifRes.json().catch(function() { return {}; }) : {};
         var credit = creditRes ? await creditRes.json().catch(function() { return {}; }) : {};
+        var sec = secRes ? await secRes.json().catch(function() { return {}; }) : {};
 
         document.getElementById('sys-loading').style.display = 'none';
         document.getElementById('sys-content').style.display = 'block';
@@ -3025,6 +3027,14 @@ async function loadSystemStatus() {
 
         var wsClients = (health.websocket && health.websocket.clients !== undefined) ? health.websocket.clients : '--';
         document.getElementById('sys-ws-clients').textContent = wsClients;
+
+        var secEl = document.getElementById('sec-stats');
+        if (secEl && sec.tracked_ips !== undefined) {
+            var parts = ['Tracking ' + sec.tracked_ips + ' IPs'];
+            if (sec.blocked_ips > 0) parts.push('<span style="color:#ef4444;">' + sec.blocked_ips + ' blocked</span>');
+            if (sec.cooled_down_ips > 0) parts.push('<span style="color:#f59e0b;">' + sec.cooled_down_ips + ' in cooldown</span>');
+            secEl.innerHTML = parts.join(' &middot; ');
+        }
 
     } catch (e) {
         document.getElementById('sys-loading').textContent = 'Failed to load system status.';
@@ -3835,10 +3845,14 @@ def admin_dashboard(
 
                     <div class="sys-card" style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-                            <div style="font-weight:600;color:#f1f5f9;font-size:14px;">Rate Limiting</div>
+                            <div style="font-weight:600;color:#f1f5f9;font-size:14px;">Rate Limiting &amp; Security</div>
                             <span class="badge status-open" data-testid="status-rate-limiting">Active</span>
                         </div>
-                        <div style="color:#94a3b8;font-size:13px;">slowapi middleware enforcing <strong style="color:#f1f5f9;">60 requests/minute</strong> per IP on all FastAPI endpoints.</div>
+                        <div style="color:#94a3b8;font-size:13px;line-height:1.7;">
+                            Multi-layer leaky bucket: <strong style="color:#f1f5f9;">20 req/2s</strong> burst &middot; <strong style="color:#f1f5f9;">60/min</strong> &middot; <strong style="color:#f1f5f9;">1000/hr</strong> per IP.<br>
+                            Burst cooldown: <strong style="color:#f1f5f9;">5 min</strong>. Endpoint enumeration guard: <strong style="color:#f1f5f9;">5+ 404s/60s &rarr; 24h block</strong>.
+                        </div>
+                        <div id="sec-stats" style="margin-top:10px;font-size:12px;color:#64748b;"></div>
                     </div>
 
                     <div class="sys-card" style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
@@ -4598,6 +4612,28 @@ def api_list_admins(request: Request):
         return guard
     admins = get_all_admins()
     return JSONResponse(content={"admins": admins})
+
+
+@router.get("/api/security/stats")
+def api_security_stats(request: Request):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.security_middleware import get_security_stats
+    return JSONResponse(content=get_security_stats())
+
+
+@router.post("/api/security/unblock")
+def api_security_unblock(request: Request, body: dict = Body(...)):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    ip = body.get("ip", "").strip()
+    if not ip:
+        return JSONResponse(content={"success": False, "error": "IP address required"})
+    from trading_engine.security_middleware import unblock_ip
+    result = unblock_ip(ip)
+    return JSONResponse(content={"success": result, "ip": ip})
 
 
 @router.get("/api/scheduler/health")

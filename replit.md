@@ -18,7 +18,8 @@ Key architectural decisions include:
 - **Scalable Data Handling:** Local storage of OHLC candle data across multiple timeframes for rapid indicator calculations.
 - **Production Hardening:**
   - **Webhook Notifications:** Configurable external alerting for critical events.
-  - **Rate Limiting:** Implemented via `slowapi` middleware on FastAPI.
+  - **Security Middleware (`security_middleware.py`):** Multi-layer leaky bucket rate limiting with: burst protection (20 req/2s → 5 min cooldown), standard limits (60/min, 1000/hr per IP), endpoint enumeration guard (5+ 404s in 60s → 24h IP block). Admin paths (`/admin/`) and health endpoints are exempt. Admin API provides `/admin/api/security/stats` and `/admin/api/security/unblock` for monitoring and manual IP management.
+  - **Rate Limiting:** SlowAPI middleware as a secondary layer enforcing 60/min default and 1000/hr application limits.
   - **CORS:** Strict origin whitelist auto-configured.
   - **Global Error Handler:** Centralized logging and structured JSON error responses.
   - **Security Headers:** Express uses `helmet` middleware.
