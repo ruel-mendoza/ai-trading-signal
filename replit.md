@@ -34,7 +34,7 @@ Key architectural decisions include:
 
 ## External Dependencies
 - **OpenAI:** Used for AI-powered signal generation.
-- **FCSAPI v4:** Provides OHLC data and real-time quotes for forex, crypto, commodities, and stock indices.
+- **FCSAPI v4:** Provides OHLC data and real-time quotes for forex, crypto, commodities, and stock indices. Crypto symbols (except BTC) require USDT pairing for history endpoint (e.g., ETH/USD → ETHUSDT, XRP/USD → XRPUSDT).
 - **WordPress REST API:** Utilized for signal publishing and updates.
 - **PostgreSQL:** Primary database for trading signals and user data.
 - **SQLite:** Used for OHLC candle data, strategy-specific signals, API usage statistics, and internal engine data.

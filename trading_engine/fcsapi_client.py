@@ -35,6 +35,14 @@ TIMEFRAME_DURATION_MINUTES = {
 
 CRYPTO_SYMBOLS = {"BTC/USD", "ETH/USD", "LTC/USD", "XRP/USD", "BNB/USD"}
 
+CRYPTO_SYMBOL_MAP = {
+    "BTC/USD": "BTCUSD",
+    "ETH/USD": "ETHUSDT",
+    "LTC/USD": "LTCUSDT",
+    "XRP/USD": "XRPUSDT",
+    "BNB/USD": "BNBUSDT",
+}
+
 STOCK_INDEX_SYMBOLS = {"SPX", "NDX", "DJI", "RUT"}
 
 STOCK_SYMBOL_MAP = {
@@ -82,10 +90,10 @@ ADVANCE_SYMBOL_MAP = {
     "WHEAT/USD": "WHEATUSD",
     "SUGAR/USD": "SUGARUSD",
     "BTC/USD": "BTCUSD",
-    "ETH/USD": "ETHUSD",
-    "LTC/USD": "LTCUSD",
-    "XRP/USD": "XRPUSD",
-    "BNB/USD": "BNBUSD",
+    "ETH/USD": "ETHUSDT",
+    "LTC/USD": "LTCUSDT",
+    "XRP/USD": "XRPUSDT",
+    "BNB/USD": "BNBUSDT",
     "SPX": "SPX",
     "NDX": "NDX",
     "DJI": "DJI",
@@ -122,6 +130,8 @@ def get_v4_base_url(symbol: str) -> str:
 
 
 def get_v4_history_symbol(symbol: str) -> str:
+    if symbol in CRYPTO_SYMBOL_MAP:
+        return CRYPTO_SYMBOL_MAP[symbol]
     if symbol in STOCK_SYMBOL_MAP:
         return STOCK_SYMBOL_MAP[symbol]
     if symbol in COMMODITY_SYMBOL_MAP:
