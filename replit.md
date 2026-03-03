@@ -23,7 +23,8 @@ Key architectural decisions include:
   - **Rate Limiting:** SlowAPI middleware as a secondary layer enforcing 60/min default and 1000/hr application limits.
   - **CORS:** Locked down to `https://*.dailyforex.com`, Replit deployment URLs, and localhost (dev). Wildcard `*` is explicitly blocked. `X-API-KEY` header is whitelisted.
   - **Global Error Handler:** Centralized logging and structured JSON error responses.
-  - **Security Headers:** Express uses `helmet` middleware.
+  - **Security Headers:** Express uses `helmet` middleware. FastAPI `SecurityHeadersMiddleware` injects X-Content-Type-Options (nosniff), X-Frame-Options (DENY), Content-Security-Policy (default-src 'self'), Strict-Transport-Security (HSTS 1yr), Referrer-Policy, Permissions-Policy, and X-XSS-Protection on every response.
+  - **Payload Limits:** `PayloadLimitMiddleware` enforces 1MB max request body on public API (`/api/v1/`) POST/PUT/PATCH to prevent memory exhaustion from oversized payloads.
   - **Health Endpoints:** Internal (`/health`) and public (`/api/v1/health/public`) endpoints for system status monitoring.
   - **WebSocket Signal Stream:** Real-time signal push via `ws://host/ws/signals`.
 - **Public API v1:** Read-only API with cached responses (`cache_response(ttl)` decorator) for various data points including signals, strategies, market data, positions, and metrics.

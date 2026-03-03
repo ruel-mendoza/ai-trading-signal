@@ -268,3 +268,42 @@ def unblock_ip(ip: str) -> bool:
             logger.info(f"[SECURITY] Manually unblocked IP {ip}")
             return True
         return False
+
+
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws: wss:",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "X-XSS-Protection": "1; mode=block",
+}
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        for header, value in _SECURITY_HEADERS.items():
+            response.headers[header] = value
+        return response
+
+
+MAX_REQUEST_BODY_BYTES = 1 * 1024 * 1024
+
+_PAYLOAD_LIMIT_PATHS = ("/api/v1/",)
+_PAYLOAD_EXEMPT_PATHS = frozenset({"/api/v1/health/public"})
+
+
+class PayloadLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if request.method in ("POST", "PUT", "PATCH") and any(path.startswith(p) for p in _PAYLOAD_LIMIT_PATHS) and path not in _PAYLOAD_EXEMPT_PATHS:
+            content_length = request.headers.get("content-length")
+            if content_length and int(content_length) > MAX_REQUEST_BODY_BYTES:
+                logger.warning(f"[SECURITY] Rejected oversized payload from {_get_client_ip(request)}: {content_length} bytes on {path}")
+                return JSONResponse(
+                    status_code=413,
+                    content={"error": "Payload too large", "detail": f"Maximum request body size is {MAX_REQUEST_BODY_BYTES // 1024}KB"},
+                )
+        return await call_next(request)

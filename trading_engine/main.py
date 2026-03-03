@@ -684,8 +684,10 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
-from trading_engine.security_middleware import SecurityMiddleware
+from trading_engine.security_middleware import SecurityMiddleware, SecurityHeadersMiddleware, PayloadLimitMiddleware
 app.add_middleware(SecurityMiddleware)
+app.add_middleware(PayloadLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 from starlette.requests import Request as StarletteRequest
 from fastapi.responses import JSONResponse as FastAPIJSONResponse
