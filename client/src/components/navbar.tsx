@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { TrendingUp, Menu, Shield, LogIn, Globe } from "lucide-react";
+import { TrendingUp, Menu, Shield, LogIn } from "lucide-react";
 
 export function Navbar() {
   const [location] = useLocation();
@@ -50,14 +50,6 @@ export function Navbar() {
           </Link>
 
           <div className="hidden sm:flex items-center gap-2">
-            {isAuthenticated && (
-              <Link href="/wordpress" data-testid="link-wordpress-desktop">
-                <Button variant="outline" size="sm">
-                  <Globe className="w-4 h-4 mr-2" />
-                  WordPress
-                </Button>
-              </Link>
-            )}
             <a
               href={adminHref}
               data-testid="link-admin-desktop"
@@ -101,18 +93,6 @@ export function Navbar() {
                       <span className="font-medium">Signals</span>
                     </div>
                   </Link>
-                  {isAuthenticated && (
-                    <Link
-                      href="/wordpress"
-                      onClick={() => setMobileOpen(false)}
-                      data-testid="link-wordpress-mobile"
-                    >
-                      <div className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-accent cursor-pointer">
-                        <Globe className="w-5 h-5" />
-                        <span className="font-medium">WordPress</span>
-                      </div>
-                    </Link>
-                  )}
                   <a
                     href={adminHref}
                     onClick={() => setMobileOpen(false)}

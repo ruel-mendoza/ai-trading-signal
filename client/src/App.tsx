@@ -8,14 +8,11 @@ import { useSignalStream } from "@/hooks/use-signal-stream";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import SignalDetail from "@/pages/signal-detail";
-import WordPressIntegrations from "@/pages/wordpress-integrations";
-
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/signal/:id" component={SignalDetail} />
-      <Route path="/wordpress" component={WordPressIntegrations} />
       <Route component={NotFound} />
     </Switch>
   );
