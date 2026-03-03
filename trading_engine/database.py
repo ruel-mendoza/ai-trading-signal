@@ -152,6 +152,7 @@ def _migrate_schema():
         ("signals", "exit_reason", "TEXT"),
         ("admin_users", "role", "TEXT DEFAULT 'CUSTOMER'"),
         ("admin_users", "email", "TEXT"),
+        ("admin_users", "full_name", "TEXT"),
     ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:
@@ -836,11 +837,11 @@ def get_user_by_email(email: str) -> Optional[dict]:
         return None
 
 
-def create_admin(username: str, password: str, email: Optional[str] = None) -> Optional[int]:
+def create_admin(username: str, password: str, email: Optional[str] = None, full_name: Optional[str] = None) -> Optional[int]:
     pw_hash = _hash_password(password)
     with _get_session() as session:
         try:
-            user = AdminUser(username=username, password_hash=pw_hash, email=email)
+            user = AdminUser(username=username, password_hash=pw_hash, email=email, full_name=full_name)
             session.add(user)
             session.commit()
             logger.info(f"[DB] Created admin user: {username}")

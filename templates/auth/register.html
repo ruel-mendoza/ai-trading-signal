@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Account - DailyForex Premium</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#172033',
+                            950: '#0a101e',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-slate-950 min-h-screen flex items-center justify-center px-4 py-8">
+
+    <div class="w-full max-w-md">
+        <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl shadow-2xl shadow-black/30 p-8 sm:p-10 backdrop-blur-sm">
+
+            <div class="text-center mb-8">
+                <div class="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-blue-600/10 border border-blue-500/20 mb-4">
+                    <svg class="w-7 h-7 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M18 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0ZM3 19.235v-.11a6.375 6.375 0 0 1 12.75 0v.109A12.318 12.318 0 0 1 9.374 21c-2.331 0-4.512-.645-6.374-1.766Z" />
+                    </svg>
+                </div>
+                <h1 class="text-2xl font-bold text-slate-100">Create Account</h1>
+                <p class="text-slate-400 text-sm mt-2">Join DailyForex Premium for trading signals</p>
+            </div>
+
+            <div id="server-error" class="hidden mb-4 p-3 rounded-lg bg-red-900/30 border border-red-800/50 text-red-300 text-sm text-center" data-testid="text-register-error">
+                SERVER_ERROR_PLACEHOLDER
+            </div>
+
+            <div id="client-error" class="hidden mb-4 p-3 rounded-lg bg-red-900/30 border border-red-800/50 text-red-300 text-sm text-center" data-testid="text-client-error">
+            </div>
+
+            <form id="register-form" method="POST" action="/api/v1/auth/register" novalidate>
+
+                <div class="mb-4">
+                    <label for="full_name" class="block text-sm font-medium text-slate-300 mb-1.5">Full Name</label>
+                    <input
+                        type="text"
+                        id="full_name"
+                        name="full_name"
+                        data-testid="input-reg-fullname"
+                        required
+                        autofocus
+                        placeholder="John Doe"
+                        class="w-full bg-slate-900/70 border border-slate-600/50 text-slate-100 placeholder-slate-500 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/60 transition-all"
+                    >
+                </div>
+
+                <div class="mb-4">
+                    <label for="username" class="block text-sm font-medium text-slate-300 mb-1.5">Username</label>
+                    <input
+                        type="text"
+                        id="username"
+                        name="username"
+                        data-testid="input-reg-username"
+                        required
+                        placeholder="johndoe"
+                        class="w-full bg-slate-900/70 border border-slate-600/50 text-slate-100 placeholder-slate-500 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/60 transition-all"
+                    >
+                </div>
+
+                <div class="mb-4">
+                    <label for="email" class="block text-sm font-medium text-slate-300 mb-1.5">Email</label>
+                    <input
+                        type="email"
+                        id="email"
+                        name="email"
+                        data-testid="input-reg-email"
+                        required
+                        placeholder="john@example.com"
+                        class="w-full bg-slate-900/70 border border-slate-600/50 text-slate-100 placeholder-slate-500 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/60 transition-all"
+                    >
+                </div>
+
+                <div class="mb-4">
+                    <label for="password" class="block text-sm font-medium text-slate-300 mb-1.5">Password</label>
+                    <input
+                        type="password"
+                        id="password"
+                        name="password"
+                        data-testid="input-reg-password"
+                        required
+                        minlength="6"
+                        placeholder="Min. 6 characters"
+                        class="w-full bg-slate-900/70 border border-slate-600/50 text-slate-100 placeholder-slate-500 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/60 transition-all"
+                    >
+                </div>
+
+                <div class="mb-6">
+                    <label for="confirm_password" class="block text-sm font-medium text-slate-300 mb-1.5">Confirm Password</label>
+                    <input
+                        type="password"
+                        id="confirm_password"
+                        name="confirm_password"
+                        data-testid="input-reg-confirm"
+                        required
+                        placeholder="Re-enter your password"
+                        class="w-full bg-slate-900/70 border border-slate-600/50 text-slate-100 placeholder-slate-500 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/60 transition-all"
+                    >
+                    <p id="password-match-hint" class="hidden mt-1.5 text-xs text-red-400" data-testid="text-password-mismatch">Passwords do not match</p>
+                </div>
+
+                <button
+                    type="submit"
+                    id="submit-btn"
+                    data-testid="button-register"
+                    class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 px-4 rounded-lg text-sm transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-2 focus:ring-offset-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    Create Account
+                </button>
+            </form>
+
+            <p class="text-center text-sm text-slate-400 mt-6">
+                Already have an account?
+                <a href="/admin/login" data-testid="link-login" class="text-blue-400 hover:text-blue-300 font-medium transition-colors">Login here</a>
+            </p>
+        </div>
+
+        <p class="text-center text-xs text-slate-600 mt-6">&copy; 2026 DailyForex Premium. All rights reserved.</p>
+    </div>
+
+    <script>
+        (function() {
+            var form = document.getElementById('register-form');
+            var password = document.getElementById('password');
+            var confirm = document.getElementById('confirm_password');
+            var hint = document.getElementById('password-match-hint');
+            var clientError = document.getElementById('client-error');
+            var submitBtn = document.getElementById('submit-btn');
+
+            function checkMatch() {
+                if (confirm.value.length === 0) {
+                    hint.classList.add('hidden');
+                    confirm.classList.remove('border-red-500/60', 'focus:ring-red-500/40');
+                    confirm.classList.add('border-slate-600/50', 'focus:ring-blue-500/40');
+                    return;
+                }
+                if (password.value !== confirm.value) {
+                    hint.classList.remove('hidden');
+                    confirm.classList.add('border-red-500/60', 'focus:ring-red-500/40');
+                    confirm.classList.remove('border-slate-600/50', 'focus:ring-blue-500/40');
+                } else {
+                    hint.classList.add('hidden');
+                    confirm.classList.remove('border-red-500/60', 'focus:ring-red-500/40');
+                    confirm.classList.add('border-slate-600/50', 'focus:ring-blue-500/40');
+                }
+            }
+
+            password.addEventListener('input', checkMatch);
+            confirm.addEventListener('input', checkMatch);
+
+            form.addEventListener('submit', function(e) {
+                clientError.classList.add('hidden');
+
+                var fullName = document.getElementById('full_name').value.trim();
+                var username = document.getElementById('username').value.trim();
+                var email = document.getElementById('email').value.trim();
+                var pw = password.value;
+                var cpw = confirm.value;
+
+                var errors = [];
+
+                if (fullName.length < 2) {
+                    errors.push('Full name must be at least 2 characters.');
+                }
+                if (username.length < 3) {
+                    errors.push('Username must be at least 3 characters.');
+                }
+                var emailRe = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+                if (!emailRe.test(email)) {
+                    errors.push('Please enter a valid email address.');
+                }
+                if (pw.length < 6) {
+                    errors.push('Password must be at least 6 characters.');
+                }
+                if (pw !== cpw) {
+                    errors.push('Passwords do not match.');
+                }
+
+                if (errors.length > 0) {
+                    e.preventDefault();
+                    clientError.textContent = errors[0];
+                    clientError.classList.remove('hidden');
+                    return;
+                }
+
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Creating Account...';
+            });
+        })();
+    </script>
+</body>
+</html>
