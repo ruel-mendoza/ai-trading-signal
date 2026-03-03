@@ -4187,6 +4187,114 @@ def admin_dashboard(
                     </tbody>
                 </table>
             </div>
+
+            <div class="section" style="margin-top:32px;" data-testid="section-wp-setup-guide">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                    <h2 style="margin:0;">Setup Guide</h2>
+                    <button class="btn" onclick="var el=document.getElementById('wp-guide-body');el.style.display=el.style.display==='none'?'block':'none';this.textContent=el.style.display==='none'?'Show Guide':'Hide Guide'" data-testid="btn-toggle-wp-guide" style="font-size:13px;padding:6px 14px;">Hide Guide</button>
+                </div>
+                <div id="wp-guide-body">
+                    <p style="color:#94a3b8;margin-bottom:20px;">Follow these steps to connect your WordPress site for automated signal publishing via the REST API.</p>
+
+                    <div style="display:flex;flex-direction:column;gap:20px;">
+
+                        <div style="background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;padding:20px;">
+                            <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                                <div style="width:32px;height:32px;border-radius:50%;background:rgba(59,130,246,0.15);color:#3b82f6;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">1</div>
+                                <h3 style="margin:0;color:#f1f5f9;font-size:15px;">Requirements</h3>
+                            </div>
+                            <ul style="color:#94a3b8;font-size:13px;line-height:1.8;margin:0;padding-left:20px;">
+                                <li>WordPress 5.6 or newer (Application Passwords are built-in)</li>
+                                <li>A WordPress user account with <strong style="color:#f1f5f9;">Editor</strong> or <strong style="color:#f1f5f9;">Administrator</strong> role</li>
+                                <li>HTTPS enabled on your WordPress site</li>
+                                <li>WordPress REST API must be accessible (not blocked by a security plugin)</li>
+                            </ul>
+                        </div>
+
+                        <div style="background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;padding:20px;">
+                            <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                                <div style="width:32px;height:32px;border-radius:50%;background:rgba(59,130,246,0.15);color:#3b82f6;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">2</div>
+                                <h3 style="margin:0;color:#f1f5f9;font-size:15px;">Generate an Application Password</h3>
+                            </div>
+                            <ol style="color:#94a3b8;font-size:13px;line-height:2;margin:0;padding-left:20px;">
+                                <li>Log in to your WordPress admin dashboard</li>
+                                <li>Go to <strong style="color:#f1f5f9;">Users &rarr; Profile</strong> (or edit the user account you want to use)</li>
+                                <li>Scroll down to the <strong style="color:#f1f5f9;">Application Passwords</strong> section</li>
+                                <li>Enter a name like <span style="color:#3b82f6;font-family:monospace;">DailyForex Signals</span> and click <strong style="color:#f1f5f9;">Add New Application Password</strong></li>
+                                <li>Copy the generated password immediately &mdash; it will not be shown again</li>
+                            </ol>
+                            <div style="margin-top:12px;padding:10px 14px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);border-radius:6px;font-size:12px;color:#fbbf24;">
+                                <strong>Note:</strong> The password will look like <span style="font-family:monospace;">xxxx xxxx xxxx xxxx xxxx xxxx</span> with spaces. Enter it exactly as shown, including the spaces.
+                            </div>
+                        </div>
+
+                        <div style="background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;padding:20px;">
+                            <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                                <div style="width:32px;height:32px;border-radius:50%;background:rgba(59,130,246,0.15);color:#3b82f6;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">3</div>
+                                <h3 style="margin:0;color:#f1f5f9;font-size:15px;">Add Your Site Here</h3>
+                            </div>
+                            <ol style="color:#94a3b8;font-size:13px;line-height:2;margin:0;padding-left:20px;">
+                                <li>Click <strong style="color:#f1f5f9;">Add WordPress Site</strong> above</li>
+                                <li><strong style="color:#f1f5f9;">Site URL</strong> &mdash; Your WordPress site address (e.g. <span style="font-family:monospace;color:#3b82f6;">https://yourdomain.com</span>). No trailing slash needed.</li>
+                                <li><strong style="color:#f1f5f9;">WP Username</strong> &mdash; The WordPress username or email of the account that generated the Application Password</li>
+                                <li><strong style="color:#f1f5f9;">Application Password</strong> &mdash; Paste the password from Step 2</li>
+                                <li>Click <strong style="color:#f1f5f9;">Save</strong>, then click <strong style="color:#f1f5f9;">Test</strong> to verify the connection</li>
+                            </ol>
+                        </div>
+
+                        <div style="background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;padding:20px;">
+                            <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                                <div style="width:32px;height:32px;border-radius:50%;background:rgba(34,197,94,0.15);color:#22c55e;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">4</div>
+                                <h3 style="margin:0;color:#f1f5f9;font-size:15px;">How It Works</h3>
+                            </div>
+                            <ul style="color:#94a3b8;font-size:13px;line-height:1.8;margin:0;padding-left:20px;">
+                                <li>When a new trading signal is generated, it is <strong style="color:#f1f5f9;">automatically published</strong> as a WordPress post to all active sites</li>
+                                <li>When a signal is closed, the WordPress post is <strong style="color:#f1f5f9;">automatically updated</strong> with exit price, reason, and outcome</li>
+                                <li>Each site gets its own independent post &mdash; multiple sites are fully supported</li>
+                                <li>Publishing runs in a background thread and does not block signal generation</li>
+                                <li>Failed publishes are retried up to <strong style="color:#f1f5f9;">3 times</strong> with exponential backoff (2s &rarr; 30s)</li>
+                                <li>Admins can manually retry publishing or update posts from the Signals tab</li>
+                            </ul>
+                        </div>
+
+                        <div style="background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;padding:20px;">
+                            <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                                <div style="width:32px;height:32px;border-radius:50%;background:rgba(239,68,68,0.15);color:#ef4444;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+                                </div>
+                                <h3 style="margin:0;color:#f1f5f9;font-size:15px;">Troubleshooting</h3>
+                            </div>
+                            <div style="display:flex;flex-direction:column;gap:12px;">
+                                <div>
+                                    <div style="color:#f1f5f9;font-size:13px;font-weight:600;margin-bottom:4px;">HTTP 403 &mdash; Forbidden</div>
+                                    <div style="color:#94a3b8;font-size:12px;">The WordPress user may lack permissions. Ensure the account has <strong style="color:#f1f5f9;">Editor</strong> or <strong style="color:#f1f5f9;">Administrator</strong> role. Some hosting providers (e.g. WP Engine) or security plugins may block REST API access &mdash; check your host's settings.</div>
+                                </div>
+                                <div>
+                                    <div style="color:#f1f5f9;font-size:13px;font-weight:600;margin-bottom:4px;">HTTP 401 &mdash; Unauthorized</div>
+                                    <div style="color:#94a3b8;font-size:12px;">The Application Password is incorrect or has been revoked. Generate a new one from WordPress and update it here.</div>
+                                </div>
+                                <div>
+                                    <div style="color:#f1f5f9;font-size:13px;font-weight:600;margin-bottom:4px;">HTTP 404 &mdash; Not Found</div>
+                                    <div style="color:#94a3b8;font-size:12px;">The REST API endpoint could not be found. Ensure your WordPress site has the REST API enabled (it is enabled by default). Check that your Site URL is correct and does not include <span style="font-family:monospace;">/wp-admin</span> or other paths.</div>
+                                </div>
+                                <div>
+                                    <div style="color:#f1f5f9;font-size:13px;font-weight:600;margin-bottom:4px;">Connection Timeout</div>
+                                    <div style="color:#94a3b8;font-size:12px;">The WordPress site may be down or unreachable. Verify the site loads normally in a browser. Check that the URL uses <span style="font-family:monospace;">https://</span> and not <span style="font-family:monospace;">http://</span>.</div>
+                                </div>
+                                <div>
+                                    <div style="color:#f1f5f9;font-size:13px;font-weight:600;margin-bottom:4px;">Application Passwords Section Missing</div>
+                                    <div style="color:#94a3b8;font-size:12px;">Application Passwords require WordPress 5.6+. If you don't see the section under your profile, your site may be running an older version, or a plugin may have disabled the feature. Update WordPress or check your security plugin settings.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="padding:12px 16px;background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.2);border-radius:8px;font-size:12px;color:#93c5fd;">
+                            <strong>Security:</strong> All Application Passwords are encrypted at rest using Fernet symmetric encryption before being stored in the database. They are only decrypted in memory when making API calls to your WordPress site.
+                        </div>
+
+                    </div>
+                </div>
+            </div>
         </div>
 
         </main>
