@@ -1,5 +1,6 @@
 import os
 import re
+import html as html_mod
 import logging
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
@@ -16,20 +17,41 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
-_TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "templates", "auth")
+_TEMPLATE_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+    "templates", "auth",
+)
+
+_FLASH_MARKER = "<!-- SERVER_FLASH -->"
 
 
-def _read_register_template(error: str = "") -> str:
+def _flash_html(message: str, kind: str = "error") -> str:
+    safe = html_mod.escape(message)
+    if kind == "error":
+        return (
+            f'<div class="mb-4 p-3 rounded-lg bg-red-900/30 border border-red-800/50 '
+            f'text-red-300 text-sm text-center" data-testid="text-register-error">'
+            f'<span class="inline-block align-middle mr-1">&#10007;</span>{safe}</div>'
+        )
+    return (
+        f'<div class="mb-4 p-3 rounded-lg bg-emerald-900/30 border border-emerald-800/50 '
+        f'text-emerald-300 text-sm text-center" data-testid="text-register-success">'
+        f'<span class="inline-block align-middle mr-1">&#10003;</span>{safe}</div>'
+    )
+
+
+def _read_register_template(error: str = "", success: str = "") -> str:
     path = os.path.join(_TEMPLATE_DIR, "register.html")
     with open(path, "r") as f:
-        html = f.read()
+        template = f.read()
+
+    flash = ""
     if error:
-        error_div = f'<div class="mb-4 p-3 rounded-lg bg-red-900/30 border border-red-800/50 text-red-300 text-sm text-center" data-testid="text-register-error">{error}</div>'
-        html = html.replace(
-            '<div id="server-error" class="hidden mb-4 p-3 rounded-lg bg-red-900/30 border border-red-800/50 text-red-300 text-sm text-center" data-testid="text-register-error">\n                SERVER_ERROR_PLACEHOLDER\n            </div>',
-            error_div,
-        )
-    return html
+        flash = _flash_html(error, "error")
+    elif success:
+        flash = _flash_html(success, "success")
+
+    return template.replace(_FLASH_MARKER, flash)
 
 
 @router.get("/register", response_class=HTMLResponse)
