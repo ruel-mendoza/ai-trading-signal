@@ -144,6 +144,21 @@ function startPythonEngine(): Promise<void> {
 
 const PYTHON_ENGINE_URL = "http://127.0.0.1:5001";
 
+for (const docPath of ["/docs", "/redoc", "/openapi.json"]) {
+  app.use(docPath, async (req: Request, res: Response) => {
+    try {
+      const url = `${PYTHON_ENGINE_URL}${docPath}${req.url === "/" ? "" : req.url}`;
+      const response = await fetch(url);
+      const contentType = response.headers.get("content-type") || "text/html";
+      res.status(response.status).set("content-type", contentType);
+      const body = await response.text();
+      res.send(body);
+    } catch {
+      res.status(502).json({ error: "Trading engine unavailable" });
+    }
+  });
+}
+
 app.use("/api/v1", async (req: Request, res: Response) => {
   try {
     const targetPath = `/api/v1${req.path || "/"}`;
