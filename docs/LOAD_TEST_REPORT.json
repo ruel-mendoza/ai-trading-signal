@@ -1,0 +1,91 @@
+{
+  "tests": [
+    {
+      "test_name": "Sustained Load",
+      "started_at": "2026-03-03T10:49:04.040527+00:00",
+      "finished_at": "2026-03-03T10:49:34.085576+00:00",
+      "duration_seconds": 30.04,
+      "total_requests": 588,
+      "successful": 35,
+      "failed": 4,
+      "rate_limited": 549,
+      "errors_by_code": {
+        "200": 35,
+        "404": 4,
+        "429": 549
+      },
+      "avg_latency_ms": 2.25,
+      "p50_ms": 1.98,
+      "p95_ms": 3.68,
+      "p99_ms": 5.14,
+      "max_latency_ms": 6.98,
+      "avg_rps": 19.64,
+      "endpoint_stats": {
+        "/api/v1/signals/latest": {
+          "count": 186,
+          "success": 9,
+          "avg_latency_ms": 2.25
+        },
+        "/api/v1/scheduler/status": {
+          "count": 33,
+          "success": 3,
+          "avg_latency_ms": 2.17
+        },
+        "/api/v1/strategies": {
+          "count": 68,
+          "success": 6,
+          "avg_latency_ms": 2.3
+        },
+        "/api/v1/signals/active": {
+          "count": 117,
+          "success": 9,
+          "avg_latency_ms": 2.2
+        },
+        "/api/v1/market/pairs": {
+          "count": 55,
+          "success": 0,
+          "avg_latency_ms": 2.27
+        },
+        "/api/v1/metrics/summary": {
+          "count": 54,
+          "success": 3,
+          "avg_latency_ms": 2.3
+        },
+        "/api/v1/health/public": {
+          "count": 75,
+          "success": 5,
+          "avg_latency_ms": 2.27
+        }
+      },
+      "memory_samples_count": 6
+    },
+    {
+      "test_name": "Burst Stress",
+      "started_at": "2026-03-03T10:49:39.089215+00:00",
+      "finished_at": "2026-03-03T10:49:45.567345+00:00",
+      "duration_seconds": 6.48,
+      "total_requests": 300,
+      "successful": 0,
+      "failed": 0,
+      "rate_limited": 300,
+      "errors_by_code": {
+        "429": 300
+      },
+      "avg_latency_ms": 128.55,
+      "p50_ms": 65.08,
+      "p95_ms": 290.45,
+      "p99_ms": 292.85,
+      "max_latency_ms": 293.37,
+      "avg_rps": 929.4,
+      "endpoint_stats": {
+        "/api/v1/signals/latest": {
+          "count": 300,
+          "success": 0,
+          "avg_latency_ms": 128.55
+        }
+      },
+      "memory_samples_count": 0
+    }
+  ],
+  "generated_at": "2026-03-03T10:49:45.573127+00:00"
+}
