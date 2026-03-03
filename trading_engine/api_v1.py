@@ -481,13 +481,13 @@ def get_signals_history(
     status: Optional[str] = Query(None, description="Filter by status: OPEN or CLOSED"),
     asset_class: Optional[str] = Query(None, description="Filter by asset class: forex, crypto, commodities, indices"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    size: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
+    size: int = Query(20, ge=1, le=50, description="Items per page (max 50)"),
 ):
     """
     Paginated signal history with full filtering.
 
-    Returns up to 500 signals from the local database, paginated by page/size.
-    Uses the legacy format (BUY/SELL direction, entry_price field).
+    Returns up to 500 signals from the local database, paginated by page/size
+    (max 50 per page). Uses the legacy format (BUY/SELL direction, entry_price field).
     Cached for 60 seconds per unique filter combination.
     """
     all_raw = get_all_signals(strategy_name=strategy, asset=asset, status=status, limit=500)
