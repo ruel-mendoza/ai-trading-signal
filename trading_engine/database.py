@@ -54,6 +54,7 @@ from trading_engine.models import (
     SchedulerJobLog,
     SignalMetrics,
     WordPressCredential,
+    UserCmsConfig,
     VALID_TIMEFRAMES,
 )
 
@@ -1262,6 +1263,122 @@ def _wp_cred_to_dict(row: WordPressCredential) -> dict:
         "id": row.id,
         "label": row.label,
         "wp_url": row.wp_url,
+        "wp_username": row.wp_username,
+        "is_active": bool(row.is_active),
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+def get_user_cms_configs(user_id: int) -> list[dict]:
+    with _get_session() as session:
+        rows = session.query(UserCmsConfig).filter_by(user_id=user_id).order_by(UserCmsConfig.id).all()
+        return [_user_cms_to_dict(r) for r in rows]
+
+
+def get_all_user_cms_configs() -> list[dict]:
+    with _get_session() as session:
+        rows = (
+            session.query(UserCmsConfig, AdminUser.username)
+            .join(AdminUser, UserCmsConfig.user_id == AdminUser.id)
+            .order_by(UserCmsConfig.id)
+            .all()
+        )
+        return [{**_user_cms_to_dict(r), "owner": u} for r, u in rows]
+
+
+def create_user_cms_config(data: dict) -> int:
+    from trading_engine.services.encryption import encrypt
+    with _get_session() as session:
+        try:
+            obj = UserCmsConfig(
+                user_id=data["user_id"],
+                site_url=data["site_url"].rstrip("/"),
+                wp_username=data["wp_username"],
+                encrypted_app_password=encrypt(data["app_password"]),
+                is_active=1 if data.get("is_active", True) else 0,
+            )
+            session.add(obj)
+            session.commit()
+            logger.info(f"[DB] Created user CMS config #{obj.id} for user_id={data['user_id']}")
+            return obj.id
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] Create user CMS config failed: {e}")
+            raise
+
+
+def delete_user_cms_config(config_id: int, user_id: Optional[int] = None) -> bool:
+    with _get_session() as session:
+        try:
+            q = session.query(UserCmsConfig).filter_by(id=config_id)
+            if user_id is not None:
+                q = q.filter_by(user_id=user_id)
+            row = q.first()
+            if not row:
+                return False
+            session.delete(row)
+            session.commit()
+            logger.info(f"[DB] Deleted user CMS config #{config_id}")
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] Delete user CMS config failed: {e}")
+            return False
+
+
+def update_user_cms_config(config_id: int, data: dict, user_id: Optional[int] = None) -> bool:
+    with _get_session() as session:
+        try:
+            q = session.query(UserCmsConfig).filter_by(id=config_id)
+            if user_id is not None:
+                q = q.filter_by(user_id=user_id)
+            row = q.first()
+            if not row:
+                return False
+            if "site_url" in data:
+                row.site_url = data["site_url"].rstrip("/")
+            if "wp_username" in data:
+                row.wp_username = data["wp_username"]
+            if "app_password" in data and data["app_password"]:
+                from trading_engine.services.encryption import encrypt
+                row.encrypted_app_password = encrypt(data["app_password"])
+            if "is_active" in data:
+                row.is_active = 1 if data["is_active"] else 0
+            session.commit()
+            logger.info(f"[DB] Updated user CMS config #{config_id}")
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] Update user CMS config failed: {e}")
+            return False
+
+
+def get_user_cms_config_decrypted(config_id: int, user_id: Optional[int] = None) -> Optional[dict]:
+    from trading_engine.services.encryption import decrypt
+    with _get_session() as session:
+        q = session.query(UserCmsConfig).filter_by(id=config_id)
+        if user_id is not None:
+            q = q.filter_by(user_id=user_id)
+        row = q.first()
+        if not row:
+            return None
+        return {
+            "id": row.id,
+            "user_id": row.user_id,
+            "site_url": row.site_url,
+            "wp_username": row.wp_username,
+            "app_password": decrypt(row.encrypted_app_password),
+            "is_active": bool(row.is_active),
+            "created_at": row.created_at,
+        }
+
+
+def _user_cms_to_dict(row: UserCmsConfig) -> dict:
+    return {
+        "id": row.id,
+        "user_id": row.user_id,
+        "site_url": row.site_url,
         "wp_username": row.wp_username,
         "is_active": bool(row.is_active),
         "created_at": row.created_at,

@@ -218,3 +218,20 @@ class WordPressCredential(Base):
     is_active = Column(Integer, nullable=False, server_default="1")
     created_at = Column(Text, server_default=func.now())
     updated_at = Column(Text, server_default=func.now(), onupdate=func.now())
+
+
+class UserCmsConfig(Base):
+    __tablename__ = "user_cms_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("admin_users.id", ondelete="CASCADE"), nullable=False)
+    site_url = Column(Text, nullable=False)
+    wp_username = Column(Text, nullable=False)
+    encrypted_app_password = Column(Text, nullable=False)
+    is_active = Column(Integer, nullable=False, server_default="1")
+    created_at = Column(Text, server_default=func.now())
+    updated_at = Column(Text, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_user_cms_user_id", "user_id"),
+    )

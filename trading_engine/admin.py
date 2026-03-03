@@ -2567,7 +2567,7 @@ function showTab(tabName) {
     if (tabName === 'notifications') loadNotifConfig();
     if (tabName === 'scheduler') loadSchedulerData();
     if (tabName === 'system') loadSystemStatus();
-    if (tabName === 'wordpress') loadWpCredentials();
+    if (tabName === 'wordpress') { loadWpCredentials(); loadUserCmsConfigs(); }
 }
 
 function showStrategyTab(strategyName) {
@@ -3091,7 +3091,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (activeTab && activeTab.getAttribute('data-tab') === 'notifications') loadNotifConfig();
     if (activeTab && activeTab.getAttribute('data-tab') === 'scheduler') loadSchedulerData();
     if (activeTab && activeTab.getAttribute('data-tab') === 'system') loadSystemStatus();
-    if (activeTab && activeTab.getAttribute('data-tab') === 'wordpress') loadWpCredentials();
+    if (activeTab && activeTab.getAttribute('data-tab') === 'wordpress') { loadWpCredentials(); loadUserCmsConfigs(); }
 });
 
 function copyApiUrl(path) {
@@ -3207,6 +3207,111 @@ async function wpTest(id) {
         }
     } catch(e) {
         wpShowMsg('Network error during test', true);
+    }
+}
+
+function ucmsShowMsg(msg, isError) {
+    var el = document.getElementById('ucms-status-msg');
+    el.textContent = msg;
+    el.style.display = 'block';
+    el.style.background = isError ? '#7f1d1d' : '#14532d';
+    el.style.color = isError ? '#fca5a5' : '#86efac';
+    setTimeout(function() { el.style.display = 'none'; }, 5000);
+}
+
+async function loadUserCmsConfigs() {
+    try {
+        var resp = await fetch(BASE + '/admin/api/user-cms-configs');
+        if (!resp.ok) throw new Error('Failed to load');
+        var data = await resp.json();
+        var tbody = document.getElementById('ucms-body');
+        if (!data.length) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#64748b;">No user CMS configurations</td></tr>';
+            return;
+        }
+        tbody.innerHTML = data.map(function(c) {
+            var statusBadge = c.is_active
+                ? '<span style="background:#14532d;color:#86efac;padding:2px 10px;border-radius:9999px;font-size:12px;">Active</span>'
+                : '<span style="background:#7f1d1d;color:#fca5a5;padding:2px 10px;border-radius:9999px;font-size:12px;">Inactive</span>';
+            return '<tr data-testid="row-ucms-' + c.id + '">' +
+                '<td>' + c.id + '</td>' +
+                '<td>' + (c.owner || 'user_' + c.user_id) + '</td>' +
+                '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">' + (c.site_url || '') + '</td>' +
+                '<td>' + (c.wp_username || '') + '</td>' +
+                '<td>' + statusBadge + '</td>' +
+                '<td style="font-size:12px;color:#94a3b8;">' + (c.created_at || '') + '</td>' +
+                '<td style="display:flex;gap:6px;">' +
+                    '<button class="btn btn-primary" style="padding:4px 10px;font-size:12px;" onclick="ucmsTest(' + c.id + ')" data-testid="btn-ucms-test-' + c.id + '">Test</button>' +
+                    '<button class="btn" style="padding:4px 10px;font-size:12px;background:#7f1d1d;color:#fca5a5;" onclick="ucmsDelete(' + c.id + ')" data-testid="btn-ucms-delete-' + c.id + '">Delete</button>' +
+                '</td></tr>';
+        }).join('');
+    } catch(e) {
+        document.getElementById('ucms-body').innerHTML = '<tr><td colspan="7" style="text-align:center;color:#f87171;">Error loading configs</td></tr>';
+    }
+}
+
+async function ucmsCreate() {
+    var url = document.getElementById('ucms-url').value.trim();
+    var username = document.getElementById('ucms-username').value.trim();
+    var password = document.getElementById('ucms-password').value.trim();
+    var userIdStr = document.getElementById('ucms-user-id').value.trim();
+    if (!url || !username || !password) {
+        ucmsShowMsg('Site URL, Username, and Password are required', true);
+        return;
+    }
+    var body = {site_url: url, wp_username: username, app_password: password};
+    if (userIdStr) body.user_id = parseInt(userIdStr, 10);
+    try {
+        var resp = await fetch(BASE + '/admin/api/user-cms-configs', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        });
+        var data = await resp.json();
+        if (resp.ok) {
+            ucmsShowMsg('Config created (ID: ' + data.id + ')', false);
+            document.getElementById('ucms-add-form').style.display = 'none';
+            document.getElementById('ucms-url').value = '';
+            document.getElementById('ucms-username').value = '';
+            document.getElementById('ucms-password').value = '';
+            document.getElementById('ucms-user-id').value = '';
+            loadUserCmsConfigs();
+        } else {
+            ucmsShowMsg(data.message || 'Create failed', true);
+        }
+    } catch(e) {
+        ucmsShowMsg('Network error', true);
+    }
+}
+
+async function ucmsDelete(id) {
+    if (!confirm('Delete user CMS config #' + id + '?')) return;
+    try {
+        var resp = await fetch(BASE + '/admin/api/user-cms-configs/' + id, {method: 'DELETE'});
+        var data = await resp.json();
+        if (resp.ok) {
+            ucmsShowMsg('Config deleted', false);
+            loadUserCmsConfigs();
+        } else {
+            ucmsShowMsg(data.message || 'Delete failed', true);
+        }
+    } catch(e) {
+        ucmsShowMsg('Network error', true);
+    }
+}
+
+async function ucmsTest(id) {
+    ucmsShowMsg('Testing connection...', false);
+    try {
+        var resp = await fetch(BASE + '/admin/api/user-cms-configs/' + id + '/test', {method: 'POST'});
+        var data = await resp.json();
+        if (data.status === 'ok') {
+            ucmsShowMsg('Connection successful! Site: ' + (data.site_name || 'OK'), false);
+        } else {
+            ucmsShowMsg('Connection failed: ' + (data.message || 'Unknown error'), true);
+        }
+    } catch(e) {
+        ucmsShowMsg('Network error during test', true);
     }
 }
 """
@@ -4183,6 +4288,60 @@ def admin_dashboard(
                     </tbody>
                 </table>
             </div>
+
+            <div class="section" style="margin-top:32px;">
+                <h2>User CMS Configurations</h2>
+                <p style="color:#94a3b8;margin-bottom:16px;">Per-user WordPress site connections. Each admin user can have their own publishing targets. Passwords are encrypted at rest.</p>
+
+                <div style="display:flex;gap:12px;margin-bottom:24px;">
+                    <button class="btn btn-primary" onclick="document.getElementById('ucms-add-form').style.display='block'" data-testid="btn-ucms-add">Add User Config</button>
+                </div>
+
+                <div id="ucms-add-form" style="display:none;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:20px;margin-bottom:24px;">
+                    <h3 style="margin-bottom:16px;color:#f1f5f9;">New User CMS Configuration</h3>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+                        <div>
+                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Site URL</label>
+                            <input type="text" id="ucms-url" placeholder="https://yourdomain.com" style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;" data-testid="input-ucms-url">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">WP Username</label>
+                            <input type="text" id="ucms-username" placeholder="admin" style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;" data-testid="input-ucms-username">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Application Password</label>
+                            <input type="password" id="ucms-password" placeholder="xxxx xxxx xxxx xxxx" style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;" data-testid="input-ucms-password">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Assign to User ID</label>
+                            <input type="number" id="ucms-user-id" placeholder="Leave blank for yourself" style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;" data-testid="input-ucms-user-id">
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <button class="btn btn-primary" onclick="ucmsCreate()" data-testid="btn-ucms-save">Save</button>
+                        <button class="btn" onclick="document.getElementById('ucms-add-form').style.display='none'" data-testid="btn-ucms-cancel">Cancel</button>
+                    </div>
+                </div>
+
+                <div id="ucms-status-msg" style="display:none;padding:10px 16px;border-radius:6px;margin-bottom:16px;font-size:14px;" data-testid="text-ucms-status"></div>
+
+                <table class="signal-table" data-testid="table-ucms-configs">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Owner</th>
+                            <th>Site URL</th>
+                            <th>WP Username</th>
+                            <th>Status</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ucms-body">
+                        <tr><td colspan="7" style="text-align:center;color:#64748b;">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
 
         </main>
@@ -4562,37 +4721,77 @@ def api_test_wp_credential(request: Request, cred_id: int):
     if guard:
         return guard
     from trading_engine.database import get_wp_credential_decrypted
+    from trading_engine.services.wp_connection import verify_wp_connection
     cred = get_wp_credential_decrypted(cred_id)
     if not cred:
         return JSONResponse(content={"status": "error", "message": "Credential not found"}, status_code=404)
-    import httpx
-    wp_url = cred["wp_url"].rstrip("/")
+    ok, message, site_name = verify_wp_connection(cred["wp_url"], cred["wp_username"], cred["app_password"])
+    if ok:
+        return JSONResponse(content={"status": "ok", "message": message, "site_name": site_name or ""})
+    return JSONResponse(content={"status": "error", "message": message})
+
+
+@router.get("/api/user-cms-configs")
+def api_list_user_cms_configs(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import get_all_user_cms_configs
+    return JSONResponse(content=get_all_user_cms_configs())
+
+
+@router.post("/api/user-cms-configs")
+def api_create_user_cms_config(request: Request, body: dict = Body(...)):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    user = _get_session_user(request)
+    required = ["site_url", "wp_username", "app_password"]
+    for f in required:
+        if not body.get(f, "").strip():
+            return JSONResponse(content={"status": "error", "message": f"Missing required field: {f}"}, status_code=400)
+    from trading_engine.database import create_user_cms_config
     try:
-        with httpx.Client(timeout=15) as client:
-            resp = client.get(
-                f"{wp_url}/wp-json/wp/v2/users/me",
-                auth=(cred["wp_username"], cred["app_password"]),
-            )
-            if resp.status_code == 200:
-                user_data = resp.json()
-                site_resp = client.get(f"{wp_url}/wp-json", timeout=10)
-                site_name = ""
-                if site_resp.status_code == 200:
-                    site_name = site_resp.json().get("name", "")
-                return JSONResponse(content={
-                    "status": "ok",
-                    "message": "Connection successful",
-                    "site_name": site_name,
-                    "wp_user": user_data.get("name", ""),
-                })
-            else:
-                return JSONResponse(content={
-                    "status": "error",
-                    "message": f"HTTP {resp.status_code}: {resp.text[:200]}",
-                }, status_code=200)
-    except httpx.ConnectError as e:
-        return JSONResponse(content={"status": "error", "message": f"Connection failed: {e}"}, status_code=200)
-    except httpx.TimeoutException:
-        return JSONResponse(content={"status": "error", "message": "Connection timed out"}, status_code=200)
+        body["user_id"] = body.get("user_id", user["id"])
+        config_id = create_user_cms_config(body)
+        return JSONResponse(content={"status": "ok", "id": config_id})
     except Exception as e:
-        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=200)
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
+
+@router.delete("/api/user-cms-configs/{config_id}")
+def api_delete_user_cms_config(request: Request, config_id: int):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import delete_user_cms_config
+    if delete_user_cms_config(config_id):
+        return JSONResponse(content={"status": "ok"})
+    return JSONResponse(content={"status": "error", "message": "Config not found"}, status_code=404)
+
+
+@router.put("/api/user-cms-configs/{config_id}")
+def api_update_user_cms_config(request: Request, config_id: int, body: dict = Body(...)):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import update_user_cms_config
+    if update_user_cms_config(config_id, body):
+        return JSONResponse(content={"status": "ok"})
+    return JSONResponse(content={"status": "error", "message": "Config not found"}, status_code=404)
+
+
+@router.post("/api/user-cms-configs/{config_id}/test")
+def api_test_user_cms_config(request: Request, config_id: int):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import get_user_cms_config_decrypted
+    from trading_engine.services.wp_connection import verify_wp_connection
+    cred = get_user_cms_config_decrypted(config_id)
+    if not cred:
+        return JSONResponse(content={"status": "error", "message": "Config not found"}, status_code=404)
+    ok, message, site_name = verify_wp_connection(cred["site_url"], cred["wp_username"], cred["app_password"])
+    if ok:
+        return JSONResponse(content={"status": "ok", "message": message, "site_name": site_name or ""})
+    return JSONResponse(content={"status": "error", "message": message})
