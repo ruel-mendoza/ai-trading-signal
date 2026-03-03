@@ -193,7 +193,7 @@ export default function WordPressIntegrations() {
       let handshakeMsg = "";
 
       try {
-        const probeRes = await fetch("/api/engine/admin/api/wordpress/validate-credentials", {
+        const probeRes = await fetch("/api/v1/user/integrations/test", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
@@ -201,7 +201,11 @@ export default function WordPressIntegrations() {
         });
         const probeData = await probeRes.json();
         handshakeOk = probeData.status === "ok";
-        handshakeMsg = probeData.message || (handshakeOk ? "Connection verified" : "Validation failed");
+        if (handshakeOk) {
+          handshakeMsg = `Connected — ${probeData.site_title || "WordPress site"}${probeData.wp_version ? ` (${probeData.wp_version})` : ""}`;
+        } else {
+          handshakeMsg = probeData.error || "Validation failed";
+        }
       } catch {
         handshakeOk = false;
         handshakeMsg = "Could not reach validation service. Please try again.";

@@ -894,3 +894,121 @@ def flush_cache():
     """
     cache_pool.flush()
     return {"status": "flushed", "message": "All cache shards cleared"}
+
+
+class WpTestRequest(BaseModel):
+    site_url: str = Field(..., description="WordPress site URL (e.g. https://example.com)")
+    wp_username: str = Field(..., description="WordPress username")
+    app_password: str = Field(..., description="WordPress Application Password")
+
+
+class WpTestResponse(BaseModel):
+    status: str = Field(..., description="'ok' on success, 'error' on failure")
+    site_title: Optional[str] = Field(None, description="WordPress site title (on success)")
+    wp_version: Optional[str] = Field(None, description="WordPress version (on success)")
+    error: Optional[str] = Field(None, description="Specific error message (on failure)")
+
+
+@router.post(
+    "/user/integrations/test",
+    response_model=WpTestResponse,
+    tags=["User Integrations"],
+    summary="Test WordPress credentials",
+)
+def test_wp_integration(body: WpTestRequest):
+    """
+    Validate WordPress credentials by attempting to authenticate and
+    retrieve site info. Returns the site title and WordPress version
+    on success, or a specific error on failure.
+    """
+    import httpx
+
+    site_url = body.site_url.rstrip("/")
+    timeout = 15.0
+
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            auth_resp = client.get(
+                f"{site_url}/wp-json/wp/v2/users/me",
+                auth=(body.wp_username, body.app_password),
+            )
+
+            if auth_resp.status_code == 401:
+                return WpTestResponse(
+                    status="error",
+                    error="Invalid Application Password",
+                )
+            if auth_resp.status_code == 403:
+                return WpTestResponse(
+                    status="error",
+                    error="Access forbidden — Application Password lacks required permissions",
+                )
+            if auth_resp.status_code == 404:
+                return WpTestResponse(
+                    status="error",
+                    error="REST API Disabled — /wp-json/wp/v2 not found at this URL",
+                )
+            if auth_resp.status_code != 200:
+                return WpTestResponse(
+                    status="error",
+                    error=f"Unexpected response (HTTP {auth_resp.status_code})",
+                )
+
+            site_title = None
+            wp_version = None
+
+            try:
+                info_resp = client.get(f"{site_url}/wp-json", timeout=10)
+                if info_resp.status_code == 200:
+                    info = info_resp.json()
+                    site_title = info.get("name")
+                    namespaces = info.get("namespaces", [])
+                    if "wp/v2" in namespaces:
+                        wp_version = "wp/v2"
+                        for ns in namespaces:
+                            if ns.startswith("wp/v"):
+                                wp_version = ns
+            except Exception:
+                pass
+
+            try:
+                settings_resp = client.get(
+                    f"{site_url}/wp-json/wp/v2/settings",
+                    auth=(body.wp_username, body.app_password),
+                    timeout=10,
+                )
+                if settings_resp.status_code == 200:
+                    settings = settings_resp.json()
+                    if not site_title:
+                        site_title = settings.get("title")
+            except Exception:
+                pass
+
+            if not site_title:
+                try:
+                    user_data = auth_resp.json()
+                    site_title = user_data.get("name", body.wp_username)
+                except Exception:
+                    site_title = body.wp_username
+
+            return WpTestResponse(
+                status="ok",
+                site_title=site_title,
+                wp_version=wp_version,
+            )
+
+    except httpx.ConnectError:
+        return WpTestResponse(
+            status="error",
+            error=f"Connection failed — could not reach {site_url}",
+        )
+    except httpx.TimeoutException:
+        return WpTestResponse(
+            status="error",
+            error="Connection timed out after 15 seconds",
+        )
+    except Exception as e:
+        return WpTestResponse(
+            status="error",
+            error=f"Unexpected error: {str(e)}",
+        )

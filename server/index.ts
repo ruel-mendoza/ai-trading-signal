@@ -166,7 +166,16 @@ app.use("/api/v1", async (req: Request, res: Response) => {
     const queryString = new URLSearchParams(req.query as Record<string, string>).toString();
     const url = `${PYTHON_ENGINE_URL}${targetPath}${queryString ? "?" + queryString : ""}`;
 
-    const response = await fetch(url);
+    const fetchOptions: RequestInit = {
+      method: req.method,
+      headers: { "content-type": "application/json" },
+    };
+
+    if (req.method !== "GET" && req.method !== "HEAD" && req.body) {
+      fetchOptions.body = JSON.stringify(req.body);
+    }
+
+    const response = await fetch(url, fetchOptions);
     const contentType = response.headers.get("content-type") || "application/json";
     res.status(response.status).set("content-type", contentType);
     const body = await response.text();
