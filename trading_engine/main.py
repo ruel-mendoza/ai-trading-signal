@@ -751,6 +751,14 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
+    scheduler.add_job(
+        _run_daily_backup,
+        trigger=CronTrigger(hour=1, minute=0, timezone=ET_ZONE),
+        id="daily_backup",
+        name="Daily Database Backup (1:00 AM ET)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
     scheduler.start()
 
     import asyncio as _asyncio
