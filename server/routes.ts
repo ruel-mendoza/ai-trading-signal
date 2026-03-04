@@ -170,6 +170,11 @@ Respond with ONLY valid JSON (no markdown, no code blocks, no extra text):
 
       res.write(`data: ${JSON.stringify({ type: "status", message: "Generating signal..." })}\n\n`);
 
+      const expiredCount = await storage.expireActiveSignalsForPair(pairInfo.pair);
+      if (expiredCount > 0) {
+        console.log(`[signals] Expired ${expiredCount} existing active signal(s) for ${pairInfo.pair} before creating new one`);
+      }
+
       const signalInsert = {
         pair: pairInfo.pair,
         category: pairInfo.category,
