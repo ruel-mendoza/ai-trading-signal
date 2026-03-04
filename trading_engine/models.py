@@ -265,3 +265,16 @@ class UserCmsConfig(Base):
     __table_args__ = (
         Index("idx_user_cms_user_id", "user_id"),
     )
+
+
+class StrategyExecutionLog(Base):
+    __tablename__ = "strategy_execution_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    strategy_name = Column(Text, nullable=False)
+    last_run_at = Column(Text, nullable=False)
+    status = Column(Text, nullable=False)
+
+    __table_args__ = (
+        Index("idx_strategy_exec_name", "strategy_name"),
+    )
