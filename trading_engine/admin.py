@@ -3046,16 +3046,18 @@ async function loadSchedulerData() {
 
 async function loadSystemStatus() {
     try {
-        var [healthRes, notifRes, creditRes, secRes] = await Promise.all([
+        var [healthRes, notifRes, creditRes, secRes, storageRes] = await Promise.all([
             fetch(BASE + '/health'),
             fetch(BASE + '/admin/api/notifications').catch(function() { return null; }),
             fetch(BASE + '/admin/api/usage').catch(function() { return null; }),
-            fetch(BASE + '/admin/api/security/stats').catch(function() { return null; })
+            fetch(BASE + '/admin/api/security/stats').catch(function() { return null; }),
+            fetch(BASE + '/admin/api/storage-stats').catch(function() { return null; })
         ]);
         var health = await healthRes.json();
         var notif = notifRes ? await notifRes.json().catch(function() { return {}; }) : {};
         var credit = creditRes ? await creditRes.json().catch(function() { return {}; }) : {};
         var sec = secRes ? await secRes.json().catch(function() { return {}; }) : {};
+        var storage = storageRes ? await storageRes.json().catch(function() { return {}; }) : {};
 
         document.getElementById('sys-loading').style.display = 'none';
         document.getElementById('sys-content').style.display = 'block';
@@ -3156,6 +3158,40 @@ async function loadSystemStatus() {
             if (sec.blocked_ips > 0) parts.push('<span style="color:#ef4444;">' + sec.blocked_ips + ' blocked</span>');
             if (sec.cooled_down_ips > 0) parts.push('<span style="color:#f59e0b;">' + sec.cooled_down_ips + ' in cooldown</span>');
             secEl.innerHTML = parts.join(' &middot; ');
+        }
+
+        if (storage && storage.used_percent !== undefined) {
+            var pct = storage.used_percent;
+            var barColor, statusText, statusClass;
+            if (pct < 70) {
+                barColor = '#22c55e';
+                statusText = 'Healthy';
+                statusClass = 'status-open';
+            } else if (pct < 90) {
+                barColor = '#f59e0b';
+                statusText = 'Warning';
+                statusClass = 'status-expired';
+            } else {
+                barColor = '#ef4444';
+                statusText = 'Critical';
+                statusClass = 'status-closed';
+            }
+            document.getElementById('storage-pct-label').textContent = pct + '%';
+            document.getElementById('storage-pct-label').style.color = barColor;
+            var badge = document.getElementById('storage-status-badge');
+            badge.textContent = statusText;
+            badge.className = 'badge ' + statusClass;
+            var dbMb = storage.database ? storage.database.size_mb : 0;
+            var bkMb = storage.backups ? storage.backups.size_mb : 0;
+            var bkCount = storage.backups ? storage.backups.file_count : 0;
+            document.getElementById('storage-breakdown').innerHTML =
+                'DB: <strong style="color:#f1f5f9;">' + dbMb + ' MB</strong> &nbsp;|&nbsp; ' +
+                'Backups: <strong style="color:#f1f5f9;">' + bkMb + ' MB</strong> (' + bkCount + ' file' + (bkCount !== 1 ? 's' : '') + ')';
+            var bar = document.getElementById('storage-bar');
+            bar.style.width = Math.min(pct, 100) + '%';
+            bar.style.background = barColor;
+            document.getElementById('storage-used-label').textContent = storage.total_used_mb + ' MB used';
+            document.getElementById('storage-max-label').textContent = storage.max_storage_mb + ' MB max (' + storage.max_storage_gb + ' GB)';
         }
 
     } catch (e) {
@@ -4237,6 +4273,24 @@ def admin_dashboard(
                         <div style="color:#94a3b8;font-size:13px;">Real-time signal push via <strong style="color:#f1f5f9;">/ws/signals</strong>. Broadcasts <code>signal:new</code> and <code>signal:closed</code> events. Auto-reconnect with 5s backoff.</div>
                     </div>
 
+                </div>
+
+                <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:12px;">Storage Monitor</div>
+                <div style="padding:20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;margin-bottom:24px;" data-testid="widget-storage-monitor">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <div id="storage-pct-label" style="font-size:22px;font-weight:700;color:#f1f5f9;" data-testid="text-storage-percent">--%</div>
+                            <div id="storage-status-badge" class="badge" data-testid="badge-storage-status">--</div>
+                        </div>
+                        <div id="storage-breakdown" style="font-size:13px;color:#94a3b8;" data-testid="text-storage-breakdown">Loading...</div>
+                    </div>
+                    <div style="width:100%;height:10px;background:rgba(30,41,59,0.8);border-radius:5px;overflow:hidden;">
+                        <div id="storage-bar" style="height:100%;width:0%;border-radius:5px;transition:width 0.6s ease,background 0.3s ease;" data-testid="bar-storage-usage"></div>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:12px;color:#64748b;">
+                        <span id="storage-used-label" data-testid="text-storage-used">-- MB used</span>
+                        <span id="storage-max-label" data-testid="text-storage-max">-- MB max</span>
+                    </div>
                 </div>
 
                 <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:12px;">Live Status</div>
