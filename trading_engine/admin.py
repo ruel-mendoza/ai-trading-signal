@@ -5096,6 +5096,34 @@ def api_storage_stats(request: Request):
     return JSONResponse(content=stats)
 
 
+@router.post("/api/storage/purge")
+def api_storage_purge(request: Request, body: dict = Body(...)):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    days = body.get("days_threshold")
+    if days is None:
+        return JSONResponse(content={"error": "days_threshold is required"}, status_code=400)
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        return JSONResponse(content={"error": "days_threshold must be an integer"}, status_code=400)
+    if days < 1:
+        return JSONResponse(content={"error": "days_threshold must be at least 1"}, status_code=400)
+    allowed = (90, 180, 365)
+    if days not in allowed:
+        return JSONResponse(
+            content={"error": f"days_threshold must be one of {allowed}"},
+            status_code=400,
+        )
+    from trading_engine.utils.storage_manager import purge_signals
+    try:
+        result = purge_signals(days)
+        return JSONResponse(content=result)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
 @router.get("/api/scheduler/health")
 def api_scheduler_health(request: Request):
     guard = _admin_role_guard(request)
