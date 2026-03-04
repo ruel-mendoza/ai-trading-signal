@@ -37,6 +37,7 @@ from trading_engine.database import (
     init_db, get_candles, get_candle_count, get_all_signals, get_active_signals,
     create_job_log, finish_job_log, get_scheduler_health_summary,
     compute_signal_metrics,
+    upsert_strategy_execution_log, get_last_successful_execution,
 )
 from trading_engine.models import VALID_TIMEFRAMES
 from trading_engine.fcsapi_client import FCSAPIClient
@@ -213,6 +214,7 @@ def _scheduled_trend_forex_evaluate():
     status = "FAILED" if asset_errors == assets_eval else ("PARTIAL" if error_count > 0 else "SUCCESS")
     finish_job_log(log_id, status, assets_eval, signals_gen, error_count,
                    "; ".join(error_details) if error_details else None)
+    upsert_strategy_execution_log("trend_forex", status)
     if status in ("FAILED", "PARTIAL"):
         notify_strategy_failure("trend_forex", error_count, assets_eval, "; ".join(error_details))
     logger.info(f"[SCHEDULER] ====== trend_forex complete | {status} | {assets_eval} assets, {signals_gen} signals, {error_count} errors ======")
@@ -271,6 +273,7 @@ def _scheduled_trend_non_forex_evaluate():
     status = "FAILED" if asset_errors == assets_eval else ("PARTIAL" if error_count > 0 else "SUCCESS")
     finish_job_log(log_id, status, assets_eval, signals_gen, error_count,
                    "; ".join(error_details) if error_details else None)
+    upsert_strategy_execution_log("trend_non_forex", status)
     if status in ("FAILED", "PARTIAL"):
         notify_strategy_failure("trend_non_forex", error_count, assets_eval, "; ".join(error_details))
     logger.info(f"[SCHEDULER] ====== trend_non_forex complete | {status} | {assets_eval} assets, {signals_gen} signals, {error_count} errors ======")
@@ -466,6 +469,122 @@ def _run_metrics_worker():
         logger.error(f"[METRICS] Worker failed: {e}")
 
 
+RECOVERY_MAX_HOURS = 4
+
+RECOVERY_STRATEGIES = [
+    {
+        "name": "trend_forex",
+        "scheduled_hour": 17,
+        "scheduled_minute": 0,
+        "run_func_name": "_scheduled_trend_forex_evaluate",
+    },
+    {
+        "name": "trend_non_forex",
+        "scheduled_hour": 16,
+        "scheduled_minute": 0,
+        "run_func_name": "_scheduled_trend_non_forex_evaluate",
+    },
+]
+
+
+def recovery_check():
+    from trading_engine.utils.holiday_manager import is_trading_holiday
+
+    et = _get_et_context()
+    now_et = et["now"]
+    today_date = now_et.date()
+
+    logger.info(
+        f"[RECOVERY] ====== Startup recovery check | "
+        f"{et['time_str']} {et['label']} | "
+        f"max_catchup_hours={RECOVERY_MAX_HOURS} ======"
+    )
+
+    if now_et.weekday() >= 5:
+        logger.info("[RECOVERY] Weekend — skipping recovery (no D1 candles expected)")
+        return
+
+    if is_trading_holiday(today_date):
+        logger.info("[RECOVERY] Trading holiday — skipping recovery")
+        return
+
+    run_funcs = {
+        "_scheduled_trend_forex_evaluate": _scheduled_trend_forex_evaluate,
+        "_scheduled_trend_non_forex_evaluate": _scheduled_trend_non_forex_evaluate,
+    }
+
+    recovered = 0
+    for strat in RECOVERY_STRATEGIES:
+        strategy_name = strat["name"]
+        sched_hour = strat["scheduled_hour"]
+        sched_minute = strat["scheduled_minute"]
+        func = run_funcs[strat["run_func_name"]]
+
+        scheduled_time_today = now_et.replace(
+            hour=sched_hour, minute=sched_minute, second=0, microsecond=0
+        )
+
+        if now_et < scheduled_time_today:
+            logger.info(
+                f"[RECOVERY] {strategy_name} | "
+                f"Scheduled at {sched_hour:02d}:{sched_minute:02d} ET — "
+                f"not yet past window, skipping"
+            )
+            continue
+
+        hours_past = (now_et - scheduled_time_today).total_seconds() / 3600.0
+        if hours_past > RECOVERY_MAX_HOURS:
+            logger.info(
+                f"[RECOVERY] {strategy_name} | "
+                f"{hours_past:.1f}h past window (max {RECOVERY_MAX_HOURS}h) — "
+                f"data too stale, skipping"
+            )
+            continue
+
+        last_exec = get_last_successful_execution(strategy_name)
+        if last_exec:
+            try:
+                last_run_dt = datetime.fromisoformat(last_exec["last_run_at"])
+                last_run_date = last_run_dt.date()
+            except (ValueError, TypeError):
+                last_run_date = None
+
+            if last_run_date == today_date:
+                logger.info(
+                    f"[RECOVERY] {strategy_name} | "
+                    f"Already ran today ({last_exec['last_run_at']}) — no recovery needed"
+                )
+                continue
+
+            logger.info(
+                f"[RECOVERY] {strategy_name} | "
+                f"Last successful run: {last_exec['last_run_at']} (not today) | "
+                f"{hours_past:.1f}h past window — triggering catch-up"
+            )
+        else:
+            logger.info(
+                f"[RECOVERY] {strategy_name} | "
+                f"No previous successful run found | "
+                f"{hours_past:.1f}h past window — triggering catch-up"
+            )
+
+        try:
+            logger.info(f"[RECOVERY] {strategy_name} | Running strategy now...")
+            func()
+            recovered += 1
+            logger.info(f"[RECOVERY] {strategy_name} | Catch-up execution completed")
+        except Exception as e:
+            logger.error(
+                f"[RECOVERY] {strategy_name} | Catch-up execution FAILED: {e}",
+                exc_info=True,
+            )
+
+    logger.info(
+        f"[RECOVERY] ====== Recovery check complete | "
+        f"{recovered} strategy(ies) recovered ======"
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from trading_engine.database import get_setting
@@ -551,6 +670,11 @@ async def lifespan(app: FastAPI):
         logger.info("[METRICS] Initial metrics computation completed on startup")
     except Exception as e:
         logger.warning(f"[METRICS] Initial computation failed: {e}")
+
+    try:
+        recovery_check()
+    except Exception as e:
+        logger.error(f"[RECOVERY] Startup recovery check failed: {e}", exc_info=True)
 
     watchdog = threading.Thread(target=_watchdog_thread, daemon=True, name="scheduler-watchdog")
     watchdog.start()

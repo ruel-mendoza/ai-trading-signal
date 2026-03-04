@@ -56,6 +56,7 @@ from trading_engine.models import (
     SignalMetrics,
     SignalCmsPost,
     UserCmsConfig,
+    StrategyExecutionLog,
     VALID_TIMEFRAMES,
 )
 
@@ -1479,3 +1480,40 @@ def get_signal_cms_posts_for_signal(signal_id: int) -> list[dict]:
             "publish_status": r.publish_status,
             "last_sync": r.last_sync,
         } for r in rows]
+
+
+def upsert_strategy_execution_log(strategy_name: str, status: str):
+    now_iso = datetime.utcnow().isoformat()
+    with _get_session() as session:
+        try:
+            row = session.query(StrategyExecutionLog).filter_by(
+                strategy_name=strategy_name
+            ).order_by(StrategyExecutionLog.id.desc()).first()
+            if row and row.status == status:
+                row.last_run_at = now_iso
+            else:
+                session.add(StrategyExecutionLog(
+                    strategy_name=strategy_name,
+                    last_run_at=now_iso,
+                    status=status,
+                ))
+            session.commit()
+            logger.debug(f"[DB] strategy_execution_log upserted: {strategy_name} = {status}")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] upsert_strategy_execution_log failed: {e}")
+
+
+def get_last_successful_execution(strategy_name: str) -> Optional[dict]:
+    with _get_session() as session:
+        row = session.query(StrategyExecutionLog).filter_by(
+            strategy_name=strategy_name, status="SUCCESS"
+        ).order_by(StrategyExecutionLog.id.desc()).first()
+        if not row:
+            return None
+        return {
+            "id": row.id,
+            "strategy_name": row.strategy_name,
+            "last_run_at": row.last_run_at,
+            "status": row.status,
+        }
