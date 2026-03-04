@@ -5032,6 +5032,16 @@ def api_delete_partner_key(request: Request, key_id: int):
     return JSONResponse(content={"success": ok})
 
 
+@router.get("/api/storage-stats")
+def api_storage_stats(request: Request):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.utils.system_monitor import get_storage_stats
+    stats = get_storage_stats()
+    return JSONResponse(content=stats)
+
+
 @router.get("/api/scheduler/health")
 def api_scheduler_health(request: Request):
     guard = _admin_role_guard(request)

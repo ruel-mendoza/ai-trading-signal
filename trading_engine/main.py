@@ -469,6 +469,11 @@ def _run_metrics_worker():
         logger.error(f"[METRICS] Worker failed: {e}")
 
 
+def _run_daily_backup():
+    from trading_engine.utils.backup_manager import run_daily_backup
+    run_daily_backup()
+
+
 RECOVERY_MAX_HOURS = 4
 
 RECOVERY_STRATEGIES = [
