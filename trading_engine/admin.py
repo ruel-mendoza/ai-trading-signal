@@ -2601,6 +2601,7 @@ function showTab(tabName) {
     if (tabName === 'apikeys') loadPartnerKeys();
     if (tabName === 'scheduler') loadSchedulerData();
     if (tabName === 'system') loadSystemStatus();
+    if (tabName === 'recovery') loadRecoveryLogs();
     if (tabName === 'users') loadRegistrationToggle();
     if (tabName === 'wordpress') { loadUserCmsConfigs(); }
 }
@@ -3162,6 +3163,79 @@ async function loadSystemStatus() {
     }
 }
 
+function formatRecoveryDate(isoStr) {
+    if (!isoStr) return '--';
+    try {
+        var d = new Date(isoStr + (isoStr.includes('Z') ? '' : 'Z'));
+        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        var month = months[d.getUTCMonth()];
+        var day = d.getUTCDate();
+        var hr = d.getUTCHours();
+        var min = String(d.getUTCMinutes()).padStart(2, '0');
+        var ampm = hr >= 12 ? 'PM' : 'AM';
+        hr = hr % 12 || 12;
+        return month + ' ' + day + ', ' + hr + ':' + min + ' ' + ampm + ' ET';
+    } catch(e) { return isoStr; }
+}
+
+async function loadRecoveryLogs() {
+    try {
+        var res = await fetch(BASE + '/admin/api/recovery-logs');
+        var data = await res.json();
+        document.getElementById('recovery-loading').style.display = 'none';
+        document.getElementById('recovery-content').style.display = 'block';
+
+        var logs = data.logs || [];
+        var total = logs.length;
+        var successCount = logs.filter(function(l) { return l.status === 'SUCCESS'; }).length;
+        var failedCount = logs.filter(function(l) { return l.status === 'FAILED'; }).length;
+
+        document.getElementById('recovery-total').textContent = total;
+        document.getElementById('recovery-success').textContent = successCount;
+        document.getElementById('recovery-failed').textContent = failedCount;
+
+        var tbody = document.getElementById('recovery-rows');
+        if (logs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#64748b;">No recovery events recorded yet</td></tr>';
+            return;
+        }
+
+        var html = '';
+        for (var i = 0; i < logs.length; i++) {
+            var log = logs[i];
+            var statusBadge;
+            if (log.status === 'SUCCESS') {
+                statusBadge = '<span class="badge status-open" data-testid="badge-recovery-status-' + log.id + '">Backfilled</span>';
+            } else if (log.status === 'FAILED') {
+                statusBadge = '<span class="badge status-closed" data-testid="badge-recovery-status-' + log.id + '">Failed</span>';
+            } else {
+                statusBadge = '<span class="badge status-expired" data-testid="badge-recovery-status-' + log.id + '">Skipped</span>';
+            }
+
+            var assets = '';
+            if (Array.isArray(log.assets_affected)) {
+                assets = log.assets_affected.join(', ');
+            } else {
+                assets = String(log.assets_affected || '--');
+            }
+
+            var strategyLabel = (log.strategy_name || '').replace(/_/g, ' ').replace(/\\b\\w/g, function(c) { return c.toUpperCase(); });
+
+            html += '<tr data-testid="row-recovery-' + log.id + '">' +
+                '<td style="font-weight:500;color:#f1f5f9;">' + strategyLabel + '</td>' +
+                '<td>' + statusBadge + '</td>' +
+                '<td style="color:#94a3b8;">' + formatRecoveryDate(log.missed_window_time) + '</td>' +
+                '<td style="color:#94a3b8;">' + formatRecoveryDate(log.execution_time) + '</td>' +
+                '<td style="color:#e2e8f0;font-size:13px;">' + assets + '</td>' +
+                '</tr>';
+        }
+        tbody.innerHTML = html;
+
+    } catch (e) {
+        document.getElementById('recovery-loading').textContent = 'Failed to load recovery logs.';
+    }
+}
+
 async function loadNotifConfig() {
     try {
         const res = await fetch(BASE + '/admin/api/notifications');
@@ -3608,6 +3682,7 @@ def admin_dashboard(
         admin_system_links += _sidebar_link("apikeys", "Partner API Keys", svg_key, tab, "sidebar-apikeys")
         admin_system_links += _sidebar_link("scheduler", "Scheduler Health", svg_calendar, tab, "sidebar-scheduler")
         admin_system_links += _sidebar_link("system", "System Status", svg_shield, tab, "sidebar-system")
+        admin_system_links += _sidebar_link("recovery", "Recovery Logs", svg_calendar, tab, "sidebar-recovery")
 
     admin_mobile_tabs = ""
     if is_admin:
@@ -3622,6 +3697,7 @@ def admin_dashboard(
         admin_mobile_tabs += _mobile_tab("notifications", "Alerts", tab)
         admin_mobile_tabs += _mobile_tab("scheduler", "Scheduler", tab)
         admin_mobile_tabs += _mobile_tab("system", "System", tab)
+        admin_mobile_tabs += _mobile_tab("recovery", "Recovery", tab)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -4187,6 +4263,53 @@ def admin_dashboard(
                             <div id="sys-ws-clients" style="font-size:14px;font-weight:500;color:#f1f5f9;margin-top:2px;" data-testid="text-sys-ws-clients">--</div>
                         </div>
                     </div>
+                </div>
+
+                </div>
+            </div>
+        </div>
+        <div id="tab-recovery" class="tab-content {'hidden' if tab != 'recovery' else ''}">
+            <div class="section">
+                <h2>Recovery Logs</h2>
+                <p style="color:#94a3b8;margin-bottom:20px;">Audit trail of all missed-window recovery events. Shows when strategies were automatically backfilled on startup.</p>
+
+                <div id="recovery-loading" style="text-align:center;padding:40px;color:#94a3b8;">Loading recovery logs...</div>
+                <div id="recovery-content" style="display:none;">
+
+                <div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px;">
+                    <div style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;">Total Events</div>
+                        <div id="recovery-total" style="font-size:22px;font-weight:700;color:#f1f5f9;margin-top:4px;" data-testid="text-recovery-total">0</div>
+                    </div>
+                    <div style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;">Backfilled</div>
+                        <div id="recovery-success" style="font-size:22px;font-weight:700;color:#22c55e;margin-top:4px;" data-testid="text-recovery-success">0</div>
+                    </div>
+                    <div style="padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
+                        <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;">Failed</div>
+                        <div id="recovery-failed" style="font-size:22px;font-weight:700;color:#ef4444;margin-top:4px;" data-testid="text-recovery-failed">0</div>
+                    </div>
+                </div>
+
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                    <div style="font-weight:600;color:#f1f5f9;font-size:15px;">Recovery Event History</div>
+                    <button class="btn" onclick="loadRecoveryLogs()" data-testid="button-refresh-recovery" style="font-size:13px;padding:6px 14px;">Refresh</button>
+                </div>
+                <div style="overflow-x:auto;">
+                    <table class="data-table" data-testid="table-recovery-logs">
+                        <thead>
+                            <tr>
+                                <th>Strategy</th>
+                                <th>Status</th>
+                                <th>Target Window</th>
+                                <th>Actual Execution</th>
+                                <th>Assets</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recovery-rows">
+                            <tr><td colspan="5" style="text-align:center;color:#64748b;">No recovery events recorded yet</td></tr>
+                        </tbody>
+                    </table>
                 </div>
 
                 </div>
@@ -4924,6 +5047,16 @@ def api_scheduler_job_logs(request: Request, limit: int = Query(50, ge=1, le=200
     if guard:
         return guard
     logs = get_recent_job_logs(limit)
+    return JSONResponse(content={"logs": logs, "count": len(logs)})
+
+
+@router.get("/api/recovery-logs")
+def api_recovery_logs(request: Request, limit: int = Query(50, ge=1, le=200)):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import get_recovery_notifications
+    logs = get_recovery_notifications(limit)
     return JSONResponse(content={"logs": logs, "count": len(logs)})
 
 
