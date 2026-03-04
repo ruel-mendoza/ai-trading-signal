@@ -57,6 +57,7 @@ from trading_engine.models import (
     SignalCmsPost,
     UserCmsConfig,
     StrategyExecutionLog,
+    RecoveryNotification,
     VALID_TIMEFRAMES,
 )
 
@@ -1517,3 +1518,58 @@ def get_last_successful_execution(strategy_name: str) -> Optional[dict]:
             "last_run_at": row.last_run_at,
             "status": row.status,
         }
+
+
+def insert_recovery_notification(
+    strategy_name: str,
+    missed_window_time: str,
+    execution_time: str,
+    assets_affected: str,
+    status: str,
+) -> Optional[int]:
+    with _get_session() as session:
+        try:
+            obj = RecoveryNotification(
+                strategy_name=strategy_name,
+                missed_window_time=missed_window_time,
+                execution_time=execution_time,
+                assets_affected=assets_affected,
+                status=status,
+            )
+            session.add(obj)
+            session.commit()
+            logger.info(
+                f"[DB] Inserted recovery_notification #{obj.id}: "
+                f"strategy={strategy_name} window={missed_window_time} status={status}"
+            )
+            return obj.id
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] insert_recovery_notification failed: {e}")
+            return None
+
+
+def get_recovery_notifications(limit: int = 50) -> list[dict]:
+    import json as _json
+    with _get_session() as session:
+        rows = (
+            session.query(RecoveryNotification)
+            .order_by(RecoveryNotification.id.desc())
+            .limit(limit)
+            .all()
+        )
+        results = []
+        for r in rows:
+            try:
+                assets = _json.loads(r.assets_affected)
+            except Exception:
+                assets = r.assets_affected
+            results.append({
+                "id": r.id,
+                "strategy_name": r.strategy_name,
+                "missed_window_time": r.missed_window_time,
+                "execution_time": r.execution_time,
+                "assets_affected": assets,
+                "status": r.status,
+            })
+        return results

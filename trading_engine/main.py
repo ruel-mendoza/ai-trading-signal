@@ -636,6 +636,10 @@ def recovery_check():
                 1 for a, s in post_audit.items()
                 if s == "duplicate_at_window" and signal_audit.get(a) == "eligible"
             )
+            affected_assets = [
+                a for a, s in post_audit.items()
+                if s == "duplicate_at_window" and signal_audit.get(a) == "eligible"
+            ]
 
             recovered += 1
             logger.info(
@@ -644,12 +648,28 @@ def recovery_check():
                 f"{new_signals} new signal(s) created, "
                 f"{skipped_count} pre-existing signal(s) preserved"
             )
+
+            from trading_engine.services.notification_service import log_recovery_event
+            log_recovery_event(
+                strategy_name=strategy_name,
+                missed_window_time=window_timestamp,
+                assets_affected=affected_assets if affected_assets else _get_recovery_assets(strategy_name),
+                status="SUCCESS",
+            )
         except Exception as e:
             logger.error(
                 f"[RECOVERY] {strategy_name} | "
                 f"Catch-up execution FAILED. Strategy functions use atomic "
                 f"per-signal transactions — no partial signals written. Error: {e}",
                 exc_info=True,
+            )
+
+            from trading_engine.services.notification_service import log_recovery_event
+            log_recovery_event(
+                strategy_name=strategy_name,
+                missed_window_time=window_timestamp,
+                assets_affected=_get_recovery_assets(strategy_name),
+                status="FAILED",
             )
 
     logger.info(

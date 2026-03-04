@@ -278,3 +278,19 @@ class StrategyExecutionLog(Base):
     __table_args__ = (
         Index("idx_strategy_exec_name", "strategy_name"),
     )
+
+
+class RecoveryNotification(Base):
+    __tablename__ = "recovery_notifications"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    strategy_name = Column(Text, nullable=False)
+    missed_window_time = Column(Text, nullable=False)
+    execution_time = Column(Text, nullable=False)
+    assets_affected = Column(Text, nullable=False)
+    status = Column(Text, nullable=False)
+
+    __table_args__ = (
+        Index("idx_recovery_notif_strategy", "strategy_name"),
+        Index("idx_recovery_notif_status", "status"),
+    )
