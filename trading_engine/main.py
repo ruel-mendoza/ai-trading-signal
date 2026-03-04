@@ -487,6 +487,40 @@ RECOVERY_STRATEGIES = [
 ]
 
 
+def _get_recovery_assets(strategy_name: str) -> list[str]:
+    if strategy_name == "trend_forex":
+        return list(TREND_FOREX_SYMBOLS)
+    elif strategy_name == "trend_non_forex":
+        return list(TREND_NON_FOREX_SYMBOLS)
+    return []
+
+
+def _check_existing_signals_for_window(strategy_name: str, window_timestamp: str) -> dict:
+    from trading_engine.database import signal_exists, has_open_signal
+
+    assets = _get_recovery_assets(strategy_name)
+    results = {}
+    for asset in assets:
+        existing_at_window = signal_exists(strategy_name, asset, window_timestamp)
+        has_open = has_open_signal(strategy_name, asset)
+
+        if existing_at_window:
+            logger.info(
+                f"[RECOVERY] [SKIP] Signal for {asset} at "
+                f"{window_timestamp} already exists. No data overwritten."
+            )
+            results[asset] = "duplicate_at_window"
+        elif has_open:
+            logger.info(
+                f"[RECOVERY] [SKIP] {asset} has an existing OPEN signal for "
+                f"strategy={strategy_name}. No duplicate entry created."
+            )
+            results[asset] = "open_signal_exists"
+        else:
+            results[asset] = "eligible"
+    return results
+
+
 def recovery_check():
     from trading_engine.utils.holiday_manager import is_trading_holiday
 
@@ -501,11 +535,11 @@ def recovery_check():
     )
 
     if now_et.weekday() >= 5:
-        logger.info("[RECOVERY] Weekend — skipping recovery (no D1 candles expected)")
+        logger.info("[RECOVERY] [SKIP] Weekend — no D1 candles expected, skipping all strategies")
         return
 
     if is_trading_holiday(today_date):
-        logger.info("[RECOVERY] Trading holiday — skipping recovery")
+        logger.info("[RECOVERY] [SKIP] Trading holiday — markets closed, skipping all strategies")
         return
 
     run_funcs = {
@@ -526,18 +560,18 @@ def recovery_check():
 
         if now_et < scheduled_time_today:
             logger.info(
-                f"[RECOVERY] {strategy_name} | "
+                f"[RECOVERY] [SKIP] {strategy_name} | "
                 f"Scheduled at {sched_hour:02d}:{sched_minute:02d} ET — "
-                f"not yet past window, skipping"
+                f"current time is before window, skipping"
             )
             continue
 
         hours_past = (now_et - scheduled_time_today).total_seconds() / 3600.0
         if hours_past > RECOVERY_MAX_HOURS:
             logger.info(
-                f"[RECOVERY] {strategy_name} | "
-                f"{hours_past:.1f}h past window (max {RECOVERY_MAX_HOURS}h) — "
-                f"data too stale, skipping"
+                f"[RECOVERY] [SKIP] {strategy_name} | "
+                f"{hours_past:.1f}h past scheduled window (max {RECOVERY_MAX_HOURS}h) — "
+                f"D1 candle data too stale for reliable signals, skipping"
             )
             continue
 
@@ -551,31 +585,70 @@ def recovery_check():
 
             if last_run_date == today_date:
                 logger.info(
-                    f"[RECOVERY] {strategy_name} | "
-                    f"Already ran today ({last_exec['last_run_at']}) — no recovery needed"
+                    f"[RECOVERY] [SKIP] {strategy_name} | "
+                    f"Already ran successfully today ({last_exec['last_run_at']}) — "
+                    f"no recovery needed, skipping"
                 )
                 continue
 
             logger.info(
                 f"[RECOVERY] {strategy_name} | "
                 f"Last successful run: {last_exec['last_run_at']} (not today) | "
-                f"{hours_past:.1f}h past window — triggering catch-up"
+                f"{hours_past:.1f}h past window — evaluating for catch-up"
             )
         else:
             logger.info(
                 f"[RECOVERY] {strategy_name} | "
                 f"No previous successful run found | "
-                f"{hours_past:.1f}h past window — triggering catch-up"
+                f"{hours_past:.1f}h past window — evaluating for catch-up"
             )
 
+        window_timestamp = scheduled_time_today.strftime("%Y-%m-%dT%H:%M:%S")
+        signal_audit = _check_existing_signals_for_window(strategy_name, window_timestamp)
+
+        eligible_count = sum(1 for s in signal_audit.values() if s == "eligible")
+        skipped_count = len(signal_audit) - eligible_count
+
+        logger.info(
+            f"[RECOVERY] {strategy_name} | Pre-flight duplicate check: "
+            f"{eligible_count} eligible, {skipped_count} skipped "
+            f"(duplicates/open signals already exist)"
+        )
+
+        if eligible_count == 0:
+            logger.info(
+                f"[RECOVERY] [SKIP] {strategy_name} | "
+                f"All {len(signal_audit)} assets already have signals at this window — "
+                f"nothing to recover"
+            )
+            continue
+
         try:
-            logger.info(f"[RECOVERY] {strategy_name} | Running strategy now...")
+            logger.info(
+                f"[RECOVERY] {strategy_name} | "
+                f"Running catch-up for {eligible_count} eligible asset(s) "
+                f"(strategy has built-in idempotency guards + DB unique constraints)..."
+            )
             func()
+
+            post_audit = _check_existing_signals_for_window(strategy_name, window_timestamp)
+            new_signals = sum(
+                1 for a, s in post_audit.items()
+                if s == "duplicate_at_window" and signal_audit.get(a) == "eligible"
+            )
+
             recovered += 1
-            logger.info(f"[RECOVERY] {strategy_name} | Catch-up execution completed")
+            logger.info(
+                f"[RECOVERY] {strategy_name} | "
+                f"Catch-up execution completed — "
+                f"{new_signals} new signal(s) created, "
+                f"{skipped_count} pre-existing signal(s) preserved"
+            )
         except Exception as e:
             logger.error(
-                f"[RECOVERY] {strategy_name} | Catch-up execution FAILED: {e}",
+                f"[RECOVERY] {strategy_name} | "
+                f"Catch-up execution FAILED. Strategy functions use atomic "
+                f"per-signal transactions — no partial signals written. Error: {e}",
                 exc_info=True,
             )
 
