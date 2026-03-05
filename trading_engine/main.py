@@ -15,6 +15,7 @@ import pandas as pd
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 
 ET_ZONE = pytz.timezone("America/New_York")
@@ -763,6 +764,15 @@ async def lifespan(app: FastAPI):
         name="Daily Database Backup (1:00 AM ET)",
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
+    from trading_engine.engine.watchdog import check_eurusd_proximity as _watchdog_check
+    scheduler.add_job(
+        _watchdog_check,
+        trigger=IntervalTrigger(seconds=60, timezone=ET_ZONE),
+        id="eurusd_proximity_watchdog",
+        name="EUR/USD Proximity Watchdog (every 60s)",
+        replace_existing=True,
+        misfire_grace_time=30,
     )
     scheduler.start()
 

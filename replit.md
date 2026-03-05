@@ -14,7 +14,7 @@ Key architectural decisions include:
 - **Data Caching:** Optimized caching in the Python engine for OHLC data.
 - **Idempotent Strategy Execution:** Strategies are designed for consistent signal and position management, including ATR State Lock.
 - **Admin Interface:** A comprehensive dashboard for monitoring signals, managing API keys, tracking credit usage, and configuring user settings, including detailed "Signal Analysis," "Scheduler Health," "System Status," "WordPress" integration, and individual strategy dashboards. Role-based access control (ADMIN/CUSTOMER) enforces endpoint-level authorization: Scheduler Health, System Status, and User Management endpoints require ADMIN role; CMS configs are scoped to the logged-in user for CUSTOMER role.
-- **Robust Scheduling:** APScheduler manages background tasks for strategy evaluations and data refreshes with timezone awareness and misfire recovery. A watchdog thread monitors and auto-restarts the scheduler.
+- **Robust Scheduling:** APScheduler manages background tasks for strategy evaluations and data refreshes with timezone awareness and misfire recovery. A watchdog thread monitors and auto-restarts the scheduler. EUR/USD Proximity Watchdog (`trading_engine/engine/watchdog.py`) runs every 60s, fetching the current price via FCSAPI advance endpoint and checking if within 3 pips of the 50-Day Low target (1.15845). Alerts are logged to `recovery_notifications` table as `PROXIMITY_ALERT` with 30-minute suppression.
 - **Scalable Data Handling:** Local storage of OHLC candle data across multiple timeframes for rapid indicator calculations.
 - **Production Hardening:**
   - **Webhook Notifications:** Configurable external alerting for critical events.
