@@ -2587,6 +2587,15 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 .proximity-row td { border-bottom-color: rgba(234,179,8,0.2) !important; }
 .btn-mute { background: rgba(234,179,8,0.12); color: #eab308; border: 1px solid rgba(234,179,8,0.3); padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
 .btn-mute:hover { background: rgba(234,179,8,0.25); border-color: #eab308; }
+.market-pulse { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+.pulse-card { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 10px 16px; display: flex; align-items: center; gap: 10px; min-width: 150px; transition: border-color 0.3s; }
+.pulse-card .pulse-symbol { font-size: 0.9rem; font-weight: 600; color: #f1f5f9; }
+.pulse-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+.pulse-badge.pulse-neutral { background: rgba(100,116,139,0.2); color: #94a3b8; border: 1px solid rgba(100,116,139,0.3); }
+.pulse-badge.pulse-approaching { background: rgba(234,179,8,0.15); color: #eab308; border: 1px solid rgba(234,179,8,0.3); animation: proximity-pulse 2.5s ease-in-out infinite; }
+.pulse-badge.pulse-triggered { background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
+.pulse-card.pulse-card-approaching { border-color: rgba(234,179,8,0.4); }
+.pulse-card.pulse-card-triggered { border-color: rgba(34,197,94,0.4); }
 """
 
 ADMIN_JS = """
@@ -2601,6 +2610,7 @@ function showTab(tabName) {
     if (sidebarEl) sidebarEl.classList.add('active');
     var mobileEl = document.querySelector('.mobile-tab-bar .tab[data-tab="' + tabName + '"]');
     if (mobileEl) mobileEl.classList.add('active');
+    if (tabName === 'signals') loadMarketPulse();
     if (tabName === 'settings') loadCreditMeter();
     if (tabName === 'notifications') loadNotifConfig();
     if (tabName === 'apikeys') loadPartnerKeys();
@@ -2979,6 +2989,44 @@ async function deleteKey(keyId) {
         loadPartnerKeys();
     } catch (e) {
         alert('Failed to delete key');
+    }
+}
+
+async function loadMarketPulse() {
+    var container = document.getElementById('market-pulse-container');
+    if (!container) return;
+    try {
+        var res = await fetch(BASE + '/admin/api/market-pulse');
+        var data = await res.json();
+        var assets = data.assets || [];
+        if (assets.length === 0) {
+            container.innerHTML = '<div style="color:#94a3b8;font-size:0.85rem;">No watchlist assets configured.</div>';
+            return;
+        }
+        var html = '';
+        for (var i = 0; i < assets.length; i++) {
+            var a = assets[i];
+            var badgeClass = 'pulse-neutral';
+            var cardExtra = '';
+            var label = 'Monitoring';
+            if (a.status === 'approaching') {
+                badgeClass = 'pulse-approaching';
+                cardExtra = ' pulse-card-approaching';
+                label = 'Approaching';
+            } else if (a.status === 'triggered') {
+                badgeClass = 'pulse-triggered';
+                cardExtra = ' pulse-card-triggered';
+                label = 'Triggered';
+            }
+            var detail = a.detail ? ' title="' + a.detail.replace(/"/g, '&quot;') + '"' : '';
+            html += '<div class="pulse-card' + cardExtra + '"' + detail + ' data-testid="pulse-card-' + a.symbol.replace(/\\//g, '-') + '">' +
+                '<span class="pulse-symbol">' + a.symbol + '</span>' +
+                '<span class="pulse-badge ' + badgeClass + '" data-testid="pulse-badge-' + a.symbol.replace(/\\//g, '-') + '">' + label + '</span>' +
+                '</div>';
+        }
+        container.innerHTML = html;
+    } catch (e) {
+        container.innerHTML = '<div style="color:#ef4444;font-size:0.85rem;">Failed to load market pulse.</div>';
     }
 }
 
@@ -3426,12 +3474,14 @@ async function testWebhook() {
 
 document.addEventListener('DOMContentLoaded', function() {
     const activeTab = document.querySelector('.tab.active');
-    if (activeTab && activeTab.getAttribute('data-tab') === 'settings') loadCreditMeter();
-    if (activeTab && activeTab.getAttribute('data-tab') === 'notifications') loadNotifConfig();
-    if (activeTab && activeTab.getAttribute('data-tab') === 'scheduler') loadSchedulerData();
-    if (activeTab && activeTab.getAttribute('data-tab') === 'system') loadSystemStatus();
-    if (activeTab && activeTab.getAttribute('data-tab') === 'users') loadRegistrationToggle();
-    if (activeTab && activeTab.getAttribute('data-tab') === 'wordpress') { loadUserCmsConfigs(); }
+    var tabName = activeTab ? activeTab.getAttribute('data-tab') : 'signals';
+    if (tabName === 'signals' || !activeTab) loadMarketPulse();
+    if (tabName === 'settings') loadCreditMeter();
+    if (tabName === 'notifications') loadNotifConfig();
+    if (tabName === 'scheduler') loadSchedulerData();
+    if (tabName === 'system') loadSystemStatus();
+    if (tabName === 'users') loadRegistrationToggle();
+    if (tabName === 'wordpress') { loadUserCmsConfigs(); }
 });
 
 function copyApiUrl(path) {
@@ -3812,6 +3862,15 @@ def admin_dashboard(
             </div>
 
             <div id="tab-signals" class="tab-content {'hidden' if tab != 'signals' else ''}">
+            <div class="section">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                    <h2 style="margin-bottom:0;">Market Pulse</h2>
+                    <button class="btn btn-secondary" onclick="loadMarketPulse()" data-testid="button-refresh-pulse" style="font-size:13px;padding:6px 14px;">Refresh</button>
+                </div>
+                <div id="market-pulse-container" class="market-pulse" data-testid="market-pulse-container">
+                    <div style="color:#94a3b8;font-size:0.85rem;">Loading market pulse...</div>
+                </div>
+            </div>
             <div class="section">
                 <h2>Trading Signals</h2>
                 <div class="filter-bar">
@@ -5164,6 +5223,48 @@ def api_scheduler_job_logs(request: Request, limit: int = Query(50, ge=1, le=200
         return guard
     logs = get_recent_job_logs(limit)
     return JSONResponse(content={"logs": logs, "count": len(logs)})
+
+
+@router.get("/api/market-pulse")
+def api_market_pulse(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+    from trading_engine.strategies.multi_timeframe import ALL_ASSETS
+    from trading_engine.database import get_active_signals, get_recovery_notifications
+
+    active_signals = get_active_signals()
+    active_map = {}
+    for sig in active_signals:
+        sym = sig.get("asset", "")
+        if sym not in active_map:
+            active_map[sym] = sig
+
+    recent_alerts = get_recovery_notifications(limit=100)
+    alert_map = {}
+    for alert in recent_alerts:
+        if alert.get("strategy_name") in ("PROXIMITY_ALERT", "EARLY_WARNING"):
+            assets_str = alert.get("assets_affected", "")
+            if isinstance(assets_str, list):
+                for a in assets_str:
+                    alert_map.setdefault(a, alert)
+            elif isinstance(assets_str, str):
+                alert_map.setdefault(assets_str, alert)
+
+    result = []
+    for symbol in ALL_ASSETS:
+        if symbol in active_map:
+            sig = active_map[symbol]
+            detail = f"Active {sig.get('direction', '')} signal via {sig.get('strategy_name', '')}"
+            result.append({"symbol": symbol, "status": "triggered", "detail": detail})
+        elif symbol in alert_map:
+            alert = alert_map[symbol]
+            detail = alert.get("status", "Approaching entry level")
+            result.append({"symbol": symbol, "status": "approaching", "detail": detail})
+        else:
+            result.append({"symbol": symbol, "status": "neutral", "detail": "Monitoring"})
+
+    return JSONResponse(content={"assets": result})
 
 
 @router.get("/api/recovery-logs")
