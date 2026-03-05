@@ -3485,6 +3485,39 @@ async function terminateBackground() {
     btn.textContent = 'Terminate All Background Tasks';
 }
 
+async function runQuotaCheck() {
+    var btn = document.getElementById('btn-quota-check');
+    var resultEl = document.getElementById('quota-check-result');
+    btn.disabled = true;
+    btn.textContent = 'Checking...';
+    resultEl.style.display = 'none';
+    try {
+        var res = await fetch(BASE + '/admin/api/quota-check', { method: 'POST' });
+        var data = await res.json();
+        if (data.success) {
+            var h = data.health;
+            var color = h.status === 'critical' ? '#ef4444' : h.status === 'warning' ? '#f59e0b' : '#22c55e';
+            resultEl.style.display = 'block';
+            resultEl.innerHTML = '<div style="padding:12px;background:rgba(30,41,59,0.7);border:1px solid ' + color + '44;border-radius:8px;">' +
+                '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
+                '<span style="color:' + color + ';font-weight:700;text-transform:uppercase;font-size:13px;">' + h.status + '</span>' +
+                '<span style="color:#94a3b8;font-size:12px;">' + h.usage_pct.toFixed(1) + '% used</span>' +
+                '</div>' +
+                '<div style="color:#e2e8f0;font-size:13px;">' + h.message + '</div>' +
+                '<div style="color:#64748b;font-size:11px;margin-top:6px;">Remaining: ' + (h.remaining_credits || 0).toLocaleString() + ' / ' + (h.credit_limit || 0).toLocaleString() + ' credits</div>' +
+                '</div>';
+        } else {
+            resultEl.style.display = 'block';
+            resultEl.innerHTML = '<span style="color:#ef4444;">Failed to run quota check.</span>';
+        }
+    } catch (e) {
+        resultEl.style.display = 'block';
+        resultEl.innerHTML = '<span style="color:#ef4444;">Error: ' + e.message + '</span>';
+    }
+    btn.disabled = false;
+    btn.textContent = 'Run Quota Check';
+}
+
 function formatRecoveryDate(isoStr) {
     if (!isoStr) return '--';
     try {
@@ -4680,6 +4713,17 @@ def admin_dashboard(
                         <button id="btn-terminate-bg" class="btn" onclick="terminateBackground()" data-testid="button-terminate-background" style="background:#ef4444;border-color:#ef4444;color:#fff;font-size:13px;padding:8px 16px;">Terminate All Background Tasks</button>
                         <div id="terminate-result" style="margin-top:8px;font-size:12px;" data-testid="text-terminate-result"></div>
                     </div>
+                </div>
+
+                <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:12px;">Quota Health Check</div>
+                <div style="padding:20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;margin-bottom:24px;" data-testid="widget-quota-check">
+                    <div style="display:flex;align-items:center;justify-content:space-between;">
+                        <div>
+                            <div style="font-size:13px;color:#94a3b8;">Manually run the API credit budget health check. Generates QUOTA_ALERT notifications if usage exceeds warning (80%) or critical (95%) thresholds.</div>
+                        </div>
+                        <button class="btn" onclick="runQuotaCheck()" id="btn-quota-check" data-testid="button-quota-check" style="font-size:13px;padding:8px 16px;white-space:nowrap;margin-left:16px;">Run Quota Check</button>
+                    </div>
+                    <div id="quota-check-result" style="margin-top:12px;display:none;" data-testid="text-quota-check-result"></div>
                 </div>
 
                 <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:12px;">Storage Monitor</div>
