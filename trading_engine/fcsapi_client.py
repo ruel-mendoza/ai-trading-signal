@@ -15,6 +15,7 @@ from requests.exceptions import ConnectionError, Timeout
 
 logger = logging.getLogger("trading_engine.fcsapi")
 
+BASE_URL_V3_FOREX = "https://fcsapi.com/api-v3/forex"
 BASE_URL_V4_FOREX = "https://api-v4.fcsapi.com/forex"
 BASE_URL_V4_CRYPTO = "https://api-v4.fcsapi.com/crypto"
 BASE_URL_V4_STOCK = "https://api-v4.fcsapi.com/stock"
@@ -475,6 +476,42 @@ class FCSAPIClient:
                 results.append(quote)
 
         return results
+
+    def get_v3_latest_prices(self, symbols: list[str]) -> dict[str, float]:
+        api_symbols = []
+        symbol_map = {}
+        for sym in symbols:
+            api_sym = sym.replace("/", "")
+            api_symbols.append(api_sym)
+            symbol_map[api_sym.upper()] = sym
+
+        joined = ",".join(api_symbols)
+        logger.info(f"[V3-LATEST] Batch fetch: {joined} ({len(symbols)} symbols, 1 credit)")
+        params = {"symbol": joined}
+
+        try:
+            data = self._get("latest", params, base_url=BASE_URL_V3_FOREX)
+        except Exception as e:
+            logger.error(f"[V3-LATEST] Request failed: {e}")
+            return {}
+
+        if data.get("status") is False or not data.get("response"):
+            logger.warning(f"[V3-LATEST] No data returned: {data.get('msg', '')}")
+            return {}
+
+        prices = {}
+        for item in data["response"]:
+            api_sym = item.get("s", "").upper()
+            original = symbol_map.get(api_sym)
+            if not original:
+                continue
+            price = _safe_float(item.get("c")) or _safe_float(item.get("a"))
+            if price is not None:
+                prices[original] = price
+                logger.debug(f"[V3-LATEST] {original} = {price}")
+
+        logger.info(f"[V3-LATEST] Got prices for {len(prices)}/{len(symbols)} symbols")
+        return prices
 
     def close(self):
         self.session.close()
