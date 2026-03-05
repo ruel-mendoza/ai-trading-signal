@@ -2582,6 +2582,11 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 }
 .btn-copy { background: rgba(56,189,248,0.1); color: #38bdf8; border: 1px solid rgba(56,189,248,0.25); padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
 .btn-copy:hover { background: rgba(56,189,248,0.2); border-color: #38bdf8; }
+@keyframes proximity-pulse { 0%, 100% { background: rgba(234,179,8,0.06); } 50% { background: rgba(234,179,8,0.15); } }
+.proximity-row { animation: proximity-pulse 2.5s ease-in-out infinite; }
+.proximity-row td { border-bottom-color: rgba(234,179,8,0.2) !important; }
+.btn-mute { background: rgba(234,179,8,0.12); color: #eab308; border: 1px solid rgba(234,179,8,0.3); padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+.btn-mute:hover { background: rgba(234,179,8,0.25); border-color: #eab308; }
 """
 
 ADMIN_JS = """
@@ -3239,8 +3244,11 @@ async function loadRecoveryLogs() {
         var html = '';
         for (var i = 0; i < logs.length; i++) {
             var log = logs[i];
+            var isProximity = log.strategy_name === 'PROXIMITY_ALERT';
             var statusBadge;
-            if (log.status === 'SUCCESS') {
+            if (isProximity) {
+                statusBadge = '<span class="badge" style="background:rgba(234,179,8,0.15);color:#eab308;border:1px solid rgba(234,179,8,0.3);" data-testid="badge-recovery-status-' + log.id + '">Proximity Alert</span>';
+            } else if (log.status === 'SUCCESS') {
                 statusBadge = '<span class="badge status-open" data-testid="badge-recovery-status-' + log.id + '">Backfilled</span>';
             } else if (log.status === 'FAILED') {
                 statusBadge = '<span class="badge status-closed" data-testid="badge-recovery-status-' + log.id + '">Failed</span>';
@@ -3255,20 +3263,36 @@ async function loadRecoveryLogs() {
                 assets = String(log.assets_affected || '--');
             }
 
-            var strategyLabel = (log.strategy_name || '').replace(/_/g, ' ').replace(/\\b\\w/g, function(c) { return c.toUpperCase(); });
+            var strategyLabel = isProximity ? 'Proximity Alert' : (log.strategy_name || '').replace(/_/g, ' ').replace(/\\b\\w/g, function(c) { return c.toUpperCase(); });
+            var rowClass = isProximity ? ' class="proximity-row"' : '';
+            var muteBtn = isProximity ? ' <button class="btn-mute" onclick="muteAlert(' + log.id + ')" data-testid="button-mute-alert-' + log.id + '">Mute</button>' : '';
 
-            html += '<tr data-testid="row-recovery-' + log.id + '">' +
-                '<td style="font-weight:500;color:#f1f5f9;">' + strategyLabel + '</td>' +
-                '<td>' + statusBadge + '</td>' +
+            html += '<tr' + rowClass + ' data-testid="row-recovery-' + log.id + '">' +
+                '<td style="font-weight:500;color:' + (isProximity ? '#eab308' : '#f1f5f9') + ';">' + strategyLabel + '</td>' +
+                '<td>' + statusBadge + muteBtn + '</td>' +
                 '<td style="color:#94a3b8;">' + formatRecoveryDate(log.missed_window_time) + '</td>' +
                 '<td style="color:#94a3b8;">' + formatRecoveryDate(log.execution_time) + '</td>' +
-                '<td style="color:#e2e8f0;font-size:13px;">' + assets + '</td>' +
+                '<td style="color:#e2e8f0;font-size:13px;">' + (isProximity ? '<span style="color:#eab308;font-size:12px;">' + (log.status || '') + '</span>' : assets) + '</td>' +
                 '</tr>';
         }
         tbody.innerHTML = html;
 
     } catch (e) {
         document.getElementById('recovery-loading').textContent = 'Failed to load recovery logs.';
+    }
+}
+
+async function muteAlert(id) {
+    if (!confirm('Mute this proximity alert?')) return;
+    try {
+        var res = await fetch(BASE + '/admin/api/recovery-logs/' + id, { method: 'DELETE' });
+        if (res.ok) {
+            loadRecoveryLogs();
+        } else {
+            alert('Failed to mute alert');
+        }
+    } catch (e) {
+        alert('Error muting alert');
     }
 }
 
@@ -5150,6 +5174,28 @@ def api_recovery_logs(request: Request, limit: int = Query(50, ge=1, le=200)):
     from trading_engine.database import get_recovery_notifications
     logs = get_recovery_notifications(limit)
     return JSONResponse(content={"logs": logs, "count": len(logs)})
+
+
+@router.delete("/api/recovery-logs/{log_id}")
+def api_delete_recovery_log(request: Request, log_id: int):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import SessionFactory
+    from trading_engine.models import RecoveryNotification
+    session = SessionFactory()
+    try:
+        record = session.query(RecoveryNotification).filter_by(id=log_id).first()
+        if not record:
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
+        session.delete(record)
+        session.commit()
+        return JSONResponse(content={"success": True})
+    except Exception as e:
+        session.rollback()
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+    finally:
+        session.close()
 
 
 @router.get("/api/notifications")
