@@ -2639,7 +2639,8 @@ function showTab(tabName) {
     if (sidebarEl) sidebarEl.classList.add('active');
     var mobileEl = document.querySelector('.mobile-tab-bar .tab[data-tab="' + tabName + '"]');
     if (mobileEl) mobileEl.classList.add('active');
-    if (tabName === 'signals') { loadMarketPulse(); loadResourceOverview(); }
+    if (tabName === 'analysis') loadMarketPulse();
+    if (tabName === 'credits') loadResourceOverview();
     if (tabName === 'settings') loadCreditMeter();
     if (tabName === 'notifications') loadNotifConfig();
     if (tabName === 'apikeys') loadPartnerKeys();
@@ -3644,7 +3645,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const activeTab = document.querySelector('.tab.active');
     var tabName = activeTab ? activeTab.getAttribute('data-tab') : 'signals';
     loadQuotaWidget();
-    if (tabName === 'signals' || !activeTab) { loadMarketPulse(); loadResourceOverview(); }
+    if (tabName === 'analysis' || !activeTab) loadMarketPulse();
+    if (tabName === 'credits' || !activeTab) loadResourceOverview();
     if (tabName === 'settings') loadCreditMeter();
     if (tabName === 'notifications') loadNotifConfig();
     if (tabName === 'scheduler') loadSchedulerData();
@@ -4053,56 +4055,6 @@ def admin_dashboard(
 
             <div id="tab-signals" class="tab-content {'hidden' if tab != 'signals' else ''}">
             <div class="section">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-                    <h2 style="margin-bottom:0;">Market Pulse</h2>
-                    <button class="btn btn-secondary" onclick="loadMarketPulse()" data-testid="button-refresh-pulse" style="font-size:13px;padding:6px 14px;">Refresh</button>
-                </div>
-                <div id="market-pulse-container" class="market-pulse" data-testid="market-pulse-container">
-                    <div style="color:#94a3b8;font-size:0.85rem;">Loading market pulse...</div>
-                </div>
-            </div>
-            <div id="resource-overview" class="ro-card" data-testid="widget-resource-overview">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-                    <h2 style="margin-bottom:0;font-size:1.1rem;color:#f8fafc;">Resource Overview</h2>
-                    <button class="btn btn-secondary" onclick="loadResourceOverview()" data-testid="button-refresh-resources" style="font-size:12px;padding:5px 12px;margin:0;">Refresh</button>
-                </div>
-                <div class="ro-grid">
-                    <div class="ro-col">
-                        <div class="ro-title">API Health</div>
-                        <div style="position:relative;width:180px;height:108px;">
-                            <svg id="ro-gauge-svg" width="180" height="108" viewBox="0 0 180 108" data-testid="gauge-api-health">
-                                <path d="M 18 90 A 72 72 0 1 1 162 90" fill="none" stroke="#334155" stroke-width="18" stroke-linecap="round" />
-                                <path class="gauge-arc-fill" d="M 18 90 A 72 72 0 1 1 162 90" fill="none" stroke="#22c55e" stroke-width="18" stroke-linecap="round" style="stroke-dasharray:226.19;stroke-dashoffset:226.19;transition:stroke-dashoffset 0.8s ease,stroke 0.4s ease;" />
-                            </svg>
-                            <div style="position:absolute;bottom:4px;left:50%;transform:translateX(-50%);text-align:center;">
-                                <div id="ro-gauge-pct" class="gauge-pct" style="color:#64748b;" data-testid="text-gauge-pct">--%</div>
-                                <div class="gauge-label">Credits Used</div>
-                            </div>
-                        </div>
-                        <div id="ro-credit-text" class="ro-text" data-testid="text-credits-remaining">Loading...</div>
-                        <div id="ro-recharge-badge" class="badge-recharge" style="display:none;" data-testid="badge-recharge-soon">Recharge Soon</div>
-                    </div>
-                    <div class="ro-col">
-                        <div class="ro-title">Storage Health</div>
-                        <div class="vbar-wrap">
-                            <div class="vbar-labels">
-                                <div class="vbar-label">100%</div>
-                                <div class="vbar-label">50%</div>
-                                <div class="vbar-label">0%</div>
-                            </div>
-                            <div class="vbar-track" data-testid="bar-storage-vertical">
-                                <div id="ro-vbar-fill" class="vbar-fill" style="height:0%;background:#334155;"></div>
-                            </div>
-                            <div style="display:flex;flex-direction:column;justify-content:flex-end;height:100%;">
-                                <div id="ro-storage-pct" style="font-size:1.4rem;font-weight:800;color:#64748b;line-height:1;" data-testid="text-storage-pct">--%</div>
-                                <div style="font-size:0.65rem;color:#64748b;text-transform:uppercase;margin-top:2px;">Used</div>
-                            </div>
-                        </div>
-                        <div id="ro-storage-text" class="ro-text" data-testid="text-storage-detail">Loading...</div>
-                    </div>
-                </div>
-            </div>
-            <div class="section">
                 <h2>Trading Signals</h2>
                 <div class="filter-bar">
                     <form method="GET" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -4140,6 +4092,15 @@ def admin_dashboard(
         </div>
 
         <div id="tab-analysis" class="tab-content {'hidden' if tab != 'analysis' else ''}">
+            <div class="section">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                    <h2 style="margin-bottom:0;">Market Pulse</h2>
+                    <button class="btn btn-secondary" onclick="loadMarketPulse()" data-testid="button-refresh-pulse" style="font-size:13px;padding:6px 14px;">Refresh</button>
+                </div>
+                <div id="market-pulse-container" class="market-pulse" data-testid="market-pulse-container">
+                    <div style="color:#94a3b8;font-size:0.85rem;">Loading market pulse...</div>
+                </div>
+            </div>
             <div class="section">
                 <h2>Signal Analysis</h2>
                 <p style="color:#94a3b8;margin-bottom:20px;">Real-time evaluation of all strategy entry conditions across every tracked asset.</p>
@@ -4183,6 +4144,47 @@ def admin_dashboard(
         </div>
 
         <div id="tab-credits" class="tab-content {'hidden' if tab != 'credits' else ''}">
+            <div id="resource-overview" class="ro-card" data-testid="widget-resource-overview">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                    <h2 style="margin-bottom:0;font-size:1.1rem;color:#f8fafc;">Resource Overview</h2>
+                    <button class="btn btn-secondary" onclick="loadResourceOverview()" data-testid="button-refresh-resources" style="font-size:12px;padding:5px 12px;margin:0;">Refresh</button>
+                </div>
+                <div class="ro-grid">
+                    <div class="ro-col">
+                        <div class="ro-title">API Health</div>
+                        <div style="position:relative;width:180px;height:108px;">
+                            <svg id="ro-gauge-svg" width="180" height="108" viewBox="0 0 180 108" data-testid="gauge-api-health">
+                                <path d="M 18 90 A 72 72 0 1 1 162 90" fill="none" stroke="#334155" stroke-width="18" stroke-linecap="round" />
+                                <path class="gauge-arc-fill" d="M 18 90 A 72 72 0 1 1 162 90" fill="none" stroke="#22c55e" stroke-width="18" stroke-linecap="round" style="stroke-dasharray:226.19;stroke-dashoffset:226.19;transition:stroke-dashoffset 0.8s ease,stroke 0.4s ease;" />
+                            </svg>
+                            <div style="position:absolute;bottom:4px;left:50%;transform:translateX(-50%);text-align:center;">
+                                <div id="ro-gauge-pct" class="gauge-pct" style="color:#64748b;" data-testid="text-gauge-pct">--%</div>
+                                <div class="gauge-label">Credits Used</div>
+                            </div>
+                        </div>
+                        <div id="ro-credit-text" class="ro-text" data-testid="text-credits-remaining">Loading...</div>
+                        <div id="ro-recharge-badge" class="badge-recharge" style="display:none;" data-testid="badge-recharge-soon">Recharge Soon</div>
+                    </div>
+                    <div class="ro-col">
+                        <div class="ro-title">Storage Health</div>
+                        <div class="vbar-wrap">
+                            <div class="vbar-labels">
+                                <div class="vbar-label">100%</div>
+                                <div class="vbar-label">50%</div>
+                                <div class="vbar-label">0%</div>
+                            </div>
+                            <div class="vbar-track" data-testid="bar-storage-vertical">
+                                <div id="ro-vbar-fill" class="vbar-fill" style="height:0%;background:#334155;"></div>
+                            </div>
+                            <div style="display:flex;flex-direction:column;justify-content:flex-end;height:100%;">
+                                <div id="ro-storage-pct" style="font-size:1.4rem;font-weight:800;color:#64748b;line-height:1;" data-testid="text-storage-pct">--%</div>
+                                <div style="font-size:0.65rem;color:#64748b;text-transform:uppercase;margin-top:2px;">Used</div>
+                            </div>
+                        </div>
+                        <div id="ro-storage-text" class="ro-text" data-testid="text-storage-detail">Loading...</div>
+                    </div>
+                </div>
+            </div>
             <div class="section">
                 <h2>FCSAPI Credit Monitor</h2>
                 {credit_html}
