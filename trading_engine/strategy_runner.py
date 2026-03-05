@@ -62,15 +62,15 @@ STRATEGY_ASSET_CONFIG: dict[str, dict] = {
         "timeframe": "30m",
     },
     "highest_lowest_fx": {
-        "assets": ["EUR/USD"],
-        "timeframe": "1H",
+        "assets": ["EUR/USD", "USD/JPY"],
+        "timeframe": "D1",
     },
     "trend_forex": {
-        "assets": ["EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD", "NZD/USD", "USD/CAD", "USD/CHF", "EUR/GBP"],
+        "assets": ["EUR/USD", "USD/JPY"],
         "timeframe": "D1",
     },
     "trend_non_forex": {
-        "assets": ["SPX", "NDX", "XAU/USD", "XAG/USD", "OSX", "BTC/USD", "ETH/USD"],
+        "assets": ["GLD", "SLV", "USO", "DBA", "GSG", "PDBC"],
         "timeframe": "D1",
     },
 }

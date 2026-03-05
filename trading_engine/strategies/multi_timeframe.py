@@ -75,6 +75,7 @@ class MTFIndicators:
     h4_atr100: Optional[float] = None
     h4_close_current: Optional[float] = None
     h4_close_prev: Optional[float] = None
+    h4_lows_12: Optional[list] = None
 
     h1_ema20: Optional[float] = None
     h1_ema20_prev: Optional[float] = None
@@ -256,6 +257,7 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             h4_atr100=_safe_last(h4_atr100_vals),
             h4_close_current=_safe_last(h4.closes),
             h4_close_prev=_safe_last(h4.closes, offset=1),
+            h4_lows_12=h4.lows[-12:] if len(h4.lows) >= 12 else h4.lows[:],
             h1_ema20=_safe_last(h1_ema20_vals),
             h1_ema20_prev=_safe_last(h1_ema20_vals, offset=1),
             h1_ema50=_safe_last(h1_ema50_vals),
@@ -301,10 +303,10 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
     def _check_long_conditions(self, asset: str, ind: MTFIndicators) -> bool:
         price = ind.h1_close_current
 
-        cond1 = price > ind.d1_ema200 and price > ind.d1_ema50
+        cond1 = ind.d1_ema50 > ind.d1_ema200
         logger.info(
-            f"[MTF-EMA] {asset} | LONG Cond 1 — D1 Trend: Price {price:.5f} > "
-            f"D1 EMA200 ({ind.d1_ema200:.5f}) AND D1 EMA50 ({ind.d1_ema50:.5f}): {cond1}"
+            f"[MTF-EMA] {asset} | LONG Cond 1 — D1 Filter: "
+            f"D1 EMA50 ({ind.d1_ema50:.5f}) > D1 EMA200 ({ind.d1_ema200:.5f}): {cond1}"
         )
 
         d1_rising = ind.d1_ema200 > ind.d1_ema200_prev
@@ -319,13 +321,19 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             f"combined: {cond2}"
         )
 
-        dip_below = price < ind.h4_ema50
-        within_atr = (ind.h4_ema50 - price) < ind.h4_atr100
-        cond3 = dip_below and within_atr
+        h4_lows = ind.h4_lows_12 or []
+        dip_found = any(lo < ind.h4_ema50 for lo in h4_lows) if h4_lows else False
+        max_breach = 0.0
+        within_atr = True
+        if dip_found:
+            breaches = [ind.h4_ema50 - lo for lo in h4_lows if lo < ind.h4_ema50]
+            max_breach = max(breaches) if breaches else 0.0
+            within_atr = max_breach <= (1.0 * ind.h4_atr100)
+        cond3 = dip_found and within_atr
         logger.info(
-            f"[MTF-EMA] {asset} | LONG Cond 3 — Pullback: "
-            f"Price ({price:.5f}) < H4 EMA50 ({ind.h4_ema50:.5f}): {dip_below} | "
-            f"Within 1× ATR ({ind.h4_atr100:.5f}): {within_atr} | "
+            f"[MTF-EMA] {asset} | LONG Cond 3 — Recent Pullback (48h / 12 H4 candles): "
+            f"dip_below_H4_EMA50={dip_found} | max_breach={max_breach:.5f} | "
+            f"within 1.0x ATR100 ({ind.h4_atr100:.5f}): {within_atr} | "
             f"combined: {cond3}"
         )
 
@@ -345,7 +353,7 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
         c = lambda v: "PASS" if v else "FAIL"
         logger.info(
             f"[MTF-EMA] {asset} | LONG SCORECARD: "
-            f"D1Trend={c(cond1)} | Momentum={c(cond2)} | H4Pullback={c(cond3)} | H1Confirm={c(cond4)} "
+            f"D1Filter={c(cond1)} | Momentum={c(cond2)} | H4Pullback={c(cond3)} | H1Confirm={c(cond4)} "
             f"=> {'SIGNAL' if all_met else 'NO SIGNAL'}"
         )
         return all_met
@@ -353,10 +361,10 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
     def _check_short_conditions(self, asset: str, ind: MTFIndicators) -> bool:
         price = ind.h1_close_current
 
-        cond1 = price < ind.d1_ema200 and price < ind.d1_ema50
+        cond1 = ind.d1_ema50 < ind.d1_ema200
         logger.info(
-            f"[MTF-EMA] {asset} | SHORT Cond 1 — D1 Trend: Price {price:.5f} < "
-            f"D1 EMA200 ({ind.d1_ema200:.5f}) AND D1 EMA50 ({ind.d1_ema50:.5f}): {cond1}"
+            f"[MTF-EMA] {asset} | SHORT Cond 1 — D1 Filter: "
+            f"D1 EMA50 ({ind.d1_ema50:.5f}) < D1 EMA200 ({ind.d1_ema200:.5f}): {cond1}"
         )
 
         d1_falling = ind.d1_ema200 < ind.d1_ema200_prev
@@ -371,13 +379,20 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             f"combined: {cond2}"
         )
 
-        dip_above = price > ind.h4_ema50
-        within_atr = (price - ind.h4_ema50) < ind.h4_atr100
-        cond3 = dip_above and within_atr
+        h4_lows = ind.h4_lows_12 or []
+        h4_highs_12 = []
+        dip_found = any(lo > ind.h4_ema50 for lo in h4_lows) if h4_lows else False
+        max_breach = 0.0
+        within_atr = True
+        if dip_found:
+            breaches = [lo - ind.h4_ema50 for lo in h4_lows if lo > ind.h4_ema50]
+            max_breach = max(breaches) if breaches else 0.0
+            within_atr = max_breach <= (1.0 * ind.h4_atr100)
+        cond3 = dip_found and within_atr
         logger.info(
-            f"[MTF-EMA] {asset} | SHORT Cond 3 — Pullback: "
-            f"Price ({price:.5f}) > H4 EMA50 ({ind.h4_ema50:.5f}): {dip_above} | "
-            f"Within 1× ATR ({ind.h4_atr100:.5f}): {within_atr} | "
+            f"[MTF-EMA] {asset} | SHORT Cond 3 — Recent Pullback (48h / 12 H4 candles): "
+            f"rally_above_H4_EMA50={dip_found} | max_breach={max_breach:.5f} | "
+            f"within 1.0x ATR100 ({ind.h4_atr100:.5f}): {within_atr} | "
             f"combined: {cond3}"
         )
 
@@ -397,7 +412,7 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
         c = lambda v: "PASS" if v else "FAIL"
         logger.info(
             f"[MTF-EMA] {asset} | SHORT SCORECARD: "
-            f"D1Trend={c(cond1)} | Momentum={c(cond2)} | H4Pullback={c(cond3)} | H1Confirm={c(cond4)} "
+            f"D1Filter={c(cond1)} | Momentum={c(cond2)} | H4Pullback={c(cond3)} | H1Confirm={c(cond4)} "
             f"=> {'SIGNAL' if all_met else 'NO SIGNAL'}"
         )
         return all_met
