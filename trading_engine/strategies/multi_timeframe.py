@@ -342,7 +342,12 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
         )
 
         all_met = cond1 and cond2 and cond3 and cond4
-        logger.info(f"[MTF-EMA] {asset} | LONG ALL CONDITIONS MET: {all_met}")
+        c = lambda v: "PASS" if v else "FAIL"
+        logger.info(
+            f"[MTF-EMA] {asset} | LONG SCORECARD: "
+            f"D1Trend={c(cond1)} | Momentum={c(cond2)} | H4Pullback={c(cond3)} | H1Confirm={c(cond4)} "
+            f"=> {'SIGNAL' if all_met else 'NO SIGNAL'}"
+        )
         return all_met
 
     def _check_short_conditions(self, asset: str, ind: MTFIndicators) -> bool:
@@ -389,7 +394,12 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
         )
 
         all_met = cond1 and cond2 and cond3 and cond4
-        logger.info(f"[MTF-EMA] {asset} | SHORT ALL CONDITIONS MET: {all_met}")
+        c = lambda v: "PASS" if v else "FAIL"
+        logger.info(
+            f"[MTF-EMA] {asset} | SHORT SCORECARD: "
+            f"D1Trend={c(cond1)} | Momentum={c(cond2)} | H4Pullback={c(cond3)} | H1Confirm={c(cond4)} "
+            f"=> {'SIGNAL' if all_met else 'NO SIGNAL'}"
+        )
         return all_met
 
     def _compute_structural_stop_long(
