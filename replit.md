@@ -11,7 +11,7 @@ The platform features a React, TypeScript, Vite, TailwindCSS, and Shadcn UI fron
 
 **Strategy asset lists:**
 - **trend_forex:** `["EUR/USD", "USD/JPY"]` — LONG_ONLY, 4:58 PM ET (1 min before NY close), v3 batch price fetch (1 credit)
-- **trend_non_forex (Commodity ETF):** `["CORN", "SOYB", "WEAT", "BAL", "CANE", "WOOD", "USO", "UNG", "UGA", "SGOL", "SIVR", "CPER", "PPLT", "PALL", "DBB", "SLX", "JJT", "PERP"]` — LONG_ONLY, 4:59 PM ET, 3×ATR(100) trailing stop
+- **trend_non_forex (Commodity ETF):** `["CORN", "SOYB", "WEAT", "BAL", "CANE", "WOOD", "USO", "UNG", "UGA", "SGOL", "SIVR", "CPER", "PPLT", "PALL", "DBB", "SLX", "JJT", "PERP"]` — LONG_ONLY, 4:59 PM ET, 3×ATR(100) trailing stop. Uses `stock/latest` endpoint with `type=fund` and batch fetching (9 per batch, ~2-3 credits total). AMEX exchange for most ETFs, NASDAQ for WOOD. BAL/JJT/PERP not available on FCSAPI.
 - **highest_lowest_fx:** `["EUR/USD", "USD/JPY"]` — 9:00 & 10:00 AM ET
 
 Key architectural decisions include:

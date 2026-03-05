@@ -69,6 +69,15 @@ COMMODITY_SYMBOL_MAP = {
     "OSX": "OSX",
 }
 
+ETF_SYMBOLS = {
+    "CORN", "SOYB", "WEAT", "BAL", "CANE", "WOOD",
+    "USO", "UNG", "UGA",
+    "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+    "DBB", "SLX", "JJT", "PERP",
+}
+
+_NASDAQ_ETFS = {"WOOD"}
+
 UNSUPPORTED_SYMBOLS: set[str] = {"WTI/USD", "BRENT/USD"}
 
 ADVANCE_SYMBOL_MAP = {
@@ -116,6 +125,8 @@ def get_asset_class(symbol: str) -> str:
         return "crypto"
     if symbol in STOCK_INDEX_SYMBOLS:
         return "stock"
+    if symbol in ETF_SYMBOLS:
+        return "etf"
     if symbol in COMMODITY_SYMBOLS:
         return "commodity"
     return "forex"
@@ -125,7 +136,7 @@ def get_v4_base_url(symbol: str) -> str:
     asset_class = get_asset_class(symbol)
     if asset_class == "crypto":
         return BASE_URL_V4_CRYPTO
-    if asset_class == "stock":
+    if asset_class in ("stock", "etf"):
         return BASE_URL_V4_STOCK
     return BASE_URL_V4_FOREX
 
@@ -386,7 +397,7 @@ class FCSAPIClient:
         return [s for s in symbols if s]
 
     def get_advance_data(self, symbols: list[str], period: str = "1h", merge: str = "latest,profile") -> list[dict]:
-        grouped: dict[str, list[tuple[str, str]]] = {"forex": [], "crypto": [], "stock": [], "commodity": []}
+        grouped: dict[str, list[tuple[str, str]]] = {"forex": [], "crypto": [], "stock": [], "etf": [], "commodity": []}
         for sym in symbols:
             if not is_symbol_supported(sym):
                 continue
@@ -411,6 +422,10 @@ class FCSAPIClient:
             }
             if asset_class == "stock":
                 params["type"] = "index"
+            elif asset_class == "etf":
+                params["type"] = "fund"
+                first_sym = sym_pairs[0][0]
+                params["exchange"] = "NASDAQ" if first_sym in _NASDAQ_ETFS else "AMEX"
             elif asset_class == "commodity":
                 params["type"] = "commodity"
 
@@ -511,6 +526,88 @@ class FCSAPIClient:
 
         logger.info(f"[V3-LATEST] Got prices for {len(prices)}/{len(symbols)} symbols")
         return prices
+
+    def get_stock_latest_prices(self, symbols: list[str], batch_size: int = 9) -> dict[str, dict]:
+        all_results: dict[str, dict] = {}
+
+        amex_syms = [s for s in symbols if s not in _NASDAQ_ETFS]
+        nasdaq_syms = [s for s in symbols if s in _NASDAQ_ETFS]
+
+        exchange_groups = []
+        if amex_syms:
+            exchange_groups.append(("AMEX", amex_syms))
+        if nasdaq_syms:
+            exchange_groups.append(("NASDAQ", nasdaq_syms))
+
+        for exchange, syms in exchange_groups:
+            batches = [syms[i:i + batch_size] for i in range(0, len(syms), batch_size)]
+            for batch_idx, batch in enumerate(batches):
+                joined = ",".join(batch)
+                logger.info(
+                    f"[STOCK-LATEST] {exchange} batch {batch_idx + 1}/{len(batches)}: {joined} "
+                    f"({len(batch)} symbols)"
+                )
+                params = {
+                    "symbol": joined,
+                    "type": "fund",
+                    "exchange": exchange,
+                }
+
+                try:
+                    data = self._get("latest", params, base_url=BASE_URL_V4_STOCK)
+                except Exception as e:
+                    logger.error(f"[STOCK-LATEST] {exchange} batch {batch_idx + 1} request failed: {e}")
+                    continue
+
+                if data.get("status") is False or not data.get("response"):
+                    logger.warning(
+                        f"[STOCK-LATEST] {exchange} batch {batch_idx + 1} | No data: {data.get('msg', '')}"
+                    )
+                    continue
+
+                for item in data["response"]:
+                    ticker = item.get("ticker", "")
+                    ticker_sym = ticker.split(":")[-1] if ":" in ticker else ticker
+                    active = item.get("active", {})
+
+                    close_price = _safe_float(active.get("c"))
+                    high_price = _safe_float(active.get("h"))
+                    low_price = _safe_float(active.get("l"))
+                    open_price = _safe_float(active.get("o"))
+                    change = _safe_float(active.get("ch"))
+                    change_pct = _safe_float(active.get("chp"))
+                    timestamp = active.get("tm", "")
+
+                    matched_sym = None
+                    for s in batch:
+                        if s.upper() == ticker_sym.upper():
+                            matched_sym = s
+                            break
+                    if not matched_sym:
+                        logger.debug(f"[STOCK-LATEST] Unmatched ticker in response: {ticker}")
+                        continue
+
+                    if close_price is not None:
+                        all_results[matched_sym] = {
+                            "close": close_price,
+                            "high": high_price,
+                            "low": low_price,
+                            "open": open_price,
+                            "change": change,
+                            "change_pct": change_pct,
+                            "timestamp": timestamp,
+                        }
+                        logger.info(
+                            f"[STOCK-LATEST] {matched_sym} ({ticker}) = {close_price} "
+                            f"(h={high_price}, l={low_price}, chg={change_pct}%)"
+                        )
+                    else:
+                        logger.warning(f"[STOCK-LATEST] {matched_sym} | null close price")
+
+        logger.info(
+            f"[STOCK-LATEST] Got prices for {len(all_results)}/{len(symbols)} symbols"
+        )
+        return all_results
 
     def close(self):
         self.session.close()

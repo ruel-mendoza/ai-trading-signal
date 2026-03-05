@@ -244,6 +244,11 @@ def _scheduled_trend_non_forex_evaluate():
     error_count = 0
     error_details = []
 
+    try:
+        strategy_engine.trend_non_forex_strategy.prefetch_prices()
+    except Exception as e:
+        logger.error(f"[SCHEDULER] trend_non_forex | Batch price prefetch failed: {e}")
+
     for asset in TREND_NON_FOREX_SYMBOLS:
         assets_eval += 1
         def _eval(a):

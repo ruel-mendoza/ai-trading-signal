@@ -75,6 +75,11 @@ def _run_trend_non_forex(strategy_engine, cache: CacheLayer, et_now, tz_label):
     error_count = 0
     error_details = []
 
+    try:
+        strategy_engine.trend_non_forex_strategy.prefetch_prices()
+    except Exception as e:
+        logger.error(f"[PRE-CLOSE] trend_non_forex | Batch price prefetch failed: {e}")
+
     for asset in TARGET_SYMBOLS:
         assets_eval += 1
 

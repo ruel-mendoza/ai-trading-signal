@@ -48,6 +48,14 @@ ET_ZONE = pytz.timezone("America/New_York")
 class NonForexTrendFollowingStrategy(BaseStrategy):
     def __init__(self, cache: CacheLayer):
         self.cache = cache
+        self._batch_prices: dict[str, dict] = {}
+
+    def prefetch_prices(self) -> dict[str, dict]:
+        api_client = self.cache.api_client
+        logger.info(f"[TREND-NONFX] Batch-fetching prices via stock/latest for {len(TARGET_SYMBOLS)} ETFs")
+        self._batch_prices = api_client.get_stock_latest_prices(list(TARGET_SYMBOLS), batch_size=9)
+        logger.info(f"[TREND-NONFX] Batch prefetch complete: {len(self._batch_prices)}/{len(TARGET_SYMBOLS)} symbols")
+        return self._batch_prices
 
     @property
     def name(self) -> str:
@@ -73,37 +81,24 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
         return in_window
 
     def _get_advance_price(self, asset: str) -> Optional[dict]:
+        if asset in self._batch_prices:
+            quote = self._batch_prices[asset]
+            logger.info(
+                f"[TREND-NONFX] {asset} | Using batch stock/latest price: close={quote['close']} | "
+                f"timestamp={quote.get('timestamp', '')}"
+            )
+            return quote
+
+        logger.info(f"[TREND-NONFX] {asset} | Not in batch cache, fetching individually via stock/latest")
         try:
             api_client = self.cache.api_client
-            quotes = api_client.get_advance_data([asset], period="1d", merge="latest,profile")
-            if quotes and len(quotes) > 0:
-                quote = quotes[0]
-                current = quote.get("current", {})
-                close_price = current.get("close")
-                timestamp = current.get("timestamp", "")
-                update_time = quote.get("update_time", "")
-                profile_name = quote.get("profile", {}).get("name", "")
-                if close_price is not None:
-                    logger.info(
-                        f"[TREND-NONFX] {asset} | v4 advance quote: close={close_price} | "
-                        f"timestamp={timestamp} | update_time={update_time} | name={profile_name}"
-                    )
-                    return {
-                        "close": close_price,
-                        "high": current.get("high"),
-                        "low": current.get("low"),
-                        "open": current.get("open"),
-                        "change": current.get("change"),
-                        "change_pct": current.get("change_pct"),
-                        "timestamp": timestamp,
-                        "update_time": update_time,
-                    }
-                else:
-                    logger.warning(f"[TREND-NONFX] {asset} | v4 advance returned null close price")
+            single_result = api_client.get_stock_latest_prices([asset], batch_size=1)
+            if asset in single_result:
+                return single_result[asset]
             else:
-                logger.warning(f"[TREND-NONFX] {asset} | v4 advance returned no quotes")
+                logger.warning(f"[TREND-NONFX] {asset} | stock/latest returned no data")
         except Exception as e:
-            logger.error(f"[TREND-NONFX] {asset} | v4 advance request failed: {e}")
+            logger.error(f"[TREND-NONFX] {asset} | stock/latest request failed: {e}")
         return None
 
     def evaluate(
