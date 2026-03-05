@@ -1059,7 +1059,7 @@ def _get_trend_following_data() -> dict:
     et_now = datetime.now(et_zone)
     ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
 
-    forex_symbols = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "NZD/USD", "USD/CAD", "USD/CHF", "EUR/GBP"]
+    forex_symbols = ["EUR/USD", "USD/JPY"]
     non_forex_symbols = ["SPX", "NDX", "XAU/USD", "XAG/USD", "OSX", "BTC/USD", "ETH/USD"]
     all_symbols = forex_symbols + non_forex_symbols
 
@@ -1255,10 +1255,10 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
         <div class="stat-label">Evaluation Time</div>
         <div style="margin-top:4px;">{tf_data['et_time']}</div>
         <div class="stat-label" style="margin-top:4px;">DST: {'Active' if tf_data['dst_active'] else 'Inactive'}</div>
-        <div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;">Forex evals at 5:00 PM ET | Non-Forex evals at 4:00 PM ET</div>
+        <div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;">Forex &amp; Non-Forex evals at 4:59 PM ET</div>
     </div>
     <div class="settings-section">
-        <h3>Forex Breakout Conditions (D1)</h3>
+        <h3>Forex Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG ONLY</span></h3>
         <div class="stats-grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
             {forex_cards}
         </div>

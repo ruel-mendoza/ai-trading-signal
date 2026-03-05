@@ -170,7 +170,14 @@ def _scheduled_trend_forex_evaluate():
 
     et = _get_et_context()
     log_id = create_job_log("trend_forex_daily", "trend_forex")
-    logger.info(f"[SCHEDULER] ====== Triggered trend_forex daily evaluation at 5:00 PM ET | {et['time_str']} {et['label']} ======")
+    logger.info(f"[SCHEDULER] ====== Triggered trend_forex daily evaluation at 4:59 PM ET | {et['time_str']} {et['label']} ======")
+
+    v3_prices = {}
+    try:
+        v3_prices = cache.api_client.get_v3_latest_prices(list(TREND_FOREX_SYMBOLS))
+        logger.info(f"[SCHEDULER] trend_forex | v3 batch fetch: {len(v3_prices)}/{len(TREND_FOREX_SYMBOLS)} prices (1 credit)")
+    except Exception as e:
+        logger.warning(f"[SCHEDULER] trend_forex | v3 batch fetch failed: {e} — will fall back to v4 per-asset")
 
     assets_eval = 0
     signals_gen = 0
@@ -186,7 +193,8 @@ def _scheduled_trend_forex_evaluate():
                 return None
             df = pd.DataFrame(candles)
             open_pos = get_open_position("trend_forex", a)
-            return strategy_engine.trend_forex_strategy.evaluate(a, TF_TIMEFRAME, df, open_pos)
+            batch_price = v3_prices.get(a)
+            return strategy_engine.trend_forex_strategy.evaluate(a, TF_TIMEFRAME, df, open_pos, batch_price=batch_price)
 
         result, err = _retry_asset_eval(_eval, asset)
         if err:
@@ -479,14 +487,14 @@ RECOVERY_MAX_HOURS = 4
 RECOVERY_STRATEGIES = [
     {
         "name": "trend_forex",
-        "scheduled_hour": 17,
-        "scheduled_minute": 0,
+        "scheduled_hour": 16,
+        "scheduled_minute": 59,
         "run_func_name": "_scheduled_trend_forex_evaluate",
     },
     {
         "name": "trend_non_forex",
         "scheduled_hour": 16,
-        "scheduled_minute": 0,
+        "scheduled_minute": 59,
         "run_func_name": "_scheduled_trend_non_forex_evaluate",
     },
 ]
@@ -710,17 +718,17 @@ async def lifespan(app: FastAPI):
 
     scheduler.add_job(
         _scheduled_trend_forex_evaluate,
-        trigger=CronTrigger(hour=17, minute=0, timezone=ET_ZONE),
+        trigger=CronTrigger(hour=16, minute=59, timezone=ET_ZONE),
         id="trend_forex_daily",
-        name="Forex Trend Daily Evaluation (5:00 PM ET)",
+        name="Forex Trend Daily Evaluation (4:59 PM ET)",
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
     scheduler.add_job(
         _scheduled_trend_non_forex_evaluate,
-        trigger=CronTrigger(hour=16, minute=0, timezone=ET_ZONE),
+        trigger=CronTrigger(hour=16, minute=59, timezone=ET_ZONE),
         id="trend_non_forex_daily",
-        name="Non-Forex Trend Daily Evaluation (4:00 PM ET)",
+        name="Non-Forex Trend Daily Evaluation (4:59 PM ET)",
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
@@ -792,7 +800,7 @@ async def lifespan(app: FastAPI):
         f"[SCHEDULER] APScheduler started with {len(scheduler.get_jobs())} jobs | "
         f"mtf_ema every hour (:00), sp500_momentum every 30m (:00/:30), "
         f"highest_lowest_fx at 09:00 & 10:00, "
-        f"trend_non_forex at 16:00, trend_forex at 17:00 | "
+        f"trend_non_forex at 16:59, trend_forex at 16:59 | "
         f"metrics worker every 5m | "
         f"misfire_grace={MISFIRE_GRACE_SECONDS}s | "
         f"watchdog interval={WATCHDOG_INTERVAL_SECONDS}s | "

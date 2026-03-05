@@ -113,6 +113,7 @@ class ForexTrendFollowingStrategy(BaseStrategy):
         timeframe: str,
         df: pd.DataFrame,
         open_position_data: Optional[dict],
+        batch_price: Optional[float] = None,
     ) -> SignalResult:
         logger.info(f"[TREND-FOREX] ====== Evaluating {asset} (LONG_ONLY) ======")
 
@@ -129,7 +130,12 @@ class ForexTrendFollowingStrategy(BaseStrategy):
             logger.info(f"[TREND-FOREX] {asset} | Outside 4:59 PM ET pre-close window - skipping")
             return SignalResult()
 
-        advance_quote = self._get_advance_price(asset)
+        if batch_price is not None:
+            logger.info(f"[TREND-FOREX] {asset} | Using v3 batch price: {batch_price:.5f} (pre-fetched, 0 extra credits)")
+            advance_quote = {"close": batch_price}
+        else:
+            logger.info(f"[TREND-FOREX] {asset} | No batch price available, falling back to v4 advance call")
+            advance_quote = self._get_advance_price(asset)
 
         logger.info(f"[TREND-FOREX] {asset} | Daily candles: {len(df)} (need {MIN_BARS_REQUIRED})")
         if len(df) < MIN_BARS_REQUIRED:
