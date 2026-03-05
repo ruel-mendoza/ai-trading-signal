@@ -2596,6 +2596,19 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 .pulse-badge.pulse-triggered { background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
 .pulse-card.pulse-card-approaching { border-color: rgba(234,179,8,0.4); }
 .pulse-card.pulse-card-triggered { border-color: rgba(34,197,94,0.4); }
+.quota-widget { padding: 16px 12px; border-top: 1px solid #334155; }
+.quota-widget-title { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 10px; }
+.quota-bar-track { background: #334155; border-radius: 6px; height: 10px; overflow: hidden; position: relative; }
+.quota-bar-fill { height: 100%; border-radius: 6px; transition: width 0.6s ease, background 0.6s ease; }
+.quota-bar-fill.quota-healthy { background: linear-gradient(90deg, #22c55e, #3b82f6); }
+.quota-bar-fill.quota-warning { background: linear-gradient(90deg, #f59e0b, #ea580c); }
+.quota-bar-fill.quota-critical { background: #ef4444; animation: quota-blink 1s ease-in-out infinite; }
+@keyframes quota-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+.quota-stats { display: flex; justify-content: space-between; margin-top: 8px; }
+.quota-stat { text-align: center; flex: 1; }
+.quota-stat-value { font-size: 0.85rem; font-weight: 700; color: #f1f5f9; }
+.quota-stat-label { font-size: 0.6rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.03em; margin-top: 1px; }
+.quota-pct { text-align: right; font-size: 0.75rem; font-weight: 600; margin-top: 4px; }
 """
 
 ADMIN_JS = """
@@ -3028,6 +3041,64 @@ async function loadMarketPulse() {
     } catch (e) {
         container.innerHTML = '<div style="color:#ef4444;font-size:0.85rem;">Failed to load market pulse.</div>';
     }
+}
+
+async function loadQuotaWidget() {
+    try {
+        var res = await fetch(BASE + '/admin/api/quota-status');
+        var d = await res.json();
+        if (d.status === 'unknown') return;
+
+        var remaining = d.remaining_credits || 0;
+        var limit = d.credit_limit || 1;
+        var remainPct = (remaining / limit * 100);
+        var usedPct = d.usage_pct || 0;
+
+        var barEl = document.getElementById('quota-bar-fill');
+        var pctEl = document.getElementById('quota-pct-text');
+        var remEl = document.getElementById('quota-remaining');
+        var burnEl = document.getElementById('quota-daily-burn');
+        var daysEl = document.getElementById('quota-days-left');
+
+        if (!barEl) return;
+
+        barEl.style.width = Math.max(remainPct, 2) + '%';
+        barEl.className = 'quota-bar-fill';
+        if (remainPct >= 50) {
+            barEl.classList.add('quota-healthy');
+            pctEl.style.color = '#22c55e';
+        } else if (remainPct >= 10) {
+            barEl.classList.add('quota-warning');
+            pctEl.style.color = '#f59e0b';
+        } else {
+            barEl.classList.add('quota-critical');
+            pctEl.style.color = '#ef4444';
+        }
+
+        pctEl.textContent = remainPct.toFixed(1) + '% left';
+
+        if (remaining >= 1000) {
+            remEl.textContent = (remaining / 1000).toFixed(0) + 'K';
+        } else {
+            remEl.textContent = remaining.toLocaleString();
+        }
+
+        var dailyBurn = d.daily_avg_burn || 0;
+        if (dailyBurn >= 1000) {
+            burnEl.textContent = (dailyBurn / 1000).toFixed(1) + 'K';
+        } else {
+            burnEl.textContent = Math.round(dailyBurn).toLocaleString();
+        }
+
+        var daysLeft = d.est_days_remaining || 0;
+        if (daysLeft >= 999) {
+            daysEl.textContent = '∞';
+        } else {
+            daysEl.textContent = daysLeft.toFixed(0);
+        }
+
+        remEl.style.color = remainPct >= 50 ? '#22c55e' : (remainPct >= 10 ? '#f59e0b' : '#ef4444');
+    } catch (e) {}
 }
 
 async function loadSchedulerData() {
@@ -3475,6 +3546,7 @@ async function testWebhook() {
 document.addEventListener('DOMContentLoaded', function() {
     const activeTab = document.querySelector('.tab.active');
     var tabName = activeTab ? activeTab.getAttribute('data-tab') : 'signals';
+    loadQuotaWidget();
     if (tabName === 'signals' || !activeTab) loadMarketPulse();
     if (tabName === 'settings') loadCreditMeter();
     if (tabName === 'notifications') loadNotifConfig();
@@ -3846,6 +3918,27 @@ def admin_dashboard(
                     {_sidebar_link("api_catalog", "API Catalog", svg_book, tab, "sidebar-api-catalog")}
                 </div>
             </nav>
+            <div class="quota-widget" id="quota-widget" data-testid="quota-widget">
+                <div class="quota-widget-title">API Credits</div>
+                <div class="quota-bar-track">
+                    <div class="quota-bar-fill quota-healthy" id="quota-bar-fill" style="width:0%" data-testid="quota-bar-fill"></div>
+                </div>
+                <div class="quota-pct" id="quota-pct-text" data-testid="text-quota-pct" style="color:#94a3b8;">--</div>
+                <div class="quota-stats">
+                    <div class="quota-stat">
+                        <div class="quota-stat-value" id="quota-remaining" data-testid="text-quota-remaining">--</div>
+                        <div class="quota-stat-label">Remaining</div>
+                    </div>
+                    <div class="quota-stat">
+                        <div class="quota-stat-value" id="quota-daily-burn" data-testid="text-quota-daily-burn">--</div>
+                        <div class="quota-stat-label">Daily Avg</div>
+                    </div>
+                    <div class="quota-stat">
+                        <div class="quota-stat-value" id="quota-days-left" data-testid="text-quota-days-left">--</div>
+                        <div class="quota-stat-label">Days Left</div>
+                    </div>
+                </div>
+            </div>
             <div class="sidebar-footer">
                 <a class="sidebar-link" href="/" data-testid="sidebar-back-frontend">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
@@ -5231,9 +5324,15 @@ def api_quota_status(request: Request):
     if guard:
         return guard
     from trading_engine.utils.quota_manager import check_budget_health, get_quota_status
+    from trading_engine.credit_control import get_monthly_projection
     health = check_budget_health()
     raw = get_quota_status()
+    projection = get_monthly_projection()
     health["last_updated"] = raw.get("last_updated")
+    health["daily_avg_burn"] = projection.get("daily_rate", 0)
+    remaining = health.get("remaining_credits", 0)
+    daily_rate = projection.get("daily_rate", 0)
+    health["est_days_remaining"] = round(remaining / daily_rate, 1) if daily_rate > 0 else 999
     return JSONResponse(content=health)
 
 
