@@ -1127,8 +1127,8 @@ def _get_trend_following_data() -> dict:
 
         return sym_info
 
-    forex_data = [_compute_symbol_data(s, long_only=False) for s in forex_symbols]
-    non_forex_data = [_compute_symbol_data(s, long_only=False) for s in non_forex_symbols]
+    forex_data = [_compute_symbol_data(s, long_only=True) for s in forex_symbols]
+    non_forex_data = [_compute_symbol_data(s, long_only=True) for s in non_forex_symbols]
 
     def _gather_trades(strategy_name):
         active_trades = get_active_signals(strategy_name=strategy_name)
