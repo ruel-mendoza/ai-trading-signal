@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 import pytz
@@ -8,7 +8,6 @@ import pandas as pd
 from trading_engine.strategies.base import BaseStrategy, SignalResult, Action, Direction
 from trading_engine.indicators import IndicatorEngine
 from trading_engine.cache_layer import CacheLayer
-from trading_engine.utils.holiday_manager import is_trading_holiday
 from trading_engine.database import (
     signal_exists,
     has_open_signal,
@@ -25,55 +24,19 @@ from trading_engine.database import (
 logger = logging.getLogger("trading_engine.strategy.highest_lowest_fx")
 
 STRATEGY_NAME = "highest_lowest_fx"
-SYMBOL = "EUR/USD"
-TIMEFRAME_H1 = "1H"
+TARGET_SYMBOLS = ["EUR/USD", "USD/JPY"]
 TIMEFRAME_D1 = "D1"
-LOOKBACK_DAYS = 50
+LOOKBACK_PERIODS = 20
 ATR_PERIOD = 100
 TRAILING_STOP_ATR_MULT = 0.25
 TAKE_PROFIT_ATR_MULT = 6.0
-MIN_H1_BARS = 100
-MIN_D1_BARS = 50
-ALLOWED_ET_HOURS = (9, 10)
-NY_REVERSAL_THRESHOLD = 0.998
+MIN_D1_BARS = LOOKBACK_PERIODS + 1
+
+EVAL_HOUR = 16
+EVAL_MINUTE = 59
+EVAL_WINDOW_MINUTES = 5
 
 ET_ZONE = pytz.timezone("America/New_York")
-
-
-def _parse_candle_date(candle: dict) -> Optional[datetime]:
-    ts = candle.get("timestamp", "")
-    if isinstance(ts, datetime):
-        return ts
-    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(str(ts), fmt)
-        except (ValueError, TypeError):
-            continue
-    return None
-
-
-def _get_previous_weekday_candle(d_candles: list[dict], now_et: Optional[datetime] = None) -> Optional[dict]:
-    if len(d_candles) < 2:
-        return None
-
-    today = now_et.date() if now_et else datetime.now(pytz.utc).astimezone(ET_ZONE).date()
-
-    for candle in reversed(d_candles):
-        candle_dt = _parse_candle_date(candle)
-        if candle_dt is None:
-            continue
-        candle_date = candle_dt.date()
-        if candle_date >= today:
-            continue
-        if candle_date.weekday() >= 5:
-            continue
-        if is_trading_holiday(candle_date):
-            continue
-        return candle
-
-    if len(d_candles) >= 2:
-        return d_candles[-2]
-    return None
 
 
 class HighestLowestFXStrategy(BaseStrategy):
@@ -84,10 +47,29 @@ class HighestLowestFXStrategy(BaseStrategy):
     def name(self) -> str:
         return STRATEGY_NAME
 
+    def _is_eval_window(self) -> bool:
+        now_utc = datetime.now(pytz.utc)
+        now_et = now_utc.astimezone(ET_ZONE)
+        is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
+        tz_abbr = "EDT" if is_dst else "EST"
+
+        et_minutes = now_et.hour * 60 + now_et.minute
+        eval_minutes = EVAL_HOUR * 60 + EVAL_MINUTE
+        window_end = eval_minutes + EVAL_WINDOW_MINUTES
+
+        in_window = eval_minutes <= et_minutes <= window_end
+
+        logger.info(
+            f"[HLC-FX] Timing check | now_ET={now_et.strftime('%H:%M')} {tz_abbr} | "
+            f"pre-close=16:59 ET | window=16:59-17:04 ET | in_window={in_window} | "
+            f"DST={'active' if is_dst else 'inactive'}"
+        )
+        return in_window
+
     def _get_advance_price(self, asset: str) -> Optional[dict]:
         try:
             api_client = self.cache.api_client
-            quotes = api_client.get_advance_data([asset], period="1h", merge="latest,profile")
+            quotes = api_client.get_advance_data([asset], period="1d", merge="latest,profile")
             if quotes and len(quotes) > 0:
                 quote = quotes[0]
                 current = quote.get("current", {})
@@ -115,7 +97,11 @@ class HighestLowestFXStrategy(BaseStrategy):
         df: pd.DataFrame,
         open_position: Optional[dict],
     ) -> SignalResult:
-        logger.info(f"[HLC-FX] ====== Evaluating {asset} ======")
+        logger.info(f"[HLC-FX] ====== Evaluating {asset} (N={LOOKBACK_PERIODS} close breakout) ======")
+
+        if asset not in TARGET_SYMBOLS:
+            logger.info(f"[HLC-FX] {asset} | Not a target asset — skipping")
+            return SignalResult()
 
         now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
         is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
@@ -126,74 +112,46 @@ class HighestLowestFXStrategy(BaseStrategy):
             f"DST={'active' if is_dst else 'inactive'}"
         )
 
-        if is_trading_holiday(now_et):
-            logger.info(f"[HLC-FX] {asset} | Today is a trading holiday (US/JP) — skipping")
+        if not self._is_eval_window():
+            logger.info(f"[HLC-FX] {asset} | Outside 4:59 PM ET pre-close window — skipping")
             return SignalResult()
 
-        current_et_hour = now_et.hour
-        if current_et_hour not in ALLOWED_ET_HOURS:
-            logger.info(
-                f"[HLC-FX] {asset} | Current ET hour is {current_et_hour}:00 — "
-                f"only runs at {ALLOWED_ET_HOURS[0]}:00 and {ALLOWED_ET_HOURS[1]}:00 ET — skipping"
-            )
+        if df.empty or "close" not in df.columns:
+            logger.warning(f"[HLC-FX] {asset} | D1 DataFrame is empty or missing columns")
             return SignalResult()
 
-        logger.info(f"[HLC-FX] {asset} | ET hour {current_et_hour}:00 is within allowed window")
-
-        try:
-            d_candles = self.cache.get_candles(asset, TIMEFRAME_D1, 200)
-        except Exception as e:
-            logger.error(f"[HLC-FX] {asset} | Exception fetching D1 candles: {e}")
+        logger.info(f"[HLC-FX] {asset} | D1 candles: {len(df)} (need {MIN_D1_BARS})")
+        if len(df) < MIN_D1_BARS:
+            logger.warning(f"[HLC-FX] {asset} | INSUFFICIENT D1 DATA — have {len(df)}, need {MIN_D1_BARS}")
             return SignalResult()
 
-        logger.info(
-            f"[HLC-FX] {asset} | H1 candles from df: {len(df)} (need {MIN_H1_BARS}), "
-            f"D1 candles: {len(d_candles)} (need {MIN_D1_BARS})"
-        )
+        d_closes = df["close"].tolist()
+        d_highs = df["high"].tolist()
+        d_lows = df["low"].tolist()
 
-        if len(df) < MIN_H1_BARS:
-            logger.warning(f"[HLC-FX] {asset} | INSUFFICIENT H1 DATA — have {len(df)}, need {MIN_H1_BARS}")
-            return SignalResult()
+        prior_closes = d_closes[-(LOOKBACK_PERIODS + 1):-1]
+        highest_close_n = max(prior_closes)
+        lowest_close_n = min(prior_closes)
 
-        if len(d_candles) < MIN_D1_BARS:
-            logger.warning(f"[HLC-FX] {asset} | INSUFFICIENT D1 DATA — have {len(d_candles)}, need {MIN_D1_BARS}")
-            return SignalResult()
-
-        d_closes = [c["close"] for c in d_candles]
-
-        highest_50d = max(d_closes[-LOOKBACK_DAYS:])
-        lowest_50d = min(d_closes[-LOOKBACK_DAYS:])
-
-        h1_closes = df["close"].tolist()
-        h1_highs = df["high"].tolist()
-        h1_lows = df["low"].tolist()
-
-        h1_atr_values = IndicatorEngine.atr(h1_highs, h1_lows, h1_closes, ATR_PERIOD)
-        h1_atr_val = h1_atr_values[-1] if h1_atr_values and h1_atr_values[-1] is not None else None
+        d1_atr_values = IndicatorEngine.atr(d_highs, d_lows, d_closes, ATR_PERIOD)
+        d1_atr_val = d1_atr_values[-1] if d1_atr_values and d1_atr_values[-1] is not None else None
 
         advance_quote = self._get_advance_price(asset)
         if advance_quote and advance_quote.get("close") is not None:
             current_price = float(advance_quote["close"])
-            logger.info(f"[HLC-FX] {asset} | Using v4 advance close: {current_price:.5f}")
+            logger.info(f"[HLC-FX] {asset} | Using v4 advance pre-close: {current_price:.5f}")
         else:
-            current_price = float(df["close"].iloc[-1])
-            logger.info(f"[HLC-FX] {asset} | Using cached H1 candle close: {current_price:.5f}")
+            current_price = float(d_closes[-1])
+            logger.info(f"[HLC-FX] {asset} | Using cached D1 close: {current_price:.5f}")
 
         signal_timestamp = now_et.strftime("%Y-%m-%dT%H:%M:%S")
-
-        atr_str = f"{h1_atr_val:.6f}" if h1_atr_val is not None else "None"
-
-        prev_day = _get_previous_weekday_candle(d_candles, now_et)
-        prev_high = prev_day["high"] if prev_day else None
-        prev_low = prev_day["low"] if prev_day else None
-        prev_high_str = f"{prev_high:.5f}" if prev_high is not None else "None"
-        prev_low_str = f"{prev_low:.5f}" if prev_low is not None else "None"
+        atr_str = f"{d1_atr_val:.6f}" if d1_atr_val is not None else "None"
 
         logger.info(
             f"[HLC-FX] {asset} | price={current_price:.5f} | "
-            f"highest_50d={highest_50d:.5f} | lowest_50d={lowest_50d:.5f} | "
-            f"H1 ATR({ATR_PERIOD})={atr_str} | "
-            f"prev_day_high={prev_high_str} | prev_day_low={prev_low_str}"
+            f"N({LOOKBACK_PERIODS}) highest_close={highest_close_n:.5f} | "
+            f"N({LOOKBACK_PERIODS}) lowest_close={lowest_close_n:.5f} | "
+            f"D1 ATR({ATR_PERIOD})={atr_str}"
         )
 
         if open_position and open_position.get("direction") in ("BUY", "SELL"):
@@ -206,75 +164,50 @@ class HighestLowestFXStrategy(BaseStrategy):
                 if new_highest > stored_highest:
                     update_position_tracking(pos_id, highest_price=new_highest)
                     logger.info(f"[HLC-FX] {asset} | ACTIVE LONG #{pos_id} | Peak updated: {stored_highest:.5f} → {new_highest:.5f}")
-                else:
-                    logger.info(f"[HLC-FX] {asset} | ACTIVE LONG #{pos_id} | Peak unchanged: {stored_highest:.5f}")
             elif direction == "SELL":
                 stored_lowest = open_position.get("lowest_price_since_entry") or open_position.get("entry_price", current_price)
                 new_lowest = min(stored_lowest, current_price)
                 if new_lowest < stored_lowest:
                     update_position_tracking(pos_id, lowest_price=new_lowest)
                     logger.info(f"[HLC-FX] {asset} | ACTIVE SHORT #{pos_id} | Trough updated: {stored_lowest:.5f} → {new_lowest:.5f}")
-                else:
-                    logger.info(f"[HLC-FX] {asset} | ACTIVE SHORT #{pos_id} | Trough unchanged: {stored_lowest:.5f}")
 
             logger.info(f"[HLC-FX] {asset} | IDEMPOTENCY: Open {direction} position #{pos_id} — skipping entry")
             return SignalResult()
 
-        session_label = f"{current_et_hour}:00 ET"
         signal_data = None
 
-        if current_price >= highest_50d:
+        if current_price > highest_close_n:
             signal_data = {
                 "direction": "BUY",
                 "reason": (
-                    f"Price ({current_price:.5f}) at/above 50-day highest close "
-                    f"({highest_50d:.5f}) at {session_label}"
+                    f"N({LOOKBACK_PERIODS}) Close Breakout: price ({current_price:.5f}) > "
+                    f"highest close ({highest_close_n:.5f}) at 4:59 PM pre-close"
                 ),
             }
-        elif current_price <= lowest_50d:
-            if current_price > lowest_50d * NY_REVERSAL_THRESHOLD:
-                signal_data = {
-                    "direction": "BUY",
-                    "reason": (
-                        f"Price ({current_price:.5f}) near 50-day lowest close "
-                        f"({lowest_50d:.5f}) — potential reversal at {session_label}"
-                    ),
-                }
-            else:
-                signal_data = {
-                    "direction": "SELL",
-                    "reason": (
-                        f"Price ({current_price:.5f}) at/below 50-day lowest close "
-                        f"({lowest_50d:.5f}) at {session_label}"
-                    ),
-                }
+            logger.info(
+                f"[HLC-FX] {asset} | BREAKOUT LONG: price {current_price:.5f} > "
+                f"N({LOOKBACK_PERIODS}) highest close {highest_close_n:.5f}"
+            )
+        elif current_price < lowest_close_n:
+            signal_data = {
+                "direction": "SELL",
+                "reason": (
+                    f"N({LOOKBACK_PERIODS}) Close Breakout: price ({current_price:.5f}) < "
+                    f"lowest close ({lowest_close_n:.5f}) at 4:59 PM pre-close"
+                ),
+            }
+            logger.info(
+                f"[HLC-FX] {asset} | BREAKOUT SHORT: price {current_price:.5f} < "
+                f"N({LOOKBACK_PERIODS}) lowest close {lowest_close_n:.5f}"
+            )
 
         if signal_data is None:
             logger.info(
-                f"[HLC-FX] {asset} | No breakout/reversal condition met at {session_label} — no action"
+                f"[HLC-FX] {asset} | No N({LOOKBACK_PERIODS}) close breakout at 4:59 PM — no action"
             )
             return SignalResult()
 
         direction = signal_data["direction"]
-        if prev_day is not None:
-            if direction == "BUY" and prev_low is not None and current_price < prev_low:
-                logger.info(
-                    f"[HLC-FX] {asset} | PREV DAY FILTER REJECTED: LONG entry price "
-                    f"{current_price:.5f} < previous day low {prev_low:.5f} — blocked"
-                )
-                return SignalResult()
-            if direction == "SELL" and prev_high is not None and current_price > prev_high:
-                logger.info(
-                    f"[HLC-FX] {asset} | PREV DAY FILTER REJECTED: SHORT entry price "
-                    f"{current_price:.5f} > previous day high {prev_high:.5f} — blocked"
-                )
-                return SignalResult()
-            logger.info(
-                f"[HLC-FX] {asset} | PREV DAY FILTER PASSED: {direction} entry "
-                f"{current_price:.5f} vs prev_high={prev_high_str}, prev_low={prev_low_str}"
-            )
-        else:
-            logger.warning(f"[HLC-FX] {asset} | No previous day candle — prev day filter skipped")
 
         if has_open_signal(STRATEGY_NAME, asset):
             logger.info(
@@ -286,22 +219,22 @@ class HighestLowestFXStrategy(BaseStrategy):
             logger.info(f"[HLC-FX] {asset} | Signal already exists for timestamp {signal_timestamp} — blocked")
             return SignalResult()
 
-        if h1_atr_val is None:
-            logger.warning(f"[HLC-FX] {asset} | H1 ATR({ATR_PERIOD}) is None — cannot set trailing stop")
+        if d1_atr_val is None:
+            logger.warning(f"[HLC-FX] {asset} | D1 ATR({ATR_PERIOD}) is None — cannot set trailing stop")
             return SignalResult()
 
-        stop_distance = TRAILING_STOP_ATR_MULT * h1_atr_val
+        stop_distance = TRAILING_STOP_ATR_MULT * d1_atr_val
         if direction == "BUY":
             stop_loss = current_price - stop_distance
-            take_profit = current_price + (TAKE_PROFIT_ATR_MULT * h1_atr_val)
+            take_profit = current_price + (TAKE_PROFIT_ATR_MULT * d1_atr_val)
         else:
             stop_loss = current_price + stop_distance
-            take_profit = current_price - (TAKE_PROFIT_ATR_MULT * h1_atr_val)
+            take_profit = current_price - (TAKE_PROFIT_ATR_MULT * d1_atr_val)
 
         logger.info(
             f"[HLC-FX] {asset} | SIGNAL: {direction} @ {current_price:.5f} | "
-            f"SL={stop_loss:.5f} (0.25x H1 ATR) | TP={take_profit:.5f} | "
-            f"H1 ATR_at_entry={atr_str} | "
+            f"SL={stop_loss:.5f} ({TRAILING_STOP_ATR_MULT}x D1 ATR) | "
+            f"TP={take_profit:.5f} ({TAKE_PROFIT_ATR_MULT}x D1 ATR) | "
             f"reason={signal_data['reason']}"
         )
 
@@ -312,13 +245,13 @@ class HighestLowestFXStrategy(BaseStrategy):
             direction=signal_direction,
             price=current_price,
             stop_loss=stop_loss,
-            atr_at_entry=round(h1_atr_val, 6),
+            atr_at_entry=round(d1_atr_val, 6),
             metadata={
                 "take_profit": take_profit,
                 "reason": signal_data["reason"],
-                "session": session_label,
-                "prev_day_high": prev_high,
-                "prev_day_low": prev_low,
+                "lookback_periods": LOOKBACK_PERIODS,
+                "highest_close_n": highest_close_n,
+                "lowest_close_n": lowest_close_n,
                 "signal": {
                     "strategy_name": STRATEGY_NAME,
                     "asset": asset,
@@ -326,7 +259,7 @@ class HighestLowestFXStrategy(BaseStrategy):
                     "entry_price": current_price,
                     "stop_loss": stop_loss,
                     "take_profit": take_profit,
-                    "atr_at_entry": round(h1_atr_val, 6),
+                    "atr_at_entry": round(d1_atr_val, 6),
                     "signal_timestamp": signal_timestamp,
                 },
             },
@@ -354,25 +287,20 @@ class HighestLowestFXStrategy(BaseStrategy):
                 continue
 
             advance_quote = self._get_advance_price(asset)
-
-            try:
-                candles = self.cache.get_candles(asset, TIMEFRAME_H1, 300)
-            except Exception as e:
-                logger.error(f"[HLC-FX-EXIT] Position #{pos_id} | Exception fetching candles: {e}")
-                continue
-
-            if not candles:
-                logger.warning(f"[HLC-FX-EXIT] Position #{pos_id} | No candles available")
-                continue
-
-            closes = [c["close"] for c in candles]
-
             if advance_quote and advance_quote.get("close") is not None:
                 current_close = float(advance_quote["close"])
                 logger.info(f"[HLC-FX-EXIT] Position #{pos_id} | Using v4 advance close: {current_close:.5f}")
             else:
-                current_close = closes[-1]
-                logger.info(f"[HLC-FX-EXIT] Position #{pos_id} | Using cached H1 close: {current_close:.5f}")
+                try:
+                    candles = self.cache.get_candles(asset, TIMEFRAME_D1, 200)
+                except Exception as e:
+                    logger.error(f"[HLC-FX-EXIT] Position #{pos_id} | Exception fetching candles: {e}")
+                    continue
+                if not candles:
+                    logger.warning(f"[HLC-FX-EXIT] Position #{pos_id} | No candles available")
+                    continue
+                current_close = candles[-1]["close"]
+                logger.info(f"[HLC-FX-EXIT] Position #{pos_id} | Using cached D1 close: {current_close:.5f}")
 
             trailing_stop_hit = False
             trailing_stop_level = 0.0
@@ -389,8 +317,8 @@ class HighestLowestFXStrategy(BaseStrategy):
 
                 logger.info(
                     f"[HLC-FX-EXIT] Position #{pos_id} | LONG | close={current_close:.5f} | "
-                    f"highest={highest_close:.5f} | ATR_entry={atr_at_entry:.6f} (FIXED, H1) | "
-                    f"trailing_stop={trailing_stop_level:.5f} (highest - 0.25×ATR) | hit={trailing_stop_hit}"
+                    f"highest={highest_close:.5f} | ATR_entry={atr_at_entry:.6f} (FIXED, D1) | "
+                    f"trailing_stop={trailing_stop_level:.5f} ({TRAILING_STOP_ATR_MULT}×ATR) | hit={trailing_stop_hit}"
                 )
             elif direction == "SELL":
                 stored_lowest = pos.get("lowest_price_since_entry") or entry_price
@@ -404,18 +332,18 @@ class HighestLowestFXStrategy(BaseStrategy):
 
                 logger.info(
                     f"[HLC-FX-EXIT] Position #{pos_id} | SHORT | close={current_close:.5f} | "
-                    f"lowest={lowest_close:.5f} | ATR_entry={atr_at_entry:.6f} (FIXED, H1) | "
-                    f"trailing_stop={trailing_stop_level:.5f} (lowest + 0.25×ATR) | hit={trailing_stop_hit}"
+                    f"lowest={lowest_close:.5f} | ATR_entry={atr_at_entry:.6f} (FIXED, D1) | "
+                    f"trailing_stop={trailing_stop_level:.5f} ({TRAILING_STOP_ATR_MULT}×ATR) | hit={trailing_stop_hit}"
                 )
 
             if trailing_stop_hit:
                 exit_reason = (
                     f"Trailing stop hit | close={current_close:.5f}, "
                     f"stop={trailing_stop_level:.5f}, "
-                    f"ATR_at_entry={atr_at_entry:.6f} (H1, fixed), "
+                    f"ATR_at_entry={atr_at_entry:.6f} (D1, fixed), "
                     f"mult={TRAILING_STOP_ATR_MULT}"
                 )
-                logger.info(f"[HLC-FX-EXIT] Position #{pos_id} | EXIT: trailing_stop (0.25x H1 ATR)")
+                logger.info(f"[HLC-FX-EXIT] Position #{pos_id} | EXIT: trailing_stop")
 
                 active_sigs = get_active_signals(strategy_name=STRATEGY_NAME, asset=asset)
                 for sig in active_sigs:

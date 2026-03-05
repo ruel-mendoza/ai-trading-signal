@@ -24,8 +24,8 @@ logger = logging.getLogger("trading_engine.strategy.trend_forex")
 
 STRATEGY_NAME = "trend_forex"
 TARGET_SYMBOLS = [
-    "EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD",
-    "NZD/USD", "USD/CAD", "USD/CHF", "EUR/GBP",
+    "EUR/USD",
+    "USD/JPY",
 ]
 TIMEFRAME = "D1"
 SMA_FAST = 50
@@ -35,9 +35,9 @@ LOOKBACK_DAYS = 50
 TRAILING_STOP_ATR_MULT = 3.0
 MIN_BARS_REQUIRED = ATR_PERIOD + 1
 
-FOREX_CLOSE_HOUR = 17
-FOREX_CLOSE_MINUTE = 0
-EVAL_WINDOW_MINUTES = 30
+FOREX_CLOSE_HOUR = 16
+FOREX_CLOSE_MINUTE = 59
+EVAL_WINDOW_MINUTES = 5
 
 ET_ZONE = pytz.timezone("America/New_York")
 
@@ -64,7 +64,7 @@ class ForexTrendFollowingStrategy(BaseStrategy):
 
         logger.info(
             f"[TREND-FOREX] Timing check | now_ET={now_et.strftime('%H:%M')} {tz_abbr} | "
-            f"forex_close=17:00 ET | window=17:00-17:30 ET | in_window={in_window} | "
+            f"pre-close=16:59 ET | window=16:59-17:04 ET | in_window={in_window} | "
             f"DST={'active' if is_dst else 'inactive'}"
         )
         return in_window
@@ -114,7 +114,7 @@ class ForexTrendFollowingStrategy(BaseStrategy):
         logger.info(f"[TREND-FOREX] ====== Evaluating {asset} ======")
 
         if asset not in TARGET_SYMBOLS:
-            logger.info(f"[TREND-FOREX] {asset} | Not a target asset - skipping")
+            logger.info(f"[TREND-FOREX] {asset} | Not a target asset (strictly EUR/USD, USD/JPY) - skipping")
             return SignalResult()
 
         from trading_engine.fcsapi_client import is_symbol_supported
@@ -123,7 +123,7 @@ class ForexTrendFollowingStrategy(BaseStrategy):
             return SignalResult()
 
         if not self._is_forex_close_window():
-            logger.info(f"[TREND-FOREX] {asset} | Outside 5:00 PM ET window - skipping")
+            logger.info(f"[TREND-FOREX] {asset} | Outside 4:59 PM ET pre-close window - skipping")
             return SignalResult()
 
         advance_quote = self._get_advance_price(asset)
@@ -157,7 +157,7 @@ class ForexTrendFollowingStrategy(BaseStrategy):
 
         if advance_quote and advance_quote.get("close") is not None:
             current_close = float(advance_quote["close"])
-            logger.info(f"[TREND-FOREX] {asset} | Using v4 advance close: {current_close:.5f}")
+            logger.info(f"[TREND-FOREX] {asset} | Using v4 advance pre-close: {current_close:.5f}")
         else:
             current_close = closes[-1]
             logger.info(f"[TREND-FOREX] {asset} | Using cached candle close: {current_close:.5f} (advance unavailable)")
@@ -170,9 +170,9 @@ class ForexTrendFollowingStrategy(BaseStrategy):
         close_above_highest = current_close > highest_50d
         close_below_lowest = current_close < lowest_50d
 
-        logger.info(f"[TREND-FOREX] {asset} | close={current_close:.5f}")
+        logger.info(f"[TREND-FOREX] {asset} | close={current_close:.5f} (pre-close 4:59 PM)")
         logger.info(f"[TREND-FOREX] {asset} | SMA(50)={sma50_val:.5f} | SMA(100)={sma100_val:.5f} | ATR(100)={atr_val:.5f}")
-        logger.info(f"[TREND-FOREX] {asset} | 50-day highest={highest_50d:.5f} | 50-day lowest={lowest_50d:.5f}")
+        logger.info(f"[TREND-FOREX] {asset} | {LOOKBACK_DAYS}-day highest={highest_50d:.5f} | {LOOKBACK_DAYS}-day lowest={lowest_50d:.5f}")
         logger.info(
             f"[TREND-FOREX] {asset} | LONG check: close > highest_50d={close_above_highest} "
             f"AND SMA50 > SMA100={sma50_above_sma100}"
@@ -255,7 +255,7 @@ class ForexTrendFollowingStrategy(BaseStrategy):
             stop_loss_distance = TRAILING_STOP_ATR_MULT * atr_val
             stop_loss = current_close - stop_loss_distance
 
-            logger.info(f"[TREND-FOREX] {asset} | ALL CONDITIONS MET: LONG")
+            logger.info(f"[TREND-FOREX] {asset} | ALL CONDITIONS MET: LONG (pre-close 4:59 PM)")
             logger.info(
                 f"[TREND-FOREX] {asset} | ATR({ATR_PERIOD}) at entry = {atr_val:.6f} "
                 f"(FIXED for trade lifetime)"
@@ -319,7 +319,7 @@ class ForexTrendFollowingStrategy(BaseStrategy):
             stop_loss_distance = TRAILING_STOP_ATR_MULT * atr_val
             stop_loss = current_close + stop_loss_distance
 
-            logger.info(f"[TREND-FOREX] {asset} | ALL CONDITIONS MET: SHORT")
+            logger.info(f"[TREND-FOREX] {asset} | ALL CONDITIONS MET: SHORT (pre-close 4:59 PM)")
             logger.info(
                 f"[TREND-FOREX] {asset} | ATR({ATR_PERIOD}) at entry = {atr_val:.6f} "
                 f"(FIXED for trade lifetime)"
@@ -394,7 +394,7 @@ class ForexTrendFollowingStrategy(BaseStrategy):
             if advance_quote is not None:
                 current_close = float(advance_quote["close"])
                 logger.info(
-                    f"[TREND-FOREX-EXIT] Position #{pos_id} | Using v4 advance real-time price: {current_close:.5f}"
+                    f"[TREND-FOREX-EXIT] Position #{pos_id} | Using v4 advance pre-close price: {current_close:.5f}"
                 )
             else:
                 logger.warning(
