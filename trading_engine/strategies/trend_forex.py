@@ -36,8 +36,8 @@ TRAILING_STOP_ATR_MULT = 3.0
 MIN_BARS_REQUIRED = ATR_PERIOD + 1
 
 FOREX_CLOSE_HOUR = 16
-FOREX_CLOSE_MINUTE = 59
-EVAL_WINDOW_MINUTES = 5
+FOREX_CLOSE_MINUTE = 58
+EVAL_WINDOW_MINUTES = 2
 
 ET_ZONE = pytz.timezone("America/New_York")
 
@@ -67,7 +67,7 @@ class ForexTrendFollowingStrategy(BaseStrategy):
 
         logger.info(
             f"[TREND-FOREX] Timing check | now_ET={now_et.strftime('%H:%M')} {tz_abbr} | "
-            f"pre-close=16:59 ET | window=16:59-17:04 ET | in_window={in_window} | "
+            f"pre-close=16:58 ET | window=16:58-17:00 ET | in_window={in_window} | "
             f"DST={'active' if is_dst else 'inactive'}"
         )
         return in_window
@@ -127,7 +127,7 @@ class ForexTrendFollowingStrategy(BaseStrategy):
             return SignalResult()
 
         if not self._is_forex_close_window():
-            logger.info(f"[TREND-FOREX] {asset} | Outside 4:59 PM ET pre-close window - skipping")
+            logger.info(f"[TREND-FOREX] {asset} | Outside 4:58 PM ET pre-close window - skipping")
             return SignalResult()
 
         if batch_price is not None:
@@ -177,7 +177,7 @@ class ForexTrendFollowingStrategy(BaseStrategy):
         sma50_above_sma100 = sma50_val > sma100_val
         close_above_highest = current_close > highest_50d
 
-        logger.info(f"[TREND-FOREX] {asset} | close={current_close:.5f} (pre-close 4:59 PM)")
+        logger.info(f"[TREND-FOREX] {asset} | close={current_close:.5f} (pre-close 4:58 PM)")
         logger.info(f"[TREND-FOREX] {asset} | SMA(50)={sma50_val:.5f} | SMA(100)={sma100_val:.5f} | ATR(100)={atr_val:.5f}")
         logger.info(f"[TREND-FOREX] {asset} | {LOOKBACK_DAYS}-day highest close={highest_50d:.5f}")
         logger.info(
@@ -240,7 +240,7 @@ class ForexTrendFollowingStrategy(BaseStrategy):
             stop_loss_distance = TRAILING_STOP_ATR_MULT * atr_val
             stop_loss = current_close - stop_loss_distance
 
-            logger.info(f"[TREND-FOREX] {asset} | ALL CONDITIONS MET: LONG (pre-close 4:59 PM)")
+            logger.info(f"[TREND-FOREX] {asset} | ALL CONDITIONS MET: LONG (pre-close 4:58 PM)")
             logger.info(
                 f"[TREND-FOREX] {asset} | ATR({ATR_PERIOD}) at entry = {atr_val:.6f} "
                 f"(FIXED for trade lifetime)"
@@ -350,12 +350,12 @@ class ForexTrendFollowingStrategy(BaseStrategy):
                 f"[TREND-FOREX-EXIT] Position #{pos_id} | CLOSING-RULE CHECK | "
                 f"close={current_close:.5f} | SL_level={trailing_stop:.5f} | "
                 f"Price < SL? {current_close < trailing_stop} | "
-                f"(intraday spikes ignored — only 4:59 PM close matters)"
+                f"(intraday spikes ignored — only 4:58 PM close matters)"
             )
 
             if current_close < trailing_stop:
                 exit_reason = (
-                    f"Closing-rule exit | 4:59 PM close={current_close:.5f} < "
+                    f"Closing-rule exit | 4:58 PM close={current_close:.5f} < "
                     f"SL_level={trailing_stop:.5f} (highest={highest_close:.5f} - "
                     f"{TRAILING_STOP_ATR_MULT}x ATR={atr_at_entry:.6f})"
                 )

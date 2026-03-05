@@ -1260,7 +1260,7 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
         <div class="stat-label">Evaluation Time</div>
         <div style="margin-top:4px;">{tf_data['et_time']}</div>
         <div class="stat-label" style="margin-top:4px;">DST: {'Active' if tf_data['dst_active'] else 'Inactive'}</div>
-        <div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;">Forex &amp; Non-Forex evals at 4:59 PM ET</div>
+        <div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;">Forex eval at 4:58 PM ET | Non-Forex at 4:59 PM ET</div>
     </div>
     <div class="settings-section">
         <h3>Forex Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG ONLY</span></h3>
@@ -1302,7 +1302,7 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
             <li><strong>Forex Entry (LONG):</strong> Close &ge; highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
             <li><strong>Non-Forex Entry (LONG):</strong> Close &ge; highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
             <li><strong>Trailing Stop:</strong> Highest close since entry &minus; (Fixed ATR at entry &times; 3)</li>
-            <li><strong>Exit Rule:</strong> Closing-rule gate &mdash; only the 4:59 PM ET close is evaluated, intraday spikes are ignored</li>
+            <li><strong>Exit Rule:</strong> Closing-rule gate &mdash; only the 4:58 PM ET close is evaluated, intraday spikes are ignored</li>
             <li><strong>Timeframe:</strong> Daily (D1) candles</li>
             <li><strong>ATR:</strong> Fixed at entry value for the duration of the trade</li>
         </ul>
@@ -1551,7 +1551,7 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
     return f"""
     <div class="stats-grid">
         <div class="stat-card">
-            <div class="stat-label">Eval Window (5:00 PM ET)</div>
+            <div class="stat-label">Eval Window (4:58 PM ET)</div>
             <div style="margin-top:8px;">{window_badge}</div>
             <div class="stat-label" style="margin-top:8px;">{fx_data['et_time']}</div>
             <div class="stat-label">DST: {'Active' if fx_data['dst_active'] else 'Inactive'}</div>
@@ -1564,7 +1564,7 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
         <div class="stat-card">
             <div class="stat-label">Scheduler</div>
             <div class="stat-value" style="font-size:1.2rem;color:#6ee7b7;">Active</div>
-            <div class="stat-label" style="margin-top:4px;">APScheduler @ 17:00 ET</div>
+            <div class="stat-label" style="margin-top:4px;">APScheduler @ 16:58 ET</div>
         </div>
     </div>
     {symbols_html}
@@ -1596,7 +1596,7 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
             <li><strong>Short Entry:</strong> Close &lt; Lowest Close of prior 50 days AND SMA(50) &lt; SMA(100)</li>
             <li><strong>Exit (Trailing Stop):</strong> Long exits when close &lt; highest_since_entry - (ATR_at_entry &times; 3); Short exits when close &gt; lowest_since_entry + (ATR_at_entry &times; 3)</li>
             <li><strong>ATR:</strong> Fixed at entry value for the duration of the trade (never recalculated)</li>
-            <li><strong>Timing:</strong> Evaluates at 5:00 PM ET daily (forex daily close), automated via APScheduler</li>
+            <li><strong>Timing:</strong> Evaluates at 4:58 PM ET daily (1 min before NY close), automated via APScheduler</li>
             <li><strong>Reversal:</strong> Closing a Long allows a Short to open the next day if conditions are met (and vice versa)</li>
         </ul>
     </div>
@@ -2382,7 +2382,7 @@ def _build_signal_analysis_html(data: dict) -> str:
     </div>
 
     <div class="settings-section" style="margin-bottom:20px;">
-        <h3>Trend Following &mdash; Forex <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 4:59 PM ET | LONG ONLY | 3&times;ATR(100) trailing stop</span></h3>
+        <h3>Trend Following &mdash; Forex <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 4:58 PM ET | LONG ONLY | 3&times;ATR(100) trailing stop</span></h3>
         <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG), confirmed by SMA(50) &gt; SMA(100) crossover | EUR/USD, USD/JPY</p>
         <div style="overflow-x:auto;">
             <table class="data-table" data-testid="table-analysis-trend-fx">

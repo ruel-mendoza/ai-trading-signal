@@ -170,7 +170,7 @@ def _scheduled_trend_forex_evaluate():
 
     et = _get_et_context()
     log_id = create_job_log("trend_forex_daily", "trend_forex")
-    logger.info(f"[SCHEDULER] ====== Triggered trend_forex daily evaluation at 4:59 PM ET | {et['time_str']} {et['label']} ======")
+    logger.info(f"[SCHEDULER] ====== Triggered trend_forex daily evaluation at 4:58 PM ET | {et['time_str']} {et['label']} ======")
 
     v3_prices = {}
     try:
@@ -488,7 +488,7 @@ RECOVERY_STRATEGIES = [
     {
         "name": "trend_forex",
         "scheduled_hour": 16,
-        "scheduled_minute": 59,
+        "scheduled_minute": 58,
         "run_func_name": "_scheduled_trend_forex_evaluate",
     },
     {
@@ -718,9 +718,9 @@ async def lifespan(app: FastAPI):
 
     scheduler.add_job(
         _scheduled_trend_forex_evaluate,
-        trigger=CronTrigger(hour=16, minute=59, timezone=ET_ZONE),
+        trigger=CronTrigger(hour=16, minute=58, timezone=ET_ZONE),
         id="trend_forex_daily",
-        name="Forex Trend Daily Evaluation (4:59 PM ET)",
+        name="Forex Trend Daily Evaluation (4:58 PM ET)",
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
@@ -800,7 +800,7 @@ async def lifespan(app: FastAPI):
         f"[SCHEDULER] APScheduler started with {len(scheduler.get_jobs())} jobs | "
         f"mtf_ema every hour (:00), sp500_momentum every 30m (:00/:30), "
         f"highest_lowest_fx at 09:00 & 10:00, "
-        f"trend_non_forex at 16:59, trend_forex at 16:59 | "
+        f"trend_non_forex at 16:59, trend_forex at 16:58 | "
         f"metrics worker every 5m | "
         f"misfire_grace={MISFIRE_GRACE_SECONDS}s | "
         f"watchdog interval={WATCHDOG_INTERVAL_SECONDS}s | "
