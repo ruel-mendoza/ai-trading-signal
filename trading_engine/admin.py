@@ -2648,6 +2648,12 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 .vbar-fill { position: absolute; bottom: 0; left: 0; width: 100%; border-radius: 6px 6px 0 0; transition: height 0.6s ease, background 0.4s ease; }
 .vbar-labels { display: flex; flex-direction: column; justify-content: space-between; height: 100%; }
 .vbar-label { font-size: 0.7rem; color: #64748b; }
+.toggle-switch { position: relative; display: inline-block; width: 48px; height: 26px; cursor: pointer; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #475569; border-radius: 13px; transition: 0.3s; }
+.toggle-slider:before { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; background: #f1f5f9; border-radius: 50%; transition: 0.3s; }
+.toggle-switch input:checked + .toggle-slider { background: #22c55e; }
+.toggle-switch input:checked + .toggle-slider:before { transform: translateX(22px); }
 """
 
 ADMIN_JS = """
@@ -2668,7 +2674,7 @@ function showTab(tabName) {
     if (tabName === 'notifications') loadNotifConfig();
     if (tabName === 'apikeys') loadPartnerKeys();
     if (tabName === 'scheduler') loadSchedulerData();
-    if (tabName === 'system') loadSystemStatus();
+    if (tabName === 'system') { loadSystemStatus(); loadWatchdogStatus(); }
     if (tabName === 'recovery') loadRecoveryLogs();
     if (tabName === 'users') loadRegistrationToggle();
     if (tabName === 'wordpress') { loadUserCmsConfigs(); }
@@ -3410,6 +3416,75 @@ async function loadSystemStatus() {
     }
 }
 
+async function loadWatchdogStatus() {
+    try {
+        var res = await fetch(BASE + '/admin/api/watchdog/status');
+        var data = await res.json();
+        var toggle = document.getElementById('watchdog-toggle');
+        var statusLabel = document.getElementById('watchdog-status-label');
+        var reasonEl = document.getElementById('watchdog-disable-reason');
+        if (toggle) toggle.checked = !data.admin_disabled;
+        if (statusLabel) {
+            if (data.effectively_running) {
+                statusLabel.textContent = 'Running';
+                statusLabel.style.color = '#22c55e';
+            } else {
+                statusLabel.textContent = 'Stopped';
+                statusLabel.style.color = '#ef4444';
+            }
+        }
+        if (reasonEl) {
+            var reasons = [];
+            if (data.admin_disabled) reasons.push('Admin toggle OFF');
+            if (data.quota_disabled) reasons.push('Quota >95%');
+            if (data.credit_blocked) reasons.push('Credit kill-switch');
+            reasonEl.textContent = reasons.length > 0 ? reasons.join(', ') : 'No blocks active';
+            reasonEl.style.color = reasons.length > 0 ? '#f59e0b' : '#94a3b8';
+        }
+    } catch (e) { console.error('Failed to load watchdog status', e); }
+}
+
+async function toggleWatchdog() {
+    var toggle = document.getElementById('watchdog-toggle');
+    var statusLabel = document.getElementById('watchdog-status-label');
+    try {
+        var res = await fetch(BASE + '/admin/api/watchdog/toggle', { method: 'POST' });
+        var data = await res.json();
+        if (data.success) {
+            toggle.checked = !data.admin_disabled;
+            if (statusLabel) {
+                statusLabel.textContent = data.admin_disabled ? 'Stopped' : 'Running';
+                statusLabel.style.color = data.admin_disabled ? '#ef4444' : '#22c55e';
+            }
+            loadWatchdogStatus();
+        }
+    } catch (e) {
+        toggle.checked = !toggle.checked;
+        console.error('Failed to toggle watchdog', e);
+    }
+}
+
+async function terminateBackground() {
+    var btn = document.getElementById('btn-terminate-bg');
+    var resultEl = document.getElementById('terminate-result');
+    btn.disabled = true;
+    btn.textContent = 'Terminating...';
+    try {
+        var res = await fetch(BASE + '/admin/api/system/terminate-background', { method: 'POST' });
+        var data = await res.json();
+        if (data.success) {
+            resultEl.innerHTML = '<span style="color:#22c55e;">Background tasks terminated. Watchdog disabled.</span>';
+            loadWatchdogStatus();
+        } else {
+            resultEl.innerHTML = '<span style="color:#ef4444;">Failed to terminate tasks.</span>';
+        }
+    } catch (e) {
+        resultEl.innerHTML = '<span style="color:#ef4444;">Error: ' + e.message + '</span>';
+    }
+    btn.disabled = false;
+    btn.textContent = 'Terminate All Background Tasks';
+}
+
 function formatRecoveryDate(isoStr) {
     if (!isoStr) return '--';
     try {
@@ -3638,7 +3713,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (tabName === 'settings') loadCreditMeter();
     if (tabName === 'notifications') loadNotifConfig();
     if (tabName === 'scheduler') loadSchedulerData();
-    if (tabName === 'system') loadSystemStatus();
+    if (tabName === 'system') { loadSystemStatus(); loadWatchdogStatus(); }
     if (tabName === 'users') loadRegistrationToggle();
     if (tabName === 'wordpress') { loadUserCmsConfigs(); }
 });
@@ -4581,6 +4656,32 @@ def admin_dashboard(
 
                 </div>
 
+                <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:12px;">Watchdog Control</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:24px;">
+                    <div style="padding:20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;" data-testid="widget-watchdog-toggle">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                            <div>
+                                <div style="font-weight:600;color:#f1f5f9;font-size:14px;">Watchdog Status</div>
+                                <div style="font-size:13px;color:#94a3b8;margin-top:2px;">Proximity alert monitoring for EUR/USD, AUD/USD, GBP/USD</div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                <span id="watchdog-status-label" style="font-weight:600;font-size:14px;" data-testid="text-watchdog-status">--</span>
+                                <label class="toggle-switch" data-testid="toggle-watchdog">
+                                    <input type="checkbox" id="watchdog-toggle" onchange="toggleWatchdog()">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+                        <div id="watchdog-disable-reason" style="font-size:12px;color:#94a3b8;" data-testid="text-watchdog-reason">Loading...</div>
+                    </div>
+                    <div style="padding:20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;" data-testid="widget-terminate-bg">
+                        <div style="font-weight:600;color:#f1f5f9;font-size:14px;margin-bottom:8px;">Emergency Controls</div>
+                        <div style="font-size:13px;color:#94a3b8;margin-bottom:14px;">Force-stop all background monitoring tasks and disable the watchdog. Use when ghost processes may be consuming API credits.</div>
+                        <button id="btn-terminate-bg" class="btn" onclick="terminateBackground()" data-testid="button-terminate-background" style="background:#ef4444;border-color:#ef4444;color:#fff;font-size:13px;padding:8px 16px;">Terminate All Background Tasks</button>
+                        <div id="terminate-result" style="margin-top:8px;font-size:12px;" data-testid="text-terminate-result"></div>
+                    </div>
+                </div>
+
                 <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:12px;">Storage Monitor</div>
                 <div style="padding:20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;margin-bottom:24px;" data-testid="widget-storage-monitor">
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
@@ -5446,6 +5547,65 @@ def api_scheduler_job_logs(request: Request, limit: int = Query(50, ge=1, le=200
         return guard
     logs = get_recent_job_logs(limit)
     return JSONResponse(content={"logs": logs, "count": len(logs)})
+
+
+@router.get("/api/watchdog/status")
+def api_watchdog_status(request: Request):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.engine.watchdog import is_watchdog_manually_disabled
+    from trading_engine.utils.quota_manager import is_watchdog_disabled_by_quota
+    from trading_engine.credit_control import is_api_blocked
+    return JSONResponse(content={
+        "admin_disabled": is_watchdog_manually_disabled(),
+        "quota_disabled": is_watchdog_disabled_by_quota(),
+        "credit_blocked": is_api_blocked(),
+        "effectively_running": not is_watchdog_manually_disabled() and not is_watchdog_disabled_by_quota() and not is_api_blocked(),
+    })
+
+
+@router.post("/api/watchdog/toggle")
+def api_watchdog_toggle(request: Request):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.engine.watchdog import is_watchdog_manually_disabled, set_watchdog_manual_override
+    current = is_watchdog_manually_disabled()
+    set_watchdog_manual_override(not current)
+    new_state = not current
+    return JSONResponse(content={
+        "success": True,
+        "admin_disabled": new_state,
+        "message": f"Watchdog {'disabled' if new_state else 'enabled'} by admin",
+    })
+
+
+@router.post("/api/system/terminate-background")
+def api_terminate_background(request: Request):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    import subprocess
+    results = []
+    for pattern in ["watchdog", "check_proximity"]:
+        try:
+            proc = subprocess.run(
+                ["pkill", "-f", pattern],
+                capture_output=True, text=True, timeout=5
+            )
+            results.append({"pattern": pattern, "returncode": proc.returncode})
+        except Exception as e:
+            results.append({"pattern": pattern, "error": str(e)})
+
+    from trading_engine.engine.watchdog import set_watchdog_manual_override
+    set_watchdog_manual_override(True)
+
+    return JSONResponse(content={
+        "success": True,
+        "message": "Watchdog disabled and termination signals sent",
+        "pkill_results": results,
+    })
 
 
 @router.get("/api/quota-status")

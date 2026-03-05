@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 
 from trading_engine.fcsapi_client import FCSAPIClient
-from trading_engine.database import SessionFactory
+from trading_engine.database import SessionFactory, get_setting, set_setting
 from trading_engine.models import RecoveryNotification
 from trading_engine.credit_control import is_api_blocked
 from trading_engine.utils.quota_manager import is_watchdog_disabled_by_quota
@@ -17,7 +17,18 @@ PROXIMITY_PIPS = 0.00030
 SUPPRESSION_MINUTES = 30
 CHECK_INTERVAL_SECONDS = 60
 
+ADMIN_WATCHDOG_DISABLED_KEY = "admin_watchdog_disabled"
+
 _last_alert_times: dict[str, datetime] = {}
+
+
+def is_watchdog_manually_disabled() -> bool:
+    return get_setting(ADMIN_WATCHDOG_DISABLED_KEY) == "true"
+
+
+def set_watchdog_manual_override(disabled: bool):
+    set_setting(ADMIN_WATCHDOG_DISABLED_KEY, "true" if disabled else "false")
+    logger.info(f"[WATCHDOG] Manual override set: {'DISABLED' if disabled else 'ENABLED'}")
 
 
 def _is_suppressed(symbol: str, now: datetime) -> bool:
@@ -29,6 +40,10 @@ def _is_suppressed(symbol: str, now: datetime) -> bool:
 
 def check_proximity():
     now = datetime.now(timezone.utc)
+
+    if is_watchdog_manually_disabled():
+        logger.info("[WATCHDOG] Disabled by admin toggle (manual override)")
+        return
 
     if is_api_blocked():
         logger.debug("[WATCHDOG] API blocked by credit kill-switch, skipping price check")
