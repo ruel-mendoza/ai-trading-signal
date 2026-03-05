@@ -5626,6 +5626,16 @@ def api_quota_status(request: Request):
     return JSONResponse(content=health)
 
 
+@router.post("/api/quota-check")
+def api_quota_check(request: Request):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.utils.quota_manager import check_budget_health
+    health = check_budget_health()
+    return JSONResponse(content={"success": True, "health": health})
+
+
 @router.get("/api/market-pulse")
 def api_market_pulse(request: Request):
     user = _get_session_user(request)

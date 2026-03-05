@@ -285,9 +285,8 @@ class FCSAPIClient:
         log_api_usage(endpoint=endpoint)
         check_credit_thresholds()
 
-        from trading_engine.utils.quota_manager import update_quota, check_budget_health
+        from trading_engine.utils.quota_manager import update_quota
         update_quota(data)
-        check_budget_health()
 
         return data
 
