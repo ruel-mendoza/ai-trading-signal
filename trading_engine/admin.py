@@ -3189,6 +3189,26 @@ async function loadResourceOverview() {
             daysEl.textContent = daysLeft >= 999 ? '∞' : daysLeft.toFixed(0);
         }
 
+        var syncEl = document.getElementById('ro-last-sync');
+        if (syncEl) {
+            var syncTs = s.last_pre_close_sync;
+            if (syncTs) {
+                try {
+                    var dt = new Date(syncTs + (syncTs.includes('Z') ? '' : 'Z'));
+                    var now = new Date();
+                    var diffMs = now - dt;
+                    var diffH = Math.floor(diffMs / 3600000);
+                    var timeStr = dt.toLocaleString('en-US', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true });
+                    var agoStr = diffH < 1 ? 'just now' : (diffH < 24 ? diffH + 'h ago' : Math.floor(diffH/24) + 'd ago');
+                    syncEl.innerHTML = '<span style="color:#e2e8f0;">' + timeStr + '</span> <span style="color:#94a3b8;font-size:0.8rem;">(' + agoStr + ')</span>';
+                } catch(e2) {
+                    syncEl.textContent = syncTs;
+                }
+            } else {
+                syncEl.innerHTML = '<span style="color:#94a3b8;">No sync recorded yet</span>';
+            }
+        }
+
     } catch (e) {
         console.error('Resource overview failed:', e);
     }
@@ -4257,6 +4277,16 @@ def admin_dashboard(
                             </div>
                         </div>
                         <div id="ro-storage-text" class="ro-text" data-testid="text-storage-detail">Loading...</div>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;padding-top:16px;border-top:1px solid rgba(148,163,184,0.1);">
+                    <div>
+                        <div class="ro-title" style="margin-bottom:6px;">Last 4:59 PM Sync</div>
+                        <div id="ro-last-sync" style="font-size:0.95rem;font-weight:600;color:#64748b;" data-testid="text-last-sync">--</div>
+                    </div>
+                    <div>
+                        <div class="ro-title" style="margin-bottom:6px;">Asset Coverage</div>
+                        <div style="font-size:0.85rem;color:#e2e8f0;" data-testid="text-asset-count">Tracking <strong style="color:#38bdf8;">2</strong> Forex Pairs | <strong style="color:#38bdf8;">18</strong> Commodity ETFs</div>
                     </div>
                 </div>
             </div>
@@ -5543,7 +5573,16 @@ def api_storage_stats(request: Request):
     if guard:
         return guard
     from trading_engine.utils.system_monitor import get_storage_stats
+    from trading_engine.database import get_last_successful_execution
     stats = get_storage_stats()
+    nfx = get_last_successful_execution("trend_non_forex")
+    tfx = get_last_successful_execution("trend_forex")
+    last_sync = None
+    if nfx and nfx.get("last_run_at"):
+        last_sync = str(nfx["last_run_at"])
+    elif tfx and tfx.get("last_run_at"):
+        last_sync = str(tfx["last_run_at"])
+    stats["last_pre_close_sync"] = last_sync
     return JSONResponse(content=stats)
 
 
