@@ -58,6 +58,7 @@ from trading_engine.models import (
     UserCmsConfig,
     StrategyExecutionLog,
     RecoveryNotification,
+    HistoricalDailyClose,
     VALID_TIMEFRAMES,
 )
 
@@ -156,6 +157,8 @@ def _migrate_schema():
         ("admin_users", "role", "TEXT DEFAULT 'CUSTOMER'"),
         ("admin_users", "email", "TEXT"),
         ("admin_users", "full_name", "TEXT"),
+        ("open_positions", "n_period_high_close", "REAL"),
+        ("open_positions", "n_period_low_close", "REAL"),
     ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:
@@ -1573,3 +1576,59 @@ def get_recovery_notifications(limit: int = 50) -> list[dict]:
                 "status": r.status,
             })
         return results
+
+
+def upsert_daily_close(symbol: str, close_date: str, close_price: float):
+    with _get_session() as session:
+        existing = (
+            session.query(HistoricalDailyClose)
+            .filter_by(symbol=symbol, close_date=close_date)
+            .first()
+        )
+        if existing:
+            existing.close_price = close_price
+        else:
+            session.add(HistoricalDailyClose(
+                symbol=symbol,
+                close_date=close_date,
+                close_price=close_price,
+            ))
+        session.commit()
+
+
+def bulk_upsert_daily_closes(rows: list[dict]):
+    with _get_session() as session:
+        for row in rows:
+            existing = (
+                session.query(HistoricalDailyClose)
+                .filter_by(symbol=row["symbol"], close_date=row["close_date"])
+                .first()
+            )
+            if existing:
+                existing.close_price = row["close_price"]
+            else:
+                session.add(HistoricalDailyClose(
+                    symbol=row["symbol"],
+                    close_date=row["close_date"],
+                    close_price=row["close_price"],
+                ))
+        session.commit()
+
+
+def get_recent_daily_closes(symbol: str, n: int = 20) -> list[dict]:
+    with _get_session() as session:
+        rows = (
+            session.query(HistoricalDailyClose)
+            .filter_by(symbol=symbol)
+            .order_by(HistoricalDailyClose.close_date.desc())
+            .limit(n)
+            .all()
+        )
+        return [
+            {
+                "symbol": r.symbol,
+                "close_date": r.close_date,
+                "close_price": r.close_price,
+            }
+            for r in rows
+        ]

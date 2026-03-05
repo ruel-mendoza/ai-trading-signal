@@ -40,6 +40,6 @@ Key architectural decisions include:
 - **FCSAPI v4:** Provides OHLC data and real-time quotes for forex, crypto, commodities, and stock indices. Crypto symbols (except BTC) require USDT pairing for history endpoint (e.g., ETH/USD → ETHUSDT, XRP/USD → XRPUSDT).
 - **WordPress REST API:** Utilized for signal publishing and updates.
 - **PostgreSQL:** Primary database for trading signals and user data.
-- **SQLite:** Used for OHLC candle data, strategy-specific signals, API usage statistics, and internal engine data.
+- **SQLite:** Used for OHLC candle data, strategy-specific signals, API usage statistics, and internal engine data. Key tables: `candles`, `signals`, `open_positions`, `historical_daily_closes`, `api_usage_log`, `cache_metadata`, `app_settings`, `admin_users`, `admin_sessions`, `partner_api_keys`, `scheduler_job_log`, `signal_metrics`, `signal_cms_posts`, `user_cms_configs`, `strategy_execution_logs`, `recovery_notifications`. The `historical_daily_closes` table stores per-symbol daily closing prices with a `UNIQUE(symbol, close_date)` constraint and a `(symbol, close_date DESC)` index for fast N-period lookback queries. The `open_positions` table includes `n_period_high_close` and `n_period_low_close` columns to persist breakout levels at entry time.
 - **`holidays` Python package:** For detecting US and Japanese public holidays.
 - **`tenacity` Python package:** For retry logic with exponential backoff in WordPress API calls.

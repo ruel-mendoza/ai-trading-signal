@@ -9,6 +9,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Index,
     ForeignKey,
+    desc,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -87,6 +88,8 @@ class OpenPosition(Base):
     atr_at_entry = Column(Float, nullable=False)
     highest_price_since_entry = Column(Float)
     lowest_price_since_entry = Column(Float)
+    n_period_high_close = Column(Float)
+    n_period_low_close = Column(Float)
     opened_at = Column(Text, server_default=func.now())
 
     __table_args__ = (
@@ -277,6 +280,20 @@ class StrategyExecutionLog(Base):
 
     __table_args__ = (
         Index("idx_strategy_exec_name", "strategy_name"),
+    )
+
+
+class HistoricalDailyClose(Base):
+    __tablename__ = "historical_daily_closes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(Text, nullable=False)
+    close_date = Column(Text, nullable=False)
+    close_price = Column(Float, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "close_date", name="uq_hist_close_symbol_date"),
+        Index("idx_hist_close_symbol_date_desc", "symbol", "close_date"),
     )
 
 
