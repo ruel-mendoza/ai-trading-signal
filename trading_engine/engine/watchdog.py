@@ -6,6 +6,7 @@ from trading_engine.fcsapi_client import FCSAPIClient
 from trading_engine.database import SessionFactory
 from trading_engine.models import RecoveryNotification
 from trading_engine.credit_control import is_api_blocked
+from trading_engine.utils.quota_manager import is_watchdog_disabled_by_quota
 
 logger = logging.getLogger("trading_engine.engine.watchdog")
 
@@ -26,6 +27,10 @@ def check_eurusd_proximity():
 
     if is_api_blocked():
         logger.debug("[WATCHDOG] API blocked by credit kill-switch, skipping price check")
+        return
+
+    if is_watchdog_disabled_by_quota():
+        logger.info("[WATCHDOG] Disabled by quota manager (>95% credits used), preserving credits for signals")
         return
 
     try:

@@ -5225,6 +5225,18 @@ def api_scheduler_job_logs(request: Request, limit: int = Query(50, ge=1, le=200
     return JSONResponse(content={"logs": logs, "count": len(logs)})
 
 
+@router.get("/api/quota-status")
+def api_quota_status(request: Request):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.utils.quota_manager import check_budget_health, get_quota_status
+    health = check_budget_health()
+    raw = get_quota_status()
+    health["last_updated"] = raw.get("last_updated")
+    return JSONResponse(content=health)
+
+
 @router.get("/api/market-pulse")
 def api_market_pulse(request: Request):
     user = _get_session_user(request)
