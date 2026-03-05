@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 
@@ -11,6 +12,7 @@ logger = logging.getLogger("trading_engine.engine.watchdog")
 TARGET_LOW = 1.15845
 PROXIMITY_PIPS = 0.00030
 SUPPRESSION_MINUTES = 30
+CHECK_INTERVAL_SECONDS = 60
 
 _last_alert_time: datetime | None = None
 
@@ -78,3 +80,13 @@ def check_eurusd_proximity():
             logger.error(f"[WATCHDOG] Failed to save alert: {e}")
         finally:
             session.close()
+
+
+async def start_price_watchdog():
+    logger.info(f"[WATCHDOG] EUR/USD proximity watchdog started (interval={CHECK_INTERVAL_SECONDS}s, target={TARGET_LOW}, threshold={PROXIMITY_PIPS / 0.0001:.0f} pips)")
+    while True:
+        try:
+            await asyncio.get_event_loop().run_in_executor(None, check_eurusd_proximity)
+        except Exception as e:
+            logger.error(f"[WATCHDOG] Unexpected error in price watchdog loop: {e}", exc_info=True)
+        await asyncio.sleep(CHECK_INTERVAL_SECONDS)
