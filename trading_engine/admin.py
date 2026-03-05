@@ -1291,7 +1291,7 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
         </div>
     </div>
     <div class="settings-section" style="margin-top:20px;">
-        <h3>Non-Forex Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG &amp; SHORT</span></h3>
+        <h3>Non-Forex Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG ONLY</span></h3>
         <div class="stats-grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
             {non_forex_cards}
         </div>
@@ -2332,8 +2332,8 @@ def _build_signal_analysis_html(data: dict) -> str:
     </div>
 
     <div class="settings-section" style="margin-bottom:20px;">
-        <h3>Trend Following &mdash; Non-Forex <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 4:00 PM ET | LONG &amp; SHORT | 3&times;ATR(100) trailing stop</span></h3>
-        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG) or Close &lt; 50-day lowest (SHORT), confirmed by SMA(50) vs SMA(100) crossover</p>
+        <h3>Trend Following &mdash; Non-Forex <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 4:59 PM ET | LONG ONLY | 3&times;ATR(100) trailing stop</span></h3>
+        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG), confirmed by SMA(50) &gt; SMA(100) crossover</p>
         <div style="overflow-x:auto;">
             <table class="data-table" data-testid="table-analysis-trend-nf">
                 <thead><tr>
@@ -2346,8 +2346,8 @@ def _build_signal_analysis_html(data: dict) -> str:
     </div>
 
     <div class="settings-section" style="margin-bottom:20px;">
-        <h3>Trend Following &mdash; Forex <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 5:00 PM ET | LONG &amp; SHORT | 3&times;ATR(100) trailing stop</span></h3>
-        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG) or Close &lt; 50-day lowest (SHORT), confirmed by SMA(50) vs SMA(100) crossover</p>
+        <h3>Trend Following &mdash; Forex <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 4:59 PM ET | LONG ONLY | 3&times;ATR(100) trailing stop</span></h3>
+        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG), confirmed by SMA(50) &gt; SMA(100) crossover</p>
         <div style="overflow-x:auto;">
             <table class="data-table" data-testid="table-analysis-trend-fx">
                 <thead><tr>
