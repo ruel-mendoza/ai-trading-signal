@@ -527,6 +527,54 @@ class FCSAPIClient:
         logger.info(f"[V3-LATEST] Got prices for {len(prices)}/{len(symbols)} symbols")
         return prices
 
+    def get_forex_latest_prices(self, symbols: list[str]) -> dict[str, float]:
+        api_symbols = []
+        symbol_map = {}
+        for sym in symbols:
+            api_sym = sym.replace("/", "")
+            api_symbols.append(api_sym)
+            symbol_map[api_sym.upper()] = sym
+
+        joined = ",".join(api_symbols)
+        logger.info(f"[FOREX-LATEST] Batch fetch: {joined} ({len(symbols)} symbols, 1 credit)")
+        params = {"symbol": joined}
+
+        try:
+            data = self._get("latest", params, base_url=BASE_URL_V4_FOREX)
+        except Exception as e:
+            logger.error(f"[FOREX-LATEST] Request failed: {e}")
+            return {}
+
+        if data.get("status") is False or not data.get("response"):
+            logger.warning(f"[FOREX-LATEST] No data returned: {data.get('msg', '')}")
+            return {}
+
+        prices = {}
+        for item in data["response"]:
+            ticker = item.get("ticker", "")
+            ticker_sym = ticker.split(":")[-1].upper() if ":" in ticker else ticker.upper()
+
+            api_sym = item.get("s", "").upper() or ticker_sym
+            original = symbol_map.get(api_sym) or symbol_map.get(ticker_sym)
+            if not original:
+                continue
+
+            active = item.get("active", {})
+            close_price = _safe_float(active.get("c"))
+            if close_price is None:
+                close_price = _safe_float(active.get("a"))
+            if close_price is None:
+                close_price = _safe_float(item.get("c"))
+            if close_price is None:
+                close_price = _safe_float(item.get("a"))
+            if close_price is not None:
+                if original not in prices:
+                    prices[original] = close_price
+                    logger.info(f"[FOREX-LATEST] {original} = {close_price} (via {ticker})")
+
+        logger.info(f"[FOREX-LATEST] Got prices for {len(prices)}/{len(symbols)} symbols")
+        return prices
+
     def get_stock_latest_prices(self, symbols: list[str], batch_size: int = 9) -> dict[str, dict]:
         all_results: dict[str, dict] = {}
 

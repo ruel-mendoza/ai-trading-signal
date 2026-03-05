@@ -31,6 +31,42 @@ def _get_et_now() -> datetime:
     return datetime.now(pytz.utc).astimezone(ET_ZONE)
 
 
+def _dual_endpoint_batch_fetch(cache: CacheLayer) -> dict:
+    from trading_engine.strategies.trend_forex import TARGET_SYMBOLS as FOREX_SYMBOLS
+    from trading_engine.strategies.trend_non_forex import TARGET_SYMBOLS as ETF_SYMBOLS
+
+    result = {"forex_prices": {}, "etf_prices": {}}
+    api = cache.api_client
+
+    logger.info(
+        f"[BATCH-FETCH] ====== Dual-Endpoint Batch Fetcher | "
+        f"Forex: {len(FOREX_SYMBOLS)} symbols | ETFs: {len(ETF_SYMBOLS)} symbols ======"
+    )
+
+    try:
+        result["forex_prices"] = api.get_forex_latest_prices(list(FOREX_SYMBOLS))
+        logger.info(
+            f"[BATCH-FETCH] forex/latest: {len(result['forex_prices'])}/{len(FOREX_SYMBOLS)} "
+            f"prices (1 credit)"
+        )
+    except Exception as e:
+        logger.error(f"[BATCH-FETCH] forex/latest failed: {e}")
+
+    try:
+        result["etf_prices"] = api.get_stock_latest_prices(list(ETF_SYMBOLS), batch_size=9)
+        logger.info(
+            f"[BATCH-FETCH] stock/latest: {len(result['etf_prices'])}/{len(ETF_SYMBOLS)} "
+            f"prices (~2-3 credits)"
+        )
+    except Exception as e:
+        logger.error(f"[BATCH-FETCH] stock/latest failed: {e}")
+
+    total = len(result["forex_prices"]) + len(result["etf_prices"])
+    total_expected = len(FOREX_SYMBOLS) + len(ETF_SYMBOLS)
+    logger.info(f"[BATCH-FETCH] Complete: {total}/{total_expected} total prices fetched")
+    return result
+
+
 def pre_close_trend_evaluate(strategy_engine, cache: CacheLayer):
     et_now = _get_et_now()
     is_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
@@ -40,8 +76,10 @@ def pre_close_trend_evaluate(strategy_engine, cache: CacheLayer):
         f"{et_now.strftime('%Y-%m-%d %H:%M:%S')} {tz_label} ======"
     )
 
-    _run_trend_non_forex(strategy_engine, cache, et_now, tz_label)
-    _run_trend_forex(strategy_engine, cache, et_now, tz_label)
+    batch_data = _dual_endpoint_batch_fetch(cache)
+
+    _run_trend_non_forex(strategy_engine, cache, et_now, tz_label, batch_data["etf_prices"])
+    _run_trend_forex(strategy_engine, cache, et_now, tz_label, batch_data["forex_prices"])
     _run_highest_lowest(strategy_engine, cache, et_now, tz_label)
 
 
@@ -61,7 +99,7 @@ def _retry_eval(func, asset, max_retries=2, delay=5):
     return None, str(last_err)
 
 
-def _run_trend_non_forex(strategy_engine, cache: CacheLayer, et_now, tz_label):
+def _run_trend_non_forex(strategy_engine, cache: CacheLayer, et_now, tz_label, etf_prices: dict = None):
     from trading_engine.strategies.trend_non_forex import (
         TARGET_SYMBOLS,
         TIMEFRAME,
@@ -75,10 +113,14 @@ def _run_trend_non_forex(strategy_engine, cache: CacheLayer, et_now, tz_label):
     error_count = 0
     error_details = []
 
-    try:
-        strategy_engine.trend_non_forex_strategy.prefetch_prices()
-    except Exception as e:
-        logger.error(f"[PRE-CLOSE] trend_non_forex | Batch price prefetch failed: {e}")
+    if etf_prices:
+        strategy_engine.trend_non_forex_strategy._batch_prices = etf_prices
+        logger.info(f"[PRE-CLOSE] trend_non_forex | Using {len(etf_prices)} pre-fetched ETF prices from batch fetcher")
+    else:
+        try:
+            strategy_engine.trend_non_forex_strategy.prefetch_prices()
+        except Exception as e:
+            logger.error(f"[PRE-CLOSE] trend_non_forex | Batch price prefetch failed: {e}")
 
     for asset in TARGET_SYMBOLS:
         assets_eval += 1
@@ -130,7 +172,7 @@ def _run_trend_non_forex(strategy_engine, cache: CacheLayer, et_now, tz_label):
     )
 
 
-def _run_trend_forex(strategy_engine, cache: CacheLayer, et_now, tz_label):
+def _run_trend_forex(strategy_engine, cache: CacheLayer, et_now, tz_label, forex_prices: dict = None):
     from trading_engine.strategies.trend_forex import (
         TARGET_SYMBOLS,
         TIMEFRAME,
@@ -138,6 +180,9 @@ def _run_trend_forex(strategy_engine, cache: CacheLayer, et_now, tz_label):
 
     log_id = create_job_log("pre_close_trend_forex", "trend_forex")
     logger.info(f"[PRE-CLOSE] --- Trend Forex (EUR/USD, USD/JPY) | {len(TARGET_SYMBOLS)} assets ---")
+
+    if forex_prices:
+        logger.info(f"[PRE-CLOSE] trend_forex | Using {len(forex_prices)} pre-fetched forex prices from batch fetcher")
 
     assets_eval = 0
     signals_gen = 0
@@ -154,7 +199,8 @@ def _run_trend_forex(strategy_engine, cache: CacheLayer, et_now, tz_label):
                 return None
             df = pd.DataFrame(candles)
             open_pos = get_open_position("trend_forex", a)
-            return strategy_engine.trend_forex_strategy.evaluate(a, TIMEFRAME, df, open_pos)
+            batch_price = forex_prices.get(a) if forex_prices else None
+            return strategy_engine.trend_forex_strategy.evaluate(a, TIMEFRAME, df, open_pos, batch_price=batch_price)
 
         result, err = _retry_eval(_eval, asset)
         if err:

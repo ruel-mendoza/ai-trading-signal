@@ -174,10 +174,15 @@ def _scheduled_trend_forex_evaluate():
 
     v3_prices = {}
     try:
-        v3_prices = cache.api_client.get_v3_latest_prices(list(TREND_FOREX_SYMBOLS))
-        logger.info(f"[SCHEDULER] trend_forex | v3 batch fetch: {len(v3_prices)}/{len(TREND_FOREX_SYMBOLS)} prices (1 credit)")
+        v3_prices = cache.api_client.get_forex_latest_prices(list(TREND_FOREX_SYMBOLS))
+        logger.info(f"[SCHEDULER] trend_forex | forex/latest batch fetch: {len(v3_prices)}/{len(TREND_FOREX_SYMBOLS)} prices (1 credit)")
     except Exception as e:
-        logger.warning(f"[SCHEDULER] trend_forex | v3 batch fetch failed: {e} — will fall back to v4 per-asset")
+        logger.warning(f"[SCHEDULER] trend_forex | forex/latest batch failed: {e} — trying v3 fallback")
+        try:
+            v3_prices = cache.api_client.get_v3_latest_prices(list(TREND_FOREX_SYMBOLS))
+            logger.info(f"[SCHEDULER] trend_forex | v3 fallback: {len(v3_prices)}/{len(TREND_FOREX_SYMBOLS)} prices")
+        except Exception as e2:
+            logger.warning(f"[SCHEDULER] trend_forex | v3 fallback also failed: {e2} — will fall back to v4 per-asset")
 
     assets_eval = 0
     signals_gen = 0
