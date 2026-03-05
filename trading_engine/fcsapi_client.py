@@ -70,10 +70,10 @@ COMMODITY_SYMBOL_MAP = {
 }
 
 ETF_SYMBOLS = {
-    "CORN", "SOYB", "WEAT", "BAL", "CANE", "WOOD",
+    "CORN", "SOYB", "WEAT", "CANE", "WOOD",
     "USO", "UNG", "UGA",
     "SGOL", "SIVR", "CPER", "PPLT", "PALL",
-    "DBB", "SLX", "JJT", "PERP",
+    "DBB", "SLX",
 }
 
 _NASDAQ_ETFS = {"WOOD"}

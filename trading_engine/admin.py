@@ -1061,10 +1061,10 @@ def _get_trend_following_data() -> dict:
 
     forex_symbols = ["EUR/USD", "USD/JPY"]
     non_forex_symbols = [
-        "CORN", "SOYB", "WEAT", "BAL", "CANE", "WOOD",
+        "CORN", "SOYB", "WEAT", "CANE", "WOOD",
         "USO", "UNG", "UGA",
         "SGOL", "SIVR", "CPER", "PPLT", "PALL",
-        "DBB", "SLX", "JJT", "PERP",
+        "DBB", "SLX",
     ]
     all_symbols = forex_symbols + non_forex_symbols
 
@@ -1944,10 +1944,10 @@ def _get_signal_analysis_data() -> dict:
         sig_by_strat.setdefault(sn, []).append(s)
 
     trend_nf_symbols = [
-        "CORN", "SOYB", "WEAT", "BAL", "CANE", "WOOD",
+        "CORN", "SOYB", "WEAT", "CANE", "WOOD",
         "USO", "UNG", "UGA",
         "SGOL", "SIVR", "CPER", "PPLT", "PALL",
-        "DBB", "SLX", "JJT", "PERP",
+        "DBB", "SLX",
     ]
     trend_fx_symbols = ["EUR/USD", "USD/JPY"]
     mtf_symbols = ["SPX", "NDX", "RUT", "XAU/USD", "XAG/USD", "OSX", "BTC/USD", "ETH/USD", "EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"]
@@ -4286,7 +4286,7 @@ def admin_dashboard(
                     </div>
                     <div>
                         <div class="ro-title" style="margin-bottom:6px;">Asset Coverage</div>
-                        <div style="font-size:0.85rem;color:#e2e8f0;" data-testid="text-asset-count">Tracking <strong style="color:#38bdf8;">2</strong> Forex Pairs | <strong style="color:#38bdf8;">18</strong> Commodity ETFs</div>
+                        <div style="font-size:0.85rem;color:#e2e8f0;" data-testid="text-asset-count">Tracking <strong style="color:#38bdf8;">2</strong> Forex Pairs | <strong style="color:#38bdf8;">15</strong> Commodity ETFs</div>
                     </div>
                 </div>
             </div>

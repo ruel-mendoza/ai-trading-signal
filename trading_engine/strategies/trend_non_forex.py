@@ -24,10 +24,10 @@ logger = logging.getLogger("trading_engine.strategy.trend_non_forex")
 
 STRATEGY_NAME = "trend_non_forex"
 TARGET_SYMBOLS = [
-    "CORN", "SOYB", "WEAT", "BAL", "CANE", "WOOD",
+    "CORN", "SOYB", "WEAT", "CANE", "WOOD",
     "USO", "UNG", "UGA",
     "SGOL", "SIVR", "CPER", "PPLT", "PALL",
-    "DBB", "SLX", "JJT", "PERP",
+    "DBB", "SLX",
 ]
 TIMEFRAME = "D1"
 MODE = "LONG_ONLY"
