@@ -1060,7 +1060,12 @@ def _get_trend_following_data() -> dict:
     ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
 
     forex_symbols = ["EUR/USD", "USD/JPY"]
-    non_forex_symbols = ["SPX", "NDX", "XAU/USD", "XAG/USD", "OSX", "BTC/USD", "ETH/USD"]
+    non_forex_symbols = [
+        "CORN", "SOYB", "WEAT", "BAL", "CANE", "WOOD",
+        "USO", "UNG", "UGA",
+        "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+        "DBB", "SLX", "JJT", "PERP",
+    ]
     all_symbols = forex_symbols + non_forex_symbols
 
     def _compute_symbol_data(symbol):
@@ -1264,7 +1269,7 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
         </div>
     </div>
     <div class="settings-section" style="margin-top:20px;">
-        <h3>Non-Forex Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG ONLY</span></h3>
+        <h3>Commodity ETF Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG ONLY | 18 ETFs</span></h3>
         <div class="stats-grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
             {non_forex_cards}
         </div>
@@ -1938,8 +1943,13 @@ def _get_signal_analysis_data() -> dict:
         sn = s.get("strategy_name", "")
         sig_by_strat.setdefault(sn, []).append(s)
 
-    trend_nf_symbols = ["SPX", "NDX", "XAU/USD", "XAG/USD", "OSX", "BTC/USD", "ETH/USD"]
-    trend_fx_symbols = ["EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD", "NZD/USD", "USD/CAD", "USD/CHF", "EUR/GBP"]
+    trend_nf_symbols = [
+        "CORN", "SOYB", "WEAT", "BAL", "CANE", "WOOD",
+        "USO", "UNG", "UGA",
+        "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+        "DBB", "SLX", "JJT", "PERP",
+    ]
+    trend_fx_symbols = ["EUR/USD", "USD/JPY"]
     mtf_symbols = ["SPX", "NDX", "RUT", "XAU/USD", "XAG/USD", "OSX", "BTC/USD", "ETH/USD", "EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"]
 
     def _dp(sym):
@@ -1950,9 +1960,9 @@ def _get_signal_analysis_data() -> dict:
         d1 = get_candles(sym, "D1", 300)
         dp = _dp(sym)
         row = {"symbol": sym, "candles": len(d1), "status": "insufficient", "close": None,
-               "hi50": None, "lo50": None, "sma50": None, "sma100": None, "atr100": None,
-               "pct_from_hi": None, "pct_from_lo": None, "sma_bias": None,
-               "long_met": False, "short_met": False, "dp": dp,
+               "hi50": None, "sma50": None, "sma100": None, "atr100": None,
+               "pct_from_hi": None, "sma_bias": None,
+               "long_met": False, "dp": dp,
                "position": pos_map.get(f"trend_non_forex|{sym}")}
         if len(d1) >= 101:
             closes = [c["close"] for c in d1]
@@ -1963,16 +1973,13 @@ def _get_signal_analysis_data() -> dict:
             atr = IndicatorEngine.atr(highs, lows, closes, 100)
             atr_val = atr[-1] if atr else None
             hi50 = max(closes[-51:-1])
-            lo50 = min(closes[-51:-1])
             cur = closes[-1]
             row.update({
-                "status": "ready", "close": cur, "hi50": hi50, "lo50": lo50,
+                "status": "ready", "close": cur, "hi50": hi50,
                 "sma50": sma50, "sma100": sma100, "atr100": atr_val,
                 "pct_from_hi": (cur - hi50) / hi50 * 100,
-                "pct_from_lo": (cur - lo50) / lo50 * 100,
                 "sma_bias": "BULL" if sma50 > sma100 else "BEAR",
                 "long_met": cur > hi50 and sma50 > sma100,
-                "short_met": cur < lo50 and sma50 < sma100,
             })
         trend_nf_rows.append(row)
 
@@ -1980,9 +1987,9 @@ def _get_signal_analysis_data() -> dict:
     for sym in trend_fx_symbols:
         d1 = get_candles(sym, "D1", 300)
         row = {"symbol": sym, "candles": len(d1), "status": "insufficient", "close": None,
-               "hi50": None, "lo50": None, "sma50": None, "sma100": None, "atr100": None,
-               "pct_from_hi": None, "pct_from_lo": None, "sma_bias": None,
-               "long_met": False, "short_met": False, "dp": 5,
+               "hi50": None, "sma50": None, "sma100": None, "atr100": None,
+               "pct_from_hi": None, "sma_bias": None,
+               "long_met": False, "dp": 5,
                "position": pos_map.get(f"trend_forex|{sym}")}
         if len(d1) >= 101:
             closes = [c["close"] for c in d1]
@@ -1993,16 +2000,13 @@ def _get_signal_analysis_data() -> dict:
             atr = IndicatorEngine.atr(highs, lows, closes, 100)
             atr_val = atr[-1] if atr else None
             hi50 = max(closes[-51:-1])
-            lo50 = min(closes[-51:-1])
             cur = closes[-1]
             row.update({
-                "status": "ready", "close": cur, "hi50": hi50, "lo50": lo50,
+                "status": "ready", "close": cur, "hi50": hi50,
                 "sma50": sma50, "sma100": sma100, "atr100": atr_val,
                 "pct_from_hi": (cur - hi50) / hi50 * 100,
-                "pct_from_lo": (cur - lo50) / lo50 * 100,
                 "sma_bias": "BULL" if sma50 > sma100 else "BEAR",
                 "long_met": cur > hi50 and sma50 > sma100,
-                "short_met": cur < lo50 and sma50 < sma100,
             })
         trend_fx_rows.append(row)
 
@@ -2172,7 +2176,7 @@ def _build_signal_analysis_html(data: dict) -> str:
         if r["status"] == "insufficient":
             trend_nf_html += f"""<tr data-testid="row-analysis-tnf-{r['symbol'].replace('/','-')}">
                 <td style="font-weight:600;">{r['symbol']}</td>
-                <td colspan="7" style="color:#64748b;">Insufficient data ({r['candles']} candles, need 101+)</td>
+                <td colspan="5" style="color:#64748b;">Insufficient data ({r['candles']} candles, need 101+)</td>
                 <td>{_pos_badge(r['position'])}</td></tr>"""
             continue
         sma_color = "#6ee7b7" if r["sma_bias"] == "BULL" else "#fca5a5"
@@ -2180,12 +2184,10 @@ def _build_signal_analysis_html(data: dict) -> str:
             <td style="font-weight:600;">{r['symbol']}</td>
             <td>{_fmt(r['close'], dp)}</td>
             <td>{_fmt(r['hi50'], dp)} <span style="color:#64748b;font-size:11px;">({r['pct_from_hi']:+.2f}%)</span></td>
-            <td>{_fmt(r['lo50'], dp)} <span style="color:#64748b;font-size:11px;">({r['pct_from_lo']:+.2f}%)</span></td>
             <td><span style="color:{sma_color};font-weight:600;">{r['sma_bias']}</span>
                 <span style="color:#64748b;font-size:11px;display:block;">{_fmt(r['sma50'], dp)} / {_fmt(r['sma100'], dp)}</span></td>
             <td>{_fmt(r['atr100'], dp)}</td>
             <td>{_cond_badge(r['long_met'], 'LONG')}</td>
-            <td>{_cond_badge(r['short_met'], 'SHORT')}</td>
             <td>{_pos_badge(r['position'])}</td></tr>"""
 
     trend_fx_html = ""
@@ -2193,7 +2195,7 @@ def _build_signal_analysis_html(data: dict) -> str:
         if r["status"] == "insufficient":
             trend_fx_html += f"""<tr data-testid="row-analysis-tfx-{r['symbol'].replace('/','-')}">
                 <td style="font-weight:600;">{r['symbol']}</td>
-                <td colspan="7" style="color:#f59e0b;">No data &mdash; awaiting first scheduler run (5:00 PM ET)</td>
+                <td colspan="5" style="color:#f59e0b;">No data &mdash; awaiting first scheduler run (4:59 PM ET)</td>
                 <td>{_pos_badge(r['position'])}</td></tr>"""
             continue
         sma_color = "#6ee7b7" if r["sma_bias"] == "BULL" else "#fca5a5"
@@ -2201,12 +2203,10 @@ def _build_signal_analysis_html(data: dict) -> str:
             <td style="font-weight:600;">{r['symbol']}</td>
             <td>{_fmt(r['close'], 5)}</td>
             <td>{_fmt(r['hi50'], 5)} <span style="color:#64748b;font-size:11px;">({r['pct_from_hi']:+.2f}%)</span></td>
-            <td>{_fmt(r['lo50'], 5)} <span style="color:#64748b;font-size:11px;">({r['pct_from_lo']:+.2f}%)</span></td>
             <td><span style="color:{sma_color};font-weight:600;">{r['sma_bias']}</span>
                 <span style="color:#64748b;font-size:11px;display:block;">{_fmt(r['sma50'], 5)} / {_fmt(r['sma100'], 5)}</span></td>
             <td>{_fmt(r['atr100'], 5)}</td>
             <td>{_cond_badge(r['long_met'], 'LONG')}</td>
-            <td>{_cond_badge(r['short_met'], 'SHORT')}</td>
             <td>{_pos_badge(r['position'])}</td></tr>"""
 
     h = data["hlc"]
@@ -2303,13 +2303,13 @@ def _build_signal_analysis_html(data: dict) -> str:
     </div>
 
     <div class="settings-section" style="margin-bottom:20px;">
-        <h3>Trend Following &mdash; Non-Forex <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 4:59 PM ET | LONG ONLY | 3&times;ATR(100) trailing stop</span></h3>
-        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG), confirmed by SMA(50) &gt; SMA(100) crossover</p>
+        <h3>Commodity ETF Command Center <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 4:59 PM ET | LONG ONLY | 3&times;ATR(100) trailing stop</span></h3>
+        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG), confirmed by SMA(50) &gt; SMA(100) crossover | 18 commodity ETFs</p>
         <div style="overflow-x:auto;">
             <table class="data-table" data-testid="table-analysis-trend-nf">
                 <thead><tr>
-                    <th>Asset</th><th>Close</th><th>50d High</th><th>50d Low</th>
-                    <th>SMA Bias</th><th>ATR(100)</th><th>Long</th><th>Short</th><th>Position</th>
+                    <th>Asset</th><th>Close</th><th>50d High</th>
+                    <th>SMA Bias</th><th>ATR(100)</th><th>Long</th><th>Position</th>
                 </tr></thead>
                 <tbody>{trend_nf_html}</tbody>
             </table>
@@ -2318,12 +2318,12 @@ def _build_signal_analysis_html(data: dict) -> str:
 
     <div class="settings-section" style="margin-bottom:20px;">
         <h3>Trend Following &mdash; Forex <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 4:59 PM ET | LONG ONLY | 3&times;ATR(100) trailing stop</span></h3>
-        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG), confirmed by SMA(50) &gt; SMA(100) crossover</p>
+        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG), confirmed by SMA(50) &gt; SMA(100) crossover | EUR/USD, USD/JPY</p>
         <div style="overflow-x:auto;">
             <table class="data-table" data-testid="table-analysis-trend-fx">
                 <thead><tr>
-                    <th>Asset</th><th>Close</th><th>50d High</th><th>50d Low</th>
-                    <th>SMA Bias</th><th>ATR(100)</th><th>Long</th><th>Short</th><th>Position</th>
+                    <th>Asset</th><th>Close</th><th>50d High</th>
+                    <th>SMA Bias</th><th>ATR(100)</th><th>Long</th><th>Position</th>
                 </tr></thead>
                 <tbody>{trend_fx_html}</tbody>
             </table>
@@ -2363,7 +2363,7 @@ def _build_signal_analysis_html(data: dict) -> str:
         <ul>
             <li><strong>Condition badges</strong> show real-time rule evaluation &mdash; green <span style="color:#22c55e;">MET</span> means the entry condition is satisfied right now</li>
             <li><strong>% from High/Low</strong> shows how far the current close is from the 50-day extremes &mdash; closer to 0% means a breakout is near</li>
-            <li><strong>SMA Bias</strong> confirms trend direction &mdash; BULL (SMA50 &gt; SMA100) required for LONG, BEAR for SHORT</li>
+            <li><strong>SMA Bias</strong> confirms trend direction &mdash; BULL (SMA50 &gt; SMA100) required for LONG entry</li>
             <li><strong>Position column</strong> shows if the strategy already has an open trade (idempotency prevents duplicate entries)</li>
             <li><strong>MTF arrows:</strong> <span style="color:#22c55e;">&#9650;</span> = bullish alignment, <span style="color:#ef4444;">&#9660;</span> = bearish alignment, <span style="color:#f59e0b;">&#9644;</span> = no alignment on that timeframe</li>
         </ul>

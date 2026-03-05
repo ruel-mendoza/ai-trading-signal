@@ -235,7 +235,7 @@ def _scheduled_trend_non_forex_evaluate():
     et = _get_et_context()
     log_id = create_job_log("trend_non_forex_daily", "trend_non_forex")
     logger.info(
-        f"[SCHEDULER] ====== Triggered trend_non_forex daily evaluation at 4:00 PM ET | "
+        f"[SCHEDULER] ====== Triggered trend_non_forex daily evaluation at 4:59 PM ET | "
         f"{et['time_str']} {et['label']} | DST={'active' if et['dst'] else 'inactive'} ======"
     )
 
