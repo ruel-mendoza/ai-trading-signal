@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as dtime
+from zoneinfo import ZoneInfo
 
 from trading_engine.fcsapi_client import FCSAPIClient
 from trading_engine.database import SessionFactory, get_setting, set_setting
@@ -16,6 +17,12 @@ TARGET_LOW = 1.15845
 PROXIMITY_PIPS = 0.00030
 SUPPRESSION_MINUTES = 30
 CHECK_INTERVAL_SECONDS = 60
+
+ET = ZoneInfo("America/New_York")
+ACTIVE_WINDOWS = [
+    (dtime(8, 45), dtime(10, 15)),
+    (dtime(16, 45), dtime(17, 5)),
+]
 
 ADMIN_WATCHDOG_DISABLED_KEY = "admin_watchdog_disabled"
 
@@ -103,17 +110,53 @@ def check_proximity():
                 session.close()
 
 
+def _is_in_active_window(now_et: datetime) -> bool:
+    t = now_et.time()
+    for start, end in ACTIVE_WINDOWS:
+        if start <= t <= end:
+            return True
+    return False
+
+
+def _seconds_until_next_window(now_et: datetime) -> float:
+    t = now_et.time()
+    today_windows = []
+    for start, end in ACTIVE_WINDOWS:
+        win_start = now_et.replace(hour=start.hour, minute=start.minute, second=0, microsecond=0)
+        today_windows.append(win_start)
+    tomorrow_first = (now_et + timedelta(days=1)).replace(
+        hour=ACTIVE_WINDOWS[0][0].hour,
+        minute=ACTIVE_WINDOWS[0][0].minute,
+        second=0, microsecond=0,
+    )
+    candidates = [w for w in today_windows if w > now_et]
+    candidates.append(tomorrow_first)
+    next_start = min(candidates)
+    return (next_start - now_et).total_seconds()
+
+
 async def start_price_watchdog():
     symbols_str = ",".join(WATCHLIST_SYMBOLS)
+    windows_str = ", ".join(f"{s.strftime('%H:%M')}-{e.strftime('%H:%M')}" for s, e in ACTIVE_WINDOWS)
     logger.info(
         f"[WATCHDOG] Multi-symbol proximity watchdog started "
         f"(symbols={symbols_str}, interval={CHECK_INTERVAL_SECONDS}s, "
         f"target={TARGET_LOW}, threshold={PROXIMITY_PIPS / 0.0001:.0f} pips, "
-        f"v3 batch=1 credit per check)"
+        f"v3 batch=1 credit per check, active_windows_ET={windows_str})"
     )
     while True:
-        try:
-            await asyncio.get_event_loop().run_in_executor(None, check_proximity)
-        except Exception as e:
-            logger.error(f"[WATCHDOG] Unexpected error in price watchdog loop: {e}", exc_info=True)
-        await asyncio.sleep(CHECK_INTERVAL_SECONDS)
+        now_et = datetime.now(ET)
+        if _is_in_active_window(now_et):
+            try:
+                await asyncio.get_event_loop().run_in_executor(None, check_proximity)
+            except Exception as e:
+                logger.error(f"[WATCHDOG] Unexpected error in price watchdog loop: {e}", exc_info=True)
+            await asyncio.sleep(CHECK_INTERVAL_SECONDS)
+        else:
+            sleep_secs = _seconds_until_next_window(now_et)
+            next_wake = now_et + timedelta(seconds=sleep_secs)
+            logger.info(
+                f"[WATCHDOG] Outside active window ({now_et.strftime('%H:%M ET')}). "
+                f"Deep sleeping {sleep_secs:.0f}s until {next_wake.strftime('%H:%M ET')}."
+            )
+            await asyncio.sleep(sleep_secs)
