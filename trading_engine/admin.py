@@ -1319,14 +1319,12 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
         </div>
     </div>
     <div class="timezone-note" style="margin-top:16px;">
-        <strong>Strategy Rules (Trend Following):</strong>
+        <strong>Strategy Rules (Trend Following &mdash; LONG ONLY):</strong>
         <ul>
             <li><strong>Forex Entry (LONG):</strong> Close &ge; highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
-            <li><strong>Forex Entry (SHORT):</strong> Close &le; lowest close of last 50 days AND SMA(50) &lt; SMA(100)</li>
             <li><strong>Non-Forex Entry (LONG):</strong> Close &ge; highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
-            <li><strong>Non-Forex Entry (SHORT):</strong> Close &le; lowest close of last 50 days AND SMA(50) &lt; SMA(100)</li>
-            <li><strong>Trailing Stop (LONG):</strong> Highest close &minus; (Fixed ATR at entry &times; 3)</li>
-            <li><strong>Trailing Stop (SHORT):</strong> Lowest close + (Fixed ATR at entry &times; 3)</li>
+            <li><strong>Trailing Stop:</strong> Highest close since entry &minus; (Fixed ATR at entry &times; 3)</li>
+            <li><strong>Exit Rule:</strong> Closing-rule gate &mdash; only the 4:59 PM ET close is evaluated, intraday spikes are ignored</li>
             <li><strong>Timeframe:</strong> Daily (D1) candles</li>
             <li><strong>ATR:</strong> Fixed at entry value for the duration of the trade</li>
         </ul>
