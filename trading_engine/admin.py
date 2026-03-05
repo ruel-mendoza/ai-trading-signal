@@ -2011,26 +2011,58 @@ def _get_signal_analysis_data() -> dict:
         trend_fx_rows.append(row)
 
     hlc_row = {"symbol": "EUR/USD", "status": "insufficient", "close": None,
-               "hi50": None, "lo50": None, "h1_atr": None, "rev_threshold": None,
+               "tokyo_high": None, "tokyo_low": None, "h1_atr": None,
                "prev_high": None, "prev_low": None,
-               "long_met": False, "short_met": False, "reversal_met": False,
+               "swept_below": False, "swept_above": False,
+               "recovered_above_low": False, "recovered_below_high": False,
+               "bullish_candle": False, "bearish_candle": False,
+               "long_met": False, "short_met": False,
                "window_active": et_hour in (9, 10),
                "holiday_blocked": is_holiday,
-               "position": pos_map.get("highest_lowest_fx|EUR/USD")}
+               "position": pos_map.get("highest_lowest_fx|EUR/USD"),
+               "tokyo_candle_count": 0, "ny_candle_count": 0}
     h1 = get_candles("EUR/USD", "1H", 300)
     d1 = get_candles("EUR/USD", "D1", 200)
-    if len(h1) >= 100 and len(d1) >= 50:
+    if len(h1) >= 100 and len(d1) >= 5:
         h1c = [c["close"] for c in h1]
         h1h = [c["high"] for c in h1]
         h1l = [c["low"] for c in h1]
-        d1c = [c["close"] for c in d1]
-        hi50 = max(d1c[-50:])
-        lo50 = min(d1c[-50:])
         atr = IndicatorEngine.atr(h1h, h1l, h1c, 100)
         atr_val = atr[-1] if atr else None
+
+        from zoneinfo import ZoneInfo
+        tokyo_tz = ZoneInfo("Asia/Tokyo")
+        et_tz = ZoneInfo("America/New_York")
+        today_et = et_now.date()
+
+        tokyo_start_local = datetime(today_et.year, today_et.month, today_et.day, 8, 0, tzinfo=tokyo_tz)
+        ny_start_local = datetime(today_et.year, today_et.month, today_et.day, 8, 0, tzinfo=et_tz)
+        from datetime import timezone as dt_tz
+        tokyo_start_utc = tokyo_start_local.astimezone(dt_tz.utc)
+        ny_start_utc = ny_start_local.astimezone(dt_tz.utc)
+
+        tokyo_candles = []
+        ny_candles = []
+        for c in h1:
+            ts = c.get("timestamp", "")
+            try:
+                if isinstance(ts, datetime):
+                    c_utc = ts.replace(tzinfo=dt_tz.utc) if ts.tzinfo is None else ts.astimezone(dt_tz.utc)
+                else:
+                    c_utc = datetime.strptime(str(ts)[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=dt_tz.utc)
+            except (ValueError, TypeError):
+                try:
+                    c_utc = datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=dt_tz.utc)
+                except (ValueError, TypeError):
+                    continue
+            if tokyo_start_utc <= c_utc < ny_start_utc:
+                tokyo_candles.append(c)
+            elif c_utc >= ny_start_utc:
+                ny_candles.append(c)
+
         cur = h1c[-1]
-        rev = lo50 * 0.998
-        today = et_now.date()
+        cur_open = h1[-1].get("open", cur)
+
         prev_high = None
         prev_low = None
         for candle in reversed(d1):
@@ -2042,18 +2074,37 @@ def _get_signal_analysis_data() -> dict:
                     c_date = datetime.strptime(str(ts)[:10], "%Y-%m-%d").date()
             except (ValueError, TypeError):
                 continue
-            if c_date >= today or c_date.weekday() >= 5 or _is_holiday(c_date):
-                continue
-            prev_high = candle.get("high")
-            prev_low = candle.get("low")
-            break
+            if c_date < today_et and c_date.weekday() < 5:
+                prev_high = candle.get("high")
+                prev_low = candle.get("low")
+                break
+
+        tokyo_high = max((c["close"] for c in tokyo_candles), default=None) if tokyo_candles else None
+        tokyo_low = min((c["close"] for c in tokyo_candles), default=None) if tokyo_candles else None
+
+        swept_below = False
+        swept_above = False
+        if ny_candles and tokyo_low is not None:
+            swept_below = min(c["low"] for c in ny_candles) < tokyo_low
+        if ny_candles and tokyo_high is not None:
+            swept_above = max(c["high"] for c in ny_candles) > tokyo_high
+
+        recovered_above_low = tokyo_low is not None and cur > tokyo_low
+        recovered_below_high = tokyo_high is not None and cur < tokyo_high
+        bullish_candle = cur > cur_open
+        bearish_candle = cur < cur_open
+
+        long_met = swept_below and recovered_above_low and bullish_candle and (prev_low is not None and cur > prev_low)
+        short_met = swept_above and recovered_below_high and bearish_candle and (prev_high is not None and cur < prev_high)
+
         hlc_row.update({
-            "status": "ready", "close": cur, "hi50": hi50, "lo50": lo50,
-            "h1_atr": atr_val, "rev_threshold": rev,
-            "prev_high": prev_high, "prev_low": prev_low,
-            "long_met": cur >= hi50,
-            "short_met": cur <= lo50 and cur <= rev,
-            "reversal_met": cur <= lo50 and cur > rev,
+            "status": "ready", "close": cur, "tokyo_high": tokyo_high, "tokyo_low": tokyo_low,
+            "h1_atr": atr_val, "prev_high": prev_high, "prev_low": prev_low,
+            "swept_below": swept_below, "swept_above": swept_above,
+            "recovered_above_low": recovered_above_low, "recovered_below_high": recovered_below_high,
+            "bullish_candle": bullish_candle, "bearish_candle": bearish_candle,
+            "long_met": long_met, "short_met": short_met,
+            "tokyo_candle_count": len(tokyo_candles), "ny_candle_count": len(ny_candles),
         })
 
     spx_row = {"symbol": "SPX", "status": "insufficient", "close": None, "rsi20": None,
