@@ -1063,7 +1063,7 @@ def _get_trend_following_data() -> dict:
     non_forex_symbols = ["SPX", "NDX", "XAU/USD", "XAG/USD", "OSX", "BTC/USD", "ETH/USD"]
     all_symbols = forex_symbols + non_forex_symbols
 
-    def _compute_symbol_data(symbol, long_only=False):
+    def _compute_symbol_data(symbol):
         sym_info = {
             "symbol": symbol,
             "current_close": None,
@@ -1071,16 +1071,11 @@ def _get_trend_following_data() -> dict:
             "sma100": None,
             "atr100": None,
             "highest_50d": None,
-            "lowest_50d": None,
             "sma_status": "N/A",
             "candle_count": 0,
             "cond_price_above_50d_high": False,
-            "cond_price_below_50d_low": False,
             "cond_sma50_above_sma100": False,
-            "cond_sma50_below_sma100": False,
             "long_ready": False,
-            "short_ready": False,
-            "long_only": long_only,
         }
 
         candles = get_candles(symbol, "D1", 300)
@@ -1103,14 +1098,12 @@ def _get_trend_following_data() -> dict:
             if len(closes) > 50:
                 prior_closes = closes[-51:-1]
                 sym_info["highest_50d"] = max(prior_closes)
-                sym_info["lowest_50d"] = min(prior_closes)
 
             if sym_info["sma50"] is not None and sym_info["sma100"] is not None:
                 sym_info["cond_sma50_above_sma100"] = sym_info["sma50"] > sym_info["sma100"]
-                sym_info["cond_sma50_below_sma100"] = sym_info["sma50"] < sym_info["sma100"]
                 if sym_info["cond_sma50_above_sma100"]:
                     sym_info["sma_status"] = "Bullish"
-                elif sym_info["cond_sma50_below_sma100"]:
+                elif sym_info["sma50"] < sym_info["sma100"]:
                     sym_info["sma_status"] = "Bearish"
                 else:
                     sym_info["sma_status"] = "Neutral"
@@ -1118,17 +1111,12 @@ def _get_trend_following_data() -> dict:
             if sym_info["highest_50d"] is not None and sym_info["current_close"] is not None:
                 sym_info["cond_price_above_50d_high"] = sym_info["current_close"] >= sym_info["highest_50d"]
 
-            if sym_info["lowest_50d"] is not None and sym_info["current_close"] is not None:
-                sym_info["cond_price_below_50d_low"] = sym_info["current_close"] <= sym_info["lowest_50d"]
-
             sym_info["long_ready"] = sym_info["cond_price_above_50d_high"] and sym_info["cond_sma50_above_sma100"]
-            if not long_only:
-                sym_info["short_ready"] = sym_info["cond_price_below_50d_low"] and sym_info["cond_sma50_below_sma100"]
 
         return sym_info
 
-    forex_data = [_compute_symbol_data(s, long_only=True) for s in forex_symbols]
-    non_forex_data = [_compute_symbol_data(s, long_only=True) for s in non_forex_symbols]
+    forex_data = [_compute_symbol_data(s) for s in forex_symbols]
+    non_forex_data = [_compute_symbol_data(s) for s in non_forex_symbols]
 
     def _gather_trades(strategy_name):
         active_trades = get_active_signals(strategy_name=strategy_name)
@@ -1189,9 +1177,6 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
                 data_status = f'<div style="color:#fbbf24;font-size:0.8rem;margin-top:6px;">D1: {sym["candle_count"]}/101 candles loaded</div>'
             else:
                 sma_color = "#6ee7b7" if sym["sma_status"] == "Bullish" else ("#fca5a5" if sym["sma_status"] == "Bearish" else "#94a3b8")
-                lowest_row = ""
-                if not sym["long_only"]:
-                    lowest_row = f'<div>50d Low: {_fmt(sym["lowest_50d"])}</div>'
 
                 data_status = f"""
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.8rem;">
@@ -1201,28 +1186,16 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
                     <div>SMA(100): {_fmt(sym["sma100"])}</div>
                     <div>ATR(100): {_fmt(sym["atr100"], 6)}</div>
                     <div>Trend: <span style="color:{sma_color};">{sym["sma_status"]}</span></div>
-                    {lowest_row}
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.8rem;border-top:1px solid #334155;padding-top:8px;">
                     <div>Price &ge; 50d High: {_cond(sym["cond_price_above_50d_high"])}</div>
                     <div>SMA50 &gt; SMA100: {_cond(sym["cond_sma50_above_sma100"])}</div>
-                    <div><strong>LONG Ready:</strong> {_cond(sym["long_ready"])}</div>"""
-
-                if not sym["long_only"]:
-                    data_status += f"""
-                    <div>Price &le; 50d Low: {_cond(sym["cond_price_below_50d_low"])}</div>
-                    <div>SMA50 &lt; SMA100: {_cond(sym["cond_sma50_below_sma100"])}</div>
-                    <div><strong>SHORT Ready:</strong> {_cond(sym["short_ready"])}</div>"""
-
-                data_status += "</div>"
+                    <div><strong>LONG Ready:</strong> {_cond(sym["long_ready"])}</div>
+                </div>"""
 
             badges = ""
             if sym.get("long_ready"):
                 badges += ' <span class="badge status-active">LONG</span>'
-            if sym.get("short_ready"):
-                badges += ' <span class="badge" style="background:#7f1d1d;color:#fca5a5;">SHORT</span>'
-            if sym["long_only"] and sym["candle_count"] >= 101:
-                badges += ' <span style="font-size:0.65rem;color:#94a3b8;margin-left:4px;">(long only)</span>'
 
             html += f"""
             <div class="stat-card" style="min-width:250px;">
