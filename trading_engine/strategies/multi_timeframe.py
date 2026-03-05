@@ -10,7 +10,6 @@ from trading_engine.cache_layer import CacheLayer
 from trading_engine.database import (
     has_open_signal,
     has_open_position,
-    update_position_tracking,
 )
 
 logger = logging.getLogger("trading_engine.strategy.multi_timeframe")
@@ -44,7 +43,6 @@ MIN_H1_BARS = 20
 
 SL_ATR_MULT = 0.5
 TP_ATR_MULT = 3.0
-TRAILING_STOP_ATR_MULT = 2.0
 STRUCTURAL_LOOKBACK_H1 = 24
 STRUCTURAL_PIP_BUFFER = 0.0002
 
@@ -76,6 +74,7 @@ class MTFIndicators:
     h4_close_current: Optional[float] = None
     h4_close_prev: Optional[float] = None
     h4_lows_12: Optional[list] = None
+    h4_highs_12: Optional[list] = None
 
     h1_ema20: Optional[float] = None
     h1_ema20_prev: Optional[float] = None
@@ -257,7 +256,8 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             h4_atr100=_safe_last(h4_atr100_vals),
             h4_close_current=_safe_last(h4.closes),
             h4_close_prev=_safe_last(h4.closes, offset=1),
-            h4_lows_12=h4.lows[-12:] if len(h4.lows) >= 12 else h4.lows[:],
+            h4_lows_12=h4.lows[-13:-1] if len(h4.lows) >= 13 else h4.lows[:-1] if len(h4.lows) > 1 else [],
+            h4_highs_12=h4.highs[-13:-1] if len(h4.highs) >= 13 else h4.highs[:-1] if len(h4.highs) > 1 else [],
             h1_ema20=_safe_last(h1_ema20_vals),
             h1_ema20_prev=_safe_last(h1_ema20_vals, offset=1),
             h1_ema50=_safe_last(h1_ema50_vals),
@@ -329,11 +329,13 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             breaches = [ind.h4_ema50 - lo for lo in h4_lows if lo < ind.h4_ema50]
             max_breach = max(breaches) if breaches else 0.0
             within_atr = max_breach <= (1.0 * ind.h4_atr100)
-        cond3 = dip_found and within_atr
+        recovered = ind.h4_close_current is not None and ind.h4_close_current > ind.h4_ema50
+        cond3 = dip_found and within_atr and recovered
         logger.info(
-            f"[MTF-EMA] {asset} | LONG Cond 3 — Recent Pullback (48h / 12 H4 candles): "
+            f"[MTF-EMA] {asset} | LONG Cond 3 — Recent Pullback (prior 12 H4 candles, not live): "
             f"dip_below_H4_EMA50={dip_found} | max_breach={max_breach:.5f} | "
             f"within 1.0x ATR100 ({ind.h4_atr100:.5f}): {within_atr} | "
+            f"recovered (H4 close {ind.h4_close_current} > EMA50 {ind.h4_ema50}): {recovered} | "
             f"combined: {cond3}"
         )
 
@@ -379,20 +381,21 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             f"combined: {cond2}"
         )
 
-        h4_lows = ind.h4_lows_12 or []
-        h4_highs_12 = []
-        dip_found = any(lo > ind.h4_ema50 for lo in h4_lows) if h4_lows else False
+        h4_highs = ind.h4_highs_12 or []
+        rally_found = any(hi > ind.h4_ema50 for hi in h4_highs) if h4_highs else False
         max_breach = 0.0
         within_atr = True
-        if dip_found:
-            breaches = [lo - ind.h4_ema50 for lo in h4_lows if lo > ind.h4_ema50]
+        if rally_found:
+            breaches = [hi - ind.h4_ema50 for hi in h4_highs if hi > ind.h4_ema50]
             max_breach = max(breaches) if breaches else 0.0
             within_atr = max_breach <= (1.0 * ind.h4_atr100)
-        cond3 = dip_found and within_atr
+        recovered = ind.h4_close_current is not None and ind.h4_close_current < ind.h4_ema50
+        cond3 = rally_found and within_atr and recovered
         logger.info(
-            f"[MTF-EMA] {asset} | SHORT Cond 3 — Recent Pullback (48h / 12 H4 candles): "
-            f"rally_above_H4_EMA50={dip_found} | max_breach={max_breach:.5f} | "
+            f"[MTF-EMA] {asset} | SHORT Cond 3 — Recent Pullback (prior 12 H4 candles, not live): "
+            f"rally_above_H4_EMA50={rally_found} | max_breach={max_breach:.5f} | "
             f"within 1.0x ATR100 ({ind.h4_atr100:.5f}): {within_atr} | "
+            f"recovered (H4 close {ind.h4_close_current} < EMA50 {ind.h4_ema50}): {recovered} | "
             f"combined: {cond3}"
         )
 
@@ -682,7 +685,6 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
     ) -> Optional[SignalResult]:
         pos_id = pos.get("id")
         direction = pos.get("direction")
-        atr_at_entry = pos.get("atr_at_entry")
 
         self._log_exit_diagnostics(asset, pos_id, direction or "UNKNOWN", ind)
 
@@ -690,87 +692,10 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
         if h4_exit:
             return h4_exit
 
-        if not atr_at_entry:
-            logger.warning(
-                f"[MTF-EMA] {asset} | Position #{pos_id} has no atr_at_entry — "
-                f"cannot compute trailing stop"
-            )
-            return None
-
-        if direction == "BUY":
-            stored_highest = pos.get("highest_price_since_entry") or pos.get("entry_price", current_price)
-            new_highest = max(stored_highest, current_price)
-            if new_highest > stored_highest:
-                update_position_tracking(pos_id, highest_price=new_highest)
-                logger.info(
-                    f"[MTF-EMA] {asset} | LONG #{pos_id} | Peak updated: "
-                    f"{stored_highest:.5f} → {new_highest:.5f}"
-                )
-
-            trailing_stop = new_highest - (TRAILING_STOP_ATR_MULT * atr_at_entry)
-            logger.info(
-                f"[MTF-EMA] {asset} | LONG #{pos_id} | "
-                f"trailing_stop={trailing_stop:.5f} (peak {new_highest:.5f} - "
-                f"{TRAILING_STOP_ATR_MULT}×ATR {atr_at_entry:.5f}) | "
-                f"price={current_price:.5f}"
-            )
-
-            if current_price < trailing_stop:
-                logger.info(
-                    f"[MTF-EMA] {asset} | EXIT LONG #{pos_id} — price {current_price:.5f} "
-                    f"< trailing stop {trailing_stop:.5f}"
-                )
-                return SignalResult(
-                    action=Action.EXIT,
-                    direction=Direction.LONG,
-                    price=current_price,
-                    metadata={
-                        "exit_reason": (
-                            f"Trailing stop hit: price {current_price:.5f} < "
-                            f"stop {trailing_stop:.5f} "
-                            f"(peak {new_highest:.5f} - {TRAILING_STOP_ATR_MULT}×ATR)"
-                        ),
-                        "exit_type": "trailing_stop",
-                    },
-                )
-
-        elif direction == "SELL":
-            stored_lowest = pos.get("lowest_price_since_entry") or pos.get("entry_price", current_price)
-            new_lowest = min(stored_lowest, current_price)
-            if new_lowest < stored_lowest:
-                update_position_tracking(pos_id, lowest_price=new_lowest)
-                logger.info(
-                    f"[MTF-EMA] {asset} | SHORT #{pos_id} | Trough updated: "
-                    f"{stored_lowest:.5f} → {new_lowest:.5f}"
-                )
-
-            trailing_stop = new_lowest + (TRAILING_STOP_ATR_MULT * atr_at_entry)
-            logger.info(
-                f"[MTF-EMA] {asset} | SHORT #{pos_id} | "
-                f"trailing_stop={trailing_stop:.5f} (trough {new_lowest:.5f} + "
-                f"{TRAILING_STOP_ATR_MULT}×ATR {atr_at_entry:.5f}) | "
-                f"price={current_price:.5f}"
-            )
-
-            if current_price > trailing_stop:
-                logger.info(
-                    f"[MTF-EMA] {asset} | EXIT SHORT #{pos_id} — price {current_price:.5f} "
-                    f"> trailing stop {trailing_stop:.5f}"
-                )
-                return SignalResult(
-                    action=Action.EXIT,
-                    direction=Direction.SHORT,
-                    price=current_price,
-                    metadata={
-                        "exit_reason": (
-                            f"Trailing stop hit: price {current_price:.5f} > "
-                            f"stop {trailing_stop:.5f} "
-                            f"(trough {new_lowest:.5f} + {TRAILING_STOP_ATR_MULT}×ATR)"
-                        ),
-                        "exit_type": "trailing_stop",
-                    },
-                )
-
+        logger.info(
+            f"[MTF-EMA] {asset} | Position #{pos_id} ({direction}) | "
+            f"H4 EMA50 exit not triggered — holding"
+        )
         return None
 
     def evaluate(
