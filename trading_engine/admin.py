@@ -2265,20 +2265,34 @@ def _build_signal_analysis_html(data: dict) -> str:
     hlc_holiday_badge = ' <span class="badge status-expired">HOLIDAY</span>' if h["holiday_blocked"] else ""
     hlc_detail_html = ""
     if h["status"] == "ready":
+        sweep_below_badge = '<span class="badge buy" style="font-size:11px;">SWEPT</span>' if h.get('swept_below') else '<span class="badge" style="font-size:11px;background:rgba(100,116,139,0.15);color:#94a3b8;">NO SWEEP</span>'
+        sweep_above_badge = '<span class="badge sell" style="font-size:11px;">SWEPT</span>' if h.get('swept_above') else '<span class="badge" style="font-size:11px;background:rgba(100,116,139,0.15);color:#94a3b8;">NO SWEEP</span>'
         hlc_detail_html = f"""
         <div class="stats-grid" style="margin-top:12px;">
             <div class="stat-card"><div class="stat-label">Current Price</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h['close'], 5)}</div></div>
-            <div class="stat-card"><div class="stat-label">50-Day Highest</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h['hi50'], 5)}</div></div>
-            <div class="stat-card"><div class="stat-label">50-Day Lowest</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h['lo50'], 5)}</div></div>
+            <div class="stat-card"><div class="stat-label">Tokyo High (Close)</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h.get('tokyo_high'), 5)}</div><div style="margin-top:4px;">{sweep_above_badge}</div></div>
+            <div class="stat-card"><div class="stat-label">Tokyo Low (Close)</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h.get('tokyo_low'), 5)}</div><div style="margin-top:4px;">{sweep_below_badge}</div></div>
             <div class="stat-card"><div class="stat-label">H1 ATR(100)</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h['h1_atr'], 6)}</div></div>
-            <div class="stat-card"><div class="stat-label">Reversal Threshold</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h['rev_threshold'], 5)}</div></div>
-            <div class="stat-card"><div class="stat-label">Prev Day High / Low</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h['prev_high'], 5)} / {_fmt(h['prev_low'], 5)}</div></div>
+            <div class="stat-card"><div class="stat-label">Prev Day High / Low</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h.get('prev_high'), 5)} / {_fmt(h.get('prev_low'), 5)}</div></div>
+            <div class="stat-card"><div class="stat-label">Session Candles</div><div class="stat-value" style="font-size:1.1rem;">Tokyo: {h.get('tokyo_candle_count', 0)} &middot; NY: {h.get('ny_candle_count', 0)}</div></div>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
-            {_cond_badge(h['long_met'], 'LONG (price &ge; highest)')}
-            {_cond_badge(h['short_met'], 'SHORT (price &lt; threshold)')}
-            {_cond_badge(h['reversal_met'], 'REVERSAL LONG (near lowest)')}
-            {_cond_badge(h['window_active'] and not h['holiday_blocked'], 'TIME WINDOW', blocked=h['holiday_blocked'] or not h['window_active'])}
+        <div style="font-weight:500;color:#94a3b8;font-size:13px;margin-top:16px;margin-bottom:6px;">Sweep &amp; Recover Conditions</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            {_cond_badge(h.get('swept_below', False), 'Swept Below Tokyo Low')}
+            {_cond_badge(h.get('recovered_above_low', False), 'Recovered Above Low')}
+            {_cond_badge(h.get('bullish_candle', False), 'Bullish H1 Candle')}
+            {_cond_badge(h.get('prev_low') is not None and h['close'] is not None and h['close'] > (h.get('prev_low') or 0), 'Above Prev Daily Low')}
+            {_cond_badge(h.get('long_met', False), 'ALL LONG MET')}
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+            {_cond_badge(h.get('swept_above', False), 'Swept Above Tokyo High')}
+            {_cond_badge(h.get('recovered_below_high', False), 'Recovered Below High')}
+            {_cond_badge(h.get('bearish_candle', False), 'Bearish H1 Candle')}
+            {_cond_badge(h.get('prev_high') is not None and h['close'] is not None and h['close'] < (h.get('prev_high') or float('inf')), 'Below Prev Daily High')}
+            {_cond_badge(h.get('short_met', False), 'ALL SHORT MET')}
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+            {_cond_badge(h['window_active'] and not h['holiday_blocked'], 'TIME WINDOW (9:00/10:00 AM ET)', blocked=h['holiday_blocked'] or not h['window_active'])}
         </div>
         <div style="margin-top:8px;">{_pos_badge(h['position'])}</div>"""
     else:
@@ -2382,8 +2396,8 @@ def _build_signal_analysis_html(data: dict) -> str:
     </div>
 
     <div class="settings-section" style="margin-bottom:20px;">
-        <h3>Highest/Lowest Close FX <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">EUR/USD | Scheduler: 9:00 &amp; 10:00 AM ET | 0.25&times;ATR trail, 6&times;ATR TP</span></h3>
-        <p style="color:#94a3b8;font-size:13px;margin:4px 0 8px;">Entry: Price &ge; 50d highest (LONG), Price &le; 50d lowest (SHORT/REVERSAL), filtered by prev-day range &amp; holidays</p>
+        <h3>Tokyo Sweep &amp; Recover FX <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">EUR/USD | Scheduler: 9:00 &amp; 10:00 AM ET | 2&times;ATR(100) SL, 6h time exit</span></h3>
+        <p style="color:#94a3b8;font-size:13px;margin:4px 0 8px;">Entry: Sweep below Tokyo Low + recover (LONG) or sweep above Tokyo High + recover (SHORT), filtered by H1 candle direction, prev-day range &amp; holidays</p>
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
             {hlc_window_badge}{hlc_holiday_badge}
         </div>
@@ -2413,7 +2427,7 @@ def _build_signal_analysis_html(data: dict) -> str:
         <strong>Reading This Dashboard:</strong>
         <ul>
             <li><strong>Condition badges</strong> show real-time rule evaluation &mdash; green <span style="color:#22c55e;">MET</span> means the entry condition is satisfied right now</li>
-            <li><strong>% from High/Low</strong> shows how far the current close is from the 50-day extremes &mdash; closer to 0% means a breakout is near</li>
+            <li><strong>Tokyo High/Low</strong> shows the highest/lowest H1 close between 8 AM Tokyo and 8 AM New York &mdash; sweep &amp; recover entries trigger when price sweeps past then recovers</li>
             <li><strong>SMA Bias</strong> confirms trend direction &mdash; BULL (SMA50 &gt; SMA100) required for LONG entry</li>
             <li><strong>Position column</strong> shows if the strategy already has an open trade (idempotency prevents duplicate entries)</li>
             <li><strong>MTF arrows:</strong> <span style="color:#22c55e;">&#9650;</span> = bullish alignment, <span style="color:#ef4444;">&#9660;</span> = bearish alignment, <span style="color:#f59e0b;">&#9644;</span> = no alignment on that timeframe</li>
