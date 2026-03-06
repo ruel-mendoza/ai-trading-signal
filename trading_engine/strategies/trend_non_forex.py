@@ -39,7 +39,7 @@ TRAILING_STOP_ATR_MULT = 3.0
 MIN_BARS_REQUIRED = ATR_PERIOD + 1
 
 EVAL_HOUR = 16
-EVAL_MINUTE = 59
+EVAL_MINUTE = 1
 EVAL_WINDOW_MINUTES = 5
 
 ET_ZONE = pytz.timezone("America/New_York")
@@ -75,7 +75,7 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
 
         logger.info(
             f"[TREND-NONFX] Timing check | now_ET={now_et.strftime('%H:%M')} {tz_abbr} | "
-            f"eval_window=16:59-17:04 ET (pre-close) | in_window={in_window} | "
+            f"eval_window=16:01-16:06 ET (post-close) | in_window={in_window} | "
             f"DST={'active' if is_dst else 'inactive'}"
         )
         return in_window
@@ -120,7 +120,7 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             return SignalResult()
 
         if not self._is_eval_window():
-            logger.info(f"[TREND-NONFX] {asset} | Outside 4:59 PM ET pre-close window - skipping")
+            logger.info(f"[TREND-NONFX] {asset} | Outside 4:01 PM ET eval window - skipping")
             return SignalResult()
 
         advance_quote = self._get_advance_price(asset)
@@ -225,7 +225,7 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             stop_loss_distance = TRAILING_STOP_ATR_MULT * atr_val
             stop_loss = current_close - stop_loss_distance
 
-            logger.info(f"[TREND-NONFX] {asset} | ALL CONDITIONS MET: LONG (pre-close 4:59 PM)")
+            logger.info(f"[TREND-NONFX] {asset} | ALL CONDITIONS MET: LONG (4:01 PM ET)")
             logger.info(
                 f"[TREND-NONFX] {asset} | ATR({ATR_PERIOD}) at entry = {atr_val:.6f} "
                 f"(FIXED for trade lifetime)"
@@ -335,12 +335,12 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                 f"[TREND-NONFX-EXIT] Position #{pos_id} | CLOSING-RULE CHECK | "
                 f"close={current_close:.5f} | SL_level={trailing_stop:.5f} | "
                 f"Price < SL? {current_close < trailing_stop} | "
-                f"(intraday spikes ignored — only 4:59 PM close matters)"
+                f"(intraday spikes ignored — only 4:01 PM close matters)"
             )
 
             if current_close < trailing_stop:
                 exit_reason = (
-                    f"Closing-rule exit | 4:59 PM close={current_close:.5f} < "
+                    f"Closing-rule exit | 4:01 PM close={current_close:.5f} < "
                     f"SL_level={trailing_stop:.5f} (highest={highest_close:.5f} - "
                     f"{TRAILING_STOP_ATR_MULT}x ATR={atr_at_entry:.6f})"
                 )

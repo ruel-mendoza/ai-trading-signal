@@ -170,7 +170,7 @@ def _scheduled_trend_forex_evaluate():
 
     et = _get_et_context()
     log_id = create_job_log("trend_forex_daily", "trend_forex")
-    logger.info(f"[SCHEDULER] ====== Triggered trend_forex daily evaluation at 4:58 PM ET | {et['time_str']} {et['label']} ======")
+    logger.info(f"[SCHEDULER] ====== Triggered trend_forex daily evaluation at 5:01 PM ET | {et['time_str']} {et['label']} ======")
 
     v3_prices = {}
     try:
@@ -240,7 +240,7 @@ def _scheduled_trend_non_forex_evaluate():
     et = _get_et_context()
     log_id = create_job_log("trend_non_forex_daily", "trend_non_forex")
     logger.info(
-        f"[SCHEDULER] ====== Triggered trend_non_forex daily evaluation at 4:59 PM ET | "
+        f"[SCHEDULER] ====== Triggered trend_non_forex daily evaluation at 4:01 PM ET | "
         f"{et['time_str']} {et['label']} | DST={'active' if et['dst'] else 'inactive'} ======"
     )
 
@@ -476,6 +476,97 @@ def _scheduled_mtf_ema_evaluate():
     )
 
 
+_performance_context: dict = {}
+
+
+def get_performance_context() -> dict:
+    return _performance_context
+
+
+def _sync_performance_context():
+    global _performance_context
+    import time as _time
+    from trading_engine.database import set_setting
+
+    et = _get_et_context()
+    log_id = create_job_log("sync_performance_context", "performance_context")
+    logger.info(
+        f"[PERF-CTX] ====== Sync Performance Context | "
+        f"{et['time_str']} {et['label']} ======"
+    )
+
+    t0 = _time.monotonic()
+    api = cache.api_client
+
+    all_symbols = list(TREND_FOREX_SYMBOLS) + list(TREND_NON_FOREX_SYMBOLS) + list(MTF_EMA_ASSETS)
+    seen = set()
+    unique_symbols = []
+    for s in all_symbols:
+        if s not in seen:
+            seen.add(s)
+            unique_symbols.append(s)
+
+    forex_syms = [s for s in unique_symbols if s in TREND_FOREX_SYMBOLS or "/" in s]
+    stock_syms = [s for s in unique_symbols if s not in forex_syms]
+
+    results = {}
+    error_count = 0
+
+    for group_name, syms, base_url in [
+        ("forex", forex_syms, "https://api-v4.fcsapi.com/forex"),
+        ("stock", stock_syms, "https://api-v4.fcsapi.com/stock"),
+    ]:
+        if not syms:
+            continue
+        try:
+            from trading_engine.fcsapi_client import get_advance_symbol
+            api_syms = ",".join(get_advance_symbol(s) for s in syms)
+            params = {"symbol": api_syms}
+            data = api._get("performance", params, base_url=base_url)
+            if data.get("status") is not False and data.get("response"):
+                for item in data["response"]:
+                    ticker = item.get("ticker", "")
+                    perf = item.get("perf", {})
+                    sym_key = ticker.split(":")[-1] if ":" in ticker else ticker
+                    results[sym_key] = {
+                        "perf_1w": perf.get("perf_1w"),
+                        "perf_1m": perf.get("perf_1m"),
+                        "perf_3m": perf.get("perf_3m"),
+                        "high_1m": perf.get("high_1m"),
+                        "low_1m": perf.get("low_1m"),
+                        "high_3m": perf.get("high_3m"),
+                        "low_3m": perf.get("low_3m"),
+                        "volt_d": perf.get("volt_d"),
+                        "volt_w": perf.get("volt_w"),
+                    }
+                logger.info(
+                    f"[PERF-CTX] {group_name}: {len([i for i in data['response']])} symbols fetched (1 credit)"
+                )
+            else:
+                logger.warning(f"[PERF-CTX] {group_name}: No data returned — {data.get('msg', '')}")
+                error_count += 1
+        except Exception as e:
+            logger.error(f"[PERF-CTX] {group_name} fetch failed: {e}")
+            error_count += 1
+
+    _performance_context = results
+
+    import json as _json
+    try:
+        set_setting("performance_context", _json.dumps(results))
+        set_setting("performance_context_updated", datetime.now(pytz.utc).strftime("%Y-%m-%d %H:%M:%S"))
+    except Exception as e:
+        logger.warning(f"[PERF-CTX] Failed to persist context: {e}")
+
+    elapsed = round(_time.monotonic() - t0, 2)
+    status = "SUCCESS" if error_count == 0 else "PARTIAL"
+    finish_job_log(log_id, status, len(unique_symbols), 0, error_count, None)
+    logger.info(
+        f"[PERF-CTX] ====== Complete | {len(results)} symbols cached | "
+        f"{elapsed}s | status={status} ======"
+    )
+
+
 def _run_metrics_worker():
     import time as _time
     t0 = _time.monotonic()
@@ -496,16 +587,16 @@ RECOVERY_MAX_HOURS = 4
 
 RECOVERY_STRATEGIES = [
     {
-        "name": "trend_forex",
-        "scheduled_hour": 16,
-        "scheduled_minute": 58,
-        "run_func_name": "_scheduled_trend_forex_evaluate",
-    },
-    {
         "name": "trend_non_forex",
         "scheduled_hour": 16,
-        "scheduled_minute": 59,
+        "scheduled_minute": 1,
         "run_func_name": "_scheduled_trend_non_forex_evaluate",
+    },
+    {
+        "name": "trend_forex",
+        "scheduled_hour": 17,
+        "scheduled_minute": 1,
+        "run_func_name": "_scheduled_trend_forex_evaluate",
     },
 ]
 
@@ -727,26 +818,34 @@ async def lifespan(app: FastAPI):
     scheduler.add_listener(_scheduler_missed_listener, EVENT_JOB_MISSED)
 
     scheduler.add_job(
-        _scheduled_trend_forex_evaluate,
-        trigger=CronTrigger(hour=16, minute=58, timezone=ET_ZONE),
-        id="trend_forex_daily",
-        name="Forex Trend Daily Evaluation (4:58 PM ET)",
+        _scheduled_trend_non_forex_evaluate,
+        trigger=CronTrigger(hour=16, minute=1, timezone=ET_ZONE),
+        id="trend_non_forex_daily",
+        name="Non-Forex Trend Daily Evaluation (4:01 PM ET)",
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
     scheduler.add_job(
-        _scheduled_trend_non_forex_evaluate,
-        trigger=CronTrigger(hour=16, minute=59, timezone=ET_ZONE),
-        id="trend_non_forex_daily",
-        name="Non-Forex Trend Daily Evaluation (4:59 PM ET)",
+        _sync_performance_context,
+        trigger=CronTrigger(hour=16, minute=50, timezone=ET_ZONE),
+        id="sync_performance_context",
+        name="Sync Performance Context (4:50 PM ET)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
+    scheduler.add_job(
+        _scheduled_trend_forex_evaluate,
+        trigger=CronTrigger(hour=17, minute=1, timezone=ET_ZONE),
+        id="trend_forex_daily",
+        name="Forex Trend Daily Evaluation (5:01 PM ET)",
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
     scheduler.add_job(
         _scheduled_sp500_momentum_30m,
-        trigger=CronTrigger(minute="0,30", timezone=ET_ZONE),
+        trigger=CronTrigger(minute="1,31", timezone=ET_ZONE),
         id="sp500_momentum_30m",
-        name="SP500 Momentum 30m Evaluation (:00 and :30 ET)",
+        name="SP500 Momentum 30m Evaluation (:01 and :31 ET)",
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
@@ -760,17 +859,25 @@ async def lifespan(app: FastAPI):
     )
     scheduler.add_job(
         _scheduled_mtf_ema_evaluate,
-        trigger=CronTrigger(minute=0, timezone=ET_ZONE),
+        trigger=CronTrigger(minute=1, timezone=ET_ZONE),
         id="mtf_ema_hourly",
-        name="MTF EMA Hourly Evaluation (every hour ET)",
+        name="MTF EMA Hourly Evaluation (every hour :01 ET)",
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
     scheduler.add_job(
         _run_metrics_worker,
-        trigger=CronTrigger(minute="*/5", timezone=ET_ZONE),
+        trigger=CronTrigger(minute=0, timezone=ET_ZONE),
         id="signal_metrics_worker",
-        name="Signal Metrics Worker (every 5 minutes)",
+        name="Signal Metrics Worker (hourly :00 ET)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
+    scheduler.add_job(
+        _run_metrics_worker,
+        trigger=CronTrigger(hour=17, minute=15, timezone=ET_ZONE),
+        id="signal_metrics_full_recap",
+        name="Signal Metrics Full Recap (5:15 PM ET)",
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
@@ -808,10 +915,10 @@ async def lifespan(app: FastAPI):
     et = _get_et_context()
     logger.info(
         f"[SCHEDULER] APScheduler started with {len(scheduler.get_jobs())} jobs | "
-        f"mtf_ema every hour (:00), sp500_momentum every 30m (:00/:30), "
-        f"highest_lowest_fx at 09:00 & 10:00, "
-        f"trend_non_forex at 16:59, trend_forex at 16:58 | "
-        f"metrics worker every 5m | "
+        f"trend_non_forex at 16:01, perf_context at 16:50, trend_forex at 17:01 | "
+        f"mtf_ema every hour (:01), sp500_momentum every 30m (:01/:31), "
+        f"highest_lowest_fx at 09:00 & 10:00 | "
+        f"metrics hourly (:00) + full recap 17:15 | "
         f"misfire_grace={MISFIRE_GRACE_SECONDS}s | "
         f"watchdog interval={WATCHDOG_INTERVAL_SECONDS}s | "
         f"America/New_York ({et['label']}, DST={'active' if et['dst'] else 'inactive'})"
@@ -837,7 +944,7 @@ API_TAGS_METADATA = [
     },
     {
         "name": "Metrics",
-        "description": "Signal performance analytics — win rate, gain/loss averages, and per-strategy breakdowns. Computed every 5 minutes by a background worker.",
+        "description": "Signal performance analytics — win rate, gain/loss averages, and per-strategy breakdowns. Computed hourly by a background worker + full recap at 5:15 PM ET.",
     },
     {
         "name": "Strategies",

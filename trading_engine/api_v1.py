@@ -776,7 +776,7 @@ def get_metrics(
     Returns win rate, average gain/loss, best/worst trades, and duration
     statistics. By default returns both per-asset and strategy-level aggregate
     rows. Set summary_only=true for aggregates only. Metrics are recomputed
-    every 5 minutes by a background worker. Cached for 60 seconds.
+    hourly by a background worker (+ full recap at 5:15 PM ET). Cached for 60 seconds.
     """
     if period not in ("all_time", "7d", "30d"):
         raise HTTPException(status_code=400, detail="Invalid period. Use: all_time, 7d, 30d")

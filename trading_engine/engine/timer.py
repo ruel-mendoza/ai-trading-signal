@@ -23,8 +23,10 @@ logger = logging.getLogger("trading_engine.engine.timer")
 
 ET_ZONE = pytz.timezone("America/New_York")
 
-PRE_CLOSE_HOUR = 16
-PRE_CLOSE_MINUTE = 59
+NON_FOREX_EVAL_HOUR = 16
+NON_FOREX_EVAL_MINUTE = 1
+FOREX_EVAL_HOUR = 17
+FOREX_EVAL_MINUTE = 1
 
 
 def _get_et_now() -> datetime:
@@ -72,7 +74,7 @@ def pre_close_trend_evaluate(strategy_engine, cache: CacheLayer):
     is_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
     tz_label = "EDT" if is_dst else "EST"
     logger.info(
-        f"[PRE-CLOSE] ====== 4:59 PM ET Pre-Close Evaluation | "
+        f"[PRE-CLOSE] ====== 4:01 PM ET Post-Close Evaluation | "
         f"{et_now.strftime('%Y-%m-%d %H:%M:%S')} {tz_label} ======"
     )
 
