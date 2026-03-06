@@ -1312,7 +1312,7 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
         </div>
     </div>
     <div class="settings-section" style="margin-top:20px;">
-        <h3>Commodity ETF Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG ONLY | 18 ETFs</span></h3>
+        <h3>Commodity ETF Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG ONLY | 15 ETFs</span></h3>
         <div class="stats-grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
             {non_forex_cards}
         </div>
