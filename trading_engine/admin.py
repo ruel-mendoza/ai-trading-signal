@@ -2412,7 +2412,7 @@ def _build_signal_analysis_html(data: dict) -> str:
 
     <div class="settings-section" style="margin-bottom:20px;">
         <h3>Commodity ETF Command Center <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 4:59 PM ET | LONG ONLY | 3&times;ATR(100) trailing stop</span></h3>
-        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG), confirmed by SMA(50) &gt; SMA(100) crossover | 18 commodity ETFs</p>
+        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG), confirmed by SMA(50) &gt; SMA(100) crossover | 15 commodity ETFs</p>
         <div style="overflow-x:auto;">
             <table class="data-table" data-testid="table-analysis-trend-nf">
                 <thead><tr>
