@@ -609,11 +609,19 @@ def _get_mtf_ema_data() -> dict:
         sym_info = {
             "symbol": symbol,
             "d1_ema200": None, "d1_ema50": None, "d1_close": None, "d1_count": 0,
-            "h4_ema200": None, "h4_ema50": None, "h4_atr100": None, "h4_ema200_slope": None, "h4_count": 0,
-            "h1_ema20": None, "h1_close": None, "h1_count": 0,
-            "cond_price_above_d1_emas": False, "cond_h4_ema200_rising": False,
-            "cond_dip_below_h4_50": False, "cond_dip_within_1_atr": False,
-            "cond_h1_above_ema20": False, "all_conditions": False,
+            "d1_ema200_prev": None,
+            "h4_ema200": None, "h4_ema50": None, "h4_atr100": None, "h4_count": 0,
+            "h4_ema200_prev": None, "h4_ema200_earlier": None,
+            "h4_close": None,
+            "h1_ema20": None, "h1_ema20_prev": None,
+            "h1_close": None, "h1_close_prev": None, "h1_open": None,
+            "h1_count": 0,
+            "cond1_d1_filter": False,
+            "cond2_d1_rising": False, "cond2_h4_accel": False, "cond2_momentum": False,
+            "cond3_dip_found": False, "cond3_within_atr": False, "cond3_recovered": False, "cond3_pullback": False,
+            "cond3_max_breach": None,
+            "cond4_prev_below": False, "cond4_curr_above": False, "cond4_bullish_body": False, "cond4_h1_confirm": False,
+            "all_conditions": False,
         }
 
         d1_candles = get_candles(symbol, "D1", 300)
@@ -629,6 +637,7 @@ def _get_mtf_ema_data() -> dict:
             h4_highs = [c["high"] for c in h4_candles]
             h4_lows = [c["low"] for c in h4_candles]
             h1_closes = [c["close"] for c in h1_candles]
+            h1_opens = [c["open"] for c in h1_candles]
 
             d1_ema200 = IndicatorEngine.ema(d1_closes, 200)
             d1_ema50 = IndicatorEngine.ema(d1_closes, 50)
@@ -641,33 +650,70 @@ def _get_mtf_ema_data() -> dict:
             sym_info["d1_close"] = d1_closes[-1]
             sym_info["d1_ema200"] = d1_ema200[-1]
             sym_info["d1_ema50"] = d1_ema50[-1]
+            sym_info["d1_ema200_prev"] = d1_ema200[-2] if len(d1_ema200) >= 2 else None
             sym_info["h4_ema200"] = h4_ema200[-1]
             sym_info["h4_ema50"] = h4_ema50[-1]
-            sym_info["h4_atr100"] = h4_atr100[-1]
+            sym_info["h4_atr100"] = h4_atr100[-1] if h4_atr100 else None
+            sym_info["h4_ema200_prev"] = h4_ema200[-2] if len(h4_ema200) >= 2 else None
+            sym_info["h4_ema200_earlier"] = h4_ema200[-3] if len(h4_ema200) >= 3 else None
+            sym_info["h4_close"] = h4_closes[-1]
             sym_info["h1_ema20"] = h1_ema20[-1]
+            sym_info["h1_ema20_prev"] = h1_ema20[-2] if len(h1_ema20) >= 2 else None
             sym_info["h1_close"] = current_price
+            sym_info["h1_close_prev"] = h1_closes[-2] if len(h1_closes) >= 2 else None
+            sym_info["h1_open"] = h1_opens[-1]
 
-            h4_ema200_prev = h4_ema200[-2] if len(h4_ema200) >= 2 else None
-            if h4_ema200[-1] is not None and h4_ema200_prev is not None:
-                sym_info["h4_ema200_slope"] = h4_ema200[-1] - h4_ema200_prev
+            cond1 = (d1_ema50[-1] is not None and d1_ema200[-1] is not None
+                     and d1_ema50[-1] > d1_ema200[-1])
+            sym_info["cond1_d1_filter"] = cond1
 
-            if sym_info["d1_ema200"] is not None and sym_info["d1_ema50"] is not None:
-                sym_info["cond_price_above_d1_emas"] = current_price > sym_info["d1_ema200"] and current_price > sym_info["d1_ema50"]
-            if sym_info["h4_ema200_slope"] is not None:
-                sym_info["cond_h4_ema200_rising"] = sym_info["h4_ema200_slope"] > 0
-            if sym_info["h4_ema50"] is not None:
-                sym_info["cond_dip_below_h4_50"] = current_price < sym_info["h4_ema50"]
-            if sym_info["h4_atr100"] is not None and sym_info["h4_ema50"] is not None and sym_info["cond_dip_below_h4_50"]:
-                sym_info["cond_dip_within_1_atr"] = (sym_info["h4_ema50"] - current_price) < sym_info["h4_atr100"]
-            if sym_info["h1_ema20"] is not None:
-                sym_info["cond_h1_above_ema20"] = current_price > sym_info["h1_ema20"]
+            d1_rising = (sym_info["d1_ema200"] is not None and sym_info["d1_ema200_prev"] is not None
+                         and sym_info["d1_ema200"] > sym_info["d1_ema200_prev"])
+            h4_accel = False
+            if (sym_info["h4_ema200"] is not None and sym_info["h4_ema200_prev"] is not None
+                    and sym_info["h4_ema200_earlier"] is not None):
+                accel_now = sym_info["h4_ema200"] - sym_info["h4_ema200_prev"]
+                accel_prev = sym_info["h4_ema200_prev"] - sym_info["h4_ema200_earlier"]
+                h4_accel = accel_now > accel_prev
+            sym_info["cond2_d1_rising"] = d1_rising
+            sym_info["cond2_h4_accel"] = h4_accel
+            sym_info["cond2_momentum"] = d1_rising and h4_accel
+
+            h4_lows_12 = h4_lows[-13:-1]
+            ema50_val = sym_info["h4_ema50"]
+            atr_val = sym_info["h4_atr100"]
+            h4_close_val = sym_info["h4_close"]
+            dip_found = any(lo < ema50_val for lo in h4_lows_12) if ema50_val is not None else False
+            max_breach = 0.0
+            within_atr = True
+            if dip_found:
+                breaches = [ema50_val - lo for lo in h4_lows_12 if lo < ema50_val]
+                max_breach = max(breaches) if breaches else 0.0
+                within_atr = (atr_val is not None and max_breach <= atr_val)
+            recovered = (h4_close_val is not None and ema50_val is not None
+                         and h4_close_val > ema50_val)
+            sym_info["cond3_dip_found"] = dip_found
+            sym_info["cond3_within_atr"] = within_atr if dip_found else False
+            sym_info["cond3_recovered"] = recovered
+            sym_info["cond3_max_breach"] = max_breach if dip_found else None
+            sym_info["cond3_pullback"] = dip_found and within_atr and recovered
+
+            prev_below = (sym_info["h1_close_prev"] is not None and sym_info["h1_ema20_prev"] is not None
+                          and sym_info["h1_close_prev"] < sym_info["h1_ema20_prev"])
+            curr_above = (current_price is not None and sym_info["h1_ema20"] is not None
+                          and current_price > sym_info["h1_ema20"])
+            bullish_body = (current_price is not None and sym_info["h1_open"] is not None
+                            and current_price > sym_info["h1_open"])
+            sym_info["cond4_prev_below"] = prev_below
+            sym_info["cond4_curr_above"] = curr_above
+            sym_info["cond4_bullish_body"] = bullish_body
+            sym_info["cond4_h1_confirm"] = prev_below and curr_above and bullish_body
 
             sym_info["all_conditions"] = all([
-                sym_info["cond_price_above_d1_emas"],
-                sym_info["cond_h4_ema200_rising"],
-                sym_info["cond_dip_below_h4_50"],
-                sym_info["cond_dip_within_1_atr"],
-                sym_info["cond_h1_above_ema20"],
+                sym_info["cond1_d1_filter"],
+                sym_info["cond2_momentum"],
+                sym_info["cond3_pullback"],
+                sym_info["cond4_h1_confirm"],
             ])
 
         symbols_data.append(sym_info)
@@ -721,28 +767,25 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
         if sym["d1_count"] < 200 or sym["h4_count"] < 200 or sym["h1_count"] < 20:
             data_status = f'<div style="color:#fbbf24;font-size:0.8rem;margin-top:6px;">D1: {sym["d1_count"]}/200, H4: {sym["h4_count"]}/200, H1: {sym["h1_count"]}/20</div>'
         else:
-            slope_val = sym["h4_ema200_slope"]
-            slope_display = f"{slope_val:+.6f}" if slope_val is not None else "N/A"
-            slope_color = "#6ee7b7" if slope_val is not None and slope_val > 0 else "#fca5a5"
+            breach_display = f'{sym["cond3_max_breach"]:.5f}' if sym["cond3_max_breach"] is not None else "—"
 
             data_status = f"""
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.8rem;">
-                <div>D1 EMA200: {_fmt(sym["d1_ema200"])}</div>
                 <div>D1 EMA50: {_fmt(sym["d1_ema50"])}</div>
-                <div>H4 EMA200: {_fmt(sym["h4_ema200"])}</div>
+                <div>D1 EMA200: {_fmt(sym["d1_ema200"])}</div>
                 <div>H4 EMA50: {_fmt(sym["h4_ema50"])}</div>
+                <div>H4 EMA200: {_fmt(sym["h4_ema200"])}</div>
                 <div>H4 ATR100: {_fmt(sym["h4_atr100"], 6)}</div>
-                <div>H4 EMA200 Slope: <span style="color:{slope_color};">{slope_display}</span></div>
+                <div>H4 Close: {_fmt(sym["h4_close"])}</div>
                 <div>H1 EMA20: {_fmt(sym["h1_ema20"])}</div>
                 <div>H1 Close: {_fmt(sym["h1_close"])}</div>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.8rem;border-top:1px solid #334155;padding-top:8px;">
-                <div>Price &gt; D1 EMAs: {_cond(sym["cond_price_above_d1_emas"])}</div>
-                <div>H4 EMA200 Rising: {_cond(sym["cond_h4_ema200_rising"])}</div>
-                <div>Dip Below H4 50: {_cond(sym["cond_dip_below_h4_50"])}</div>
-                <div>Within 1 ATR: {_cond(sym["cond_dip_within_1_atr"])}</div>
-                <div>H1 &gt; EMA20: {_cond(sym["cond_h1_above_ema20"])}</div>
-                <div><strong>All Met:</strong> {_cond(sym["all_conditions"])}</div>
+            <div style="display:grid;grid-template-columns:1fr;gap:4px;margin-top:8px;font-size:0.8rem;border-top:1px solid #334155;padding-top:8px;">
+                <div><strong>C1 — D1 Filter:</strong> EMA50 &gt; EMA200: {_cond(sym["cond1_d1_filter"])}</div>
+                <div><strong>C2 — Momentum:</strong> D1 Rising: {_cond(sym["cond2_d1_rising"])} | H4 Accel: {_cond(sym["cond2_h4_accel"])} → {_cond(sym["cond2_momentum"])}</div>
+                <div><strong>C3 — H4 Pullback:</strong> Dip: {_cond(sym["cond3_dip_found"])} | ≤1 ATR: {_cond(sym["cond3_within_atr"])} (breach: {breach_display}) | Recovered: {_cond(sym["cond3_recovered"])} → {_cond(sym["cond3_pullback"])}</div>
+                <div><strong>C4 — H1 Confirm:</strong> Prev&lt;EMA20: {_cond(sym["cond4_prev_below"])} | Curr&gt;EMA20: {_cond(sym["cond4_curr_above"])} | Bull Body: {_cond(sym["cond4_bullish_body"])} → {_cond(sym["cond4_h1_confirm"])}</div>
+                <div style="margin-top:4px;padding-top:4px;border-top:1px solid #334155;"><strong>All Met:</strong> {_cond(sym["all_conditions"])}</div>
             </div>"""
 
         all_badge = ""
