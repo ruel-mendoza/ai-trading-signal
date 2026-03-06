@@ -113,10 +113,6 @@ def check_budget_health() -> dict:
 
         if should_alert:
             _last_critical_time = now
-            _insert_quota_alert(
-                "CRITICAL",
-                f"⚠️ API quota CRITICAL: {usage_pct:.1f}% used. {remaining:,} credits remaining. Watchdog auto-disabled to preserve credits for signals.",
-            )
             logger.critical(f"[QUOTA] {message}")
 
         if not watchdog_disabled:
@@ -133,10 +129,6 @@ def check_budget_health() -> dict:
 
         if should_alert:
             _last_warning_time = now
-            _insert_quota_alert(
-                "WARNING",
-                f"⚠️ API quota warning: {usage_pct:.1f}% used. {remaining:,} credits remaining.",
-            )
             logger.warning(f"[QUOTA] {message}")
     else:
         if watchdog_disabled:
@@ -153,28 +145,7 @@ def check_budget_health() -> dict:
     }
 
 
-def _insert_quota_alert(level: str, message: str):
-    from trading_engine.database import SessionFactory
-    from trading_engine.models import RecoveryNotification
 
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    session = SessionFactory()
-    try:
-        record = RecoveryNotification(
-            strategy_name="QUOTA_ALERT",
-            missed_window_time=now_str,
-            execution_time=now_str,
-            assets_affected=level,
-            status=message,
-        )
-        session.add(record)
-        session.commit()
-        logger.info(f"[QUOTA] {level} alert saved to recovery_notifications")
-    except Exception as e:
-        session.rollback()
-        logger.error(f"[QUOTA] Failed to save alert: {e}")
-    finally:
-        session.close()
 
 
 def _disable_watchdog():
