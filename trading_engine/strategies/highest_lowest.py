@@ -258,7 +258,7 @@ class HighestLowestFXStrategy(BaseStrategy):
             f"[HLC-FX] {asset} | Tokyo high={tokyo_high:.5f} low={tokyo_low:.5f} | "
             f"NY candles={len(ny_candles)} | current_close={current_close:.5f} | "
             f"candle={'BULL' if is_bullish else 'BEAR' if is_bearish else 'DOJI'} | "
-            f"ATR({ATR_PERIOD})={atr_val:.6f if atr_val else 'None'}"
+            f"ATR({ATR_PERIOD})={f'{atr_val:.6f}' if atr_val else 'None'}"
         )
         logger.info(
             f"[HLC-FX] {asset} | Sweep status: below_tokyo_low={swept_below_tokyo_low} "
