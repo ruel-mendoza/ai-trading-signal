@@ -2675,22 +2675,6 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 .pulse-badge.pulse-triggered { background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
 .pulse-card.pulse-card-approaching { border-color: rgba(234,179,8,0.4); }
 .pulse-card.pulse-card-triggered { border-color: rgba(34,197,94,0.4); }
-.ro-card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; margin-bottom: 20px; }
-.ro-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
-@media (max-width: 640px) { .ro-grid { grid-template-columns: 1fr; gap: 20px; } }
-.ro-col { display: flex; flex-direction: column; align-items: center; }
-.ro-title { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; margin-bottom: 16px; }
-.gauge-pct { font-size: 1.75rem; font-weight: 800; line-height: 1; }
-.gauge-label { font-size: 0.65rem; color: #64748b; text-transform: uppercase; margin-top: 2px; }
-.ro-text { font-size: 0.85rem; color: #94a3b8; margin-top: 14px; text-align: center; line-height: 1.6; }
-.ro-text strong { color: #f1f5f9; }
-@keyframes recharge-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-.badge-recharge { display: inline-block; background: #7f1d1d; color: #fca5a5; padding: 3px 12px; border-radius: 9999px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; animation: recharge-blink 1.2s ease-in-out infinite; margin-top: 10px; }
-.vbar-wrap { display: flex; align-items: flex-end; gap: 12px; height: 120px; }
-.vbar-track { width: 40px; height: 100%; background: #334155; border-radius: 6px; position: relative; overflow: hidden; }
-.vbar-fill { position: absolute; bottom: 0; left: 0; width: 100%; border-radius: 6px 6px 0 0; transition: height 0.6s ease, background 0.4s ease; }
-.vbar-labels { display: flex; flex-direction: column; justify-content: space-between; height: 100%; }
-.vbar-label { font-size: 0.7rem; color: #64748b; }
 .toggle-switch { position: relative; display: inline-block; width: 48px; height: 26px; cursor: pointer; }
 .toggle-switch input { opacity: 0; width: 0; height: 0; }
 .toggle-slider { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #475569; border-radius: 13px; transition: 0.3s; }
@@ -2712,7 +2696,6 @@ function showTab(tabName) {
     var mobileEl = document.querySelector('.mobile-tab-bar .tab[data-tab="' + tabName + '"]');
     if (mobileEl) mobileEl.classList.add('active');
     if (tabName === 'analysis') loadMarketPulse();
-    if (tabName === 'credits') loadResourceOverview();
     if (tabName === 'settings') loadCreditMeter();
     if (tabName === 'notifications') loadNotifConfig();
     if (tabName === 'apikeys') loadPartnerKeys();
@@ -3133,129 +3116,6 @@ async function loadMarketPulse() {
 }
 
 
-
-async function loadResourceOverview() {
-    var container = document.getElementById('resource-overview');
-    if (!container) return;
-    try {
-        var [quotaRes, storageRes] = await Promise.all([
-            fetch(BASE + '/admin/api/quota-status'),
-            fetch(BASE + '/admin/api/storage-stats')
-        ]);
-        var q = await quotaRes.json();
-        var s = await storageRes.json();
-
-        var usedPct = Math.max(0, Math.min(q.usage_pct || 0, 100));
-        var remaining = q.remaining_credits || 0;
-        var limit = q.credit_limit || 500000;
-
-        var gaugeColor;
-        if (usedPct >= 90) gaugeColor = '#ef4444';
-        else if (usedPct >= 75) gaugeColor = '#f59e0b';
-        else gaugeColor = '#22c55e';
-
-        var svgGauge = document.getElementById('ro-gauge-svg');
-        if (svgGauge) {
-            var radius = 72;
-            var halfCircumference = Math.PI * radius;
-            var fillLength = (usedPct / 100) * halfCircumference;
-            var arc = svgGauge.querySelector('.gauge-arc-fill');
-            if (arc) {
-                arc.style.strokeDasharray = halfCircumference;
-                arc.style.strokeDashoffset = halfCircumference - fillLength;
-                arc.style.stroke = gaugeColor;
-            }
-        }
-
-        var gaugePct = document.getElementById('ro-gauge-pct');
-        if (gaugePct) {
-            gaugePct.textContent = usedPct.toFixed(1) + '%';
-            gaugePct.style.color = gaugeColor;
-        }
-
-        var creditText = document.getElementById('ro-credit-text');
-        if (creditText) {
-            creditText.innerHTML = '<strong>' + Number(remaining).toLocaleString() + '</strong> / ' + Number(limit).toLocaleString() + ' remaining';
-        }
-
-        var rechargeBadge = document.getElementById('ro-recharge-badge');
-        if (rechargeBadge) {
-            var remainPct = limit > 0 ? (remaining / limit) * 100 : 0;
-            rechargeBadge.style.display = remainPct < 10 ? 'inline-block' : 'none';
-        }
-
-        var dbMb = (s.database && s.database.size_mb) ? s.database.size_mb : 0;
-        var maxMb = s.max_storage_mb || 1024;
-        var storagePct = maxMb > 0 ? Math.max(0, Math.min((dbMb / maxMb) * 100, 100)) : 0;
-
-        var storageColor;
-        if (storagePct >= 90) storageColor = '#ef4444';
-        else if (storagePct >= 70) storageColor = '#f59e0b';
-        else storageColor = '#22c55e';
-
-        var vbarFill = document.getElementById('ro-vbar-fill');
-        if (vbarFill) {
-            vbarFill.style.height = Math.max(storagePct, 2) + '%';
-            vbarFill.style.background = storageColor;
-        }
-
-        var storageText = document.getElementById('ro-storage-text');
-        if (storageText) {
-            storageText.innerHTML = 'Current: <strong>' + dbMb + ' MB</strong> | Limit: <strong>' + maxMb.toFixed(0) + ' MB</strong>';
-        }
-
-        var storagePctEl = document.getElementById('ro-storage-pct');
-        if (storagePctEl) {
-            storagePctEl.textContent = storagePct.toFixed(1) + '%';
-            storagePctEl.style.color = storageColor;
-        }
-
-        var remainPctVal = limit > 0 ? (remaining / limit * 100) : 0;
-        var pctEl = document.getElementById('quota-pct-text');
-        if (pctEl) {
-            pctEl.textContent = remainPctVal.toFixed(1) + '% left';
-            pctEl.style.color = remainPctVal >= 50 ? '#22c55e' : (remainPctVal >= 10 ? '#f59e0b' : '#ef4444');
-        }
-        var remEl = document.getElementById('quota-remaining');
-        if (remEl) {
-            remEl.textContent = remaining >= 1000 ? (remaining / 1000).toFixed(0) + 'K' : remaining.toLocaleString();
-            remEl.style.color = remainPctVal >= 50 ? '#22c55e' : (remainPctVal >= 10 ? '#f59e0b' : '#ef4444');
-        }
-        var dailyBurn = q.daily_avg_burn || 0;
-        var burnEl = document.getElementById('quota-daily-burn');
-        if (burnEl) {
-            burnEl.textContent = dailyBurn >= 1000 ? (dailyBurn / 1000).toFixed(1) + 'K' : Math.round(dailyBurn).toLocaleString();
-        }
-        var daysLeft = q.est_days_remaining || 0;
-        var daysEl = document.getElementById('quota-days-left');
-        if (daysEl) {
-            daysEl.textContent = daysLeft >= 999 ? '∞' : daysLeft.toFixed(0);
-        }
-
-        var syncEl = document.getElementById('ro-last-sync');
-        if (syncEl) {
-            var syncTs = s.last_pre_close_sync;
-            if (syncTs) {
-                try {
-                    var dt = new Date(syncTs + (syncTs.includes('Z') ? '' : 'Z'));
-                    var now = new Date();
-                    var diffMs = now - dt;
-                    var diffH = Math.floor(diffMs / 3600000);
-                    var timeStr = dt.toLocaleString('en-US', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true });
-                    var agoStr = diffH < 1 ? 'just now' : (diffH < 24 ? diffH + 'h ago' : Math.floor(diffH/24) + 'd ago');
-                    syncEl.innerHTML = '<span style="color:#e2e8f0;">' + timeStr + '</span> <span style="color:#94a3b8;font-size:0.8rem;">(' + agoStr + ')</span>';
-                } catch(e2) {
-                    syncEl.textContent = syncTs;
-                }
-            } else {
-                syncEl.innerHTML = '<span style="color:#94a3b8;">No sync recorded yet</span>';
-            }
-        }
-
-    } catch (e) {
-        console.error('Resource overview failed:', e);
-    }
-}
 
 async function loadSchedulerData() {
     try {
@@ -3805,7 +3665,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const activeTab = document.querySelector('.tab.active');
     var tabName = activeTab ? activeTab.getAttribute('data-tab') : 'signals';
     if (tabName === 'analysis' || !activeTab) loadMarketPulse();
-    if (tabName === 'credits' || !activeTab) loadResourceOverview();
     if (tabName === 'settings') loadCreditMeter();
     if (tabName === 'notifications') loadNotifConfig();
     if (tabName === 'scheduler') loadSchedulerData();
@@ -4282,81 +4141,7 @@ def admin_dashboard(
         </div>
 
         <div id="tab-credits" class="tab-content {'hidden' if tab != 'credits' else ''}">
-            <div id="resource-overview" class="ro-card" data-testid="widget-resource-overview">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-                    <h2 style="margin-bottom:0;font-size:1.1rem;color:#f8fafc;">Resource Overview</h2>
-                    <button class="btn btn-secondary" onclick="loadResourceOverview()" data-testid="button-refresh-resources" style="font-size:12px;padding:5px 12px;margin:0;">Refresh</button>
-                </div>
-                <div class="ro-grid">
-                    <div class="ro-col">
-                        <div class="ro-title">API Health</div>
-                        <div style="position:relative;width:180px;height:108px;">
-                            <svg id="ro-gauge-svg" width="180" height="108" viewBox="0 0 180 108" data-testid="gauge-api-health">
-                                <path d="M 18 90 A 72 72 0 1 1 162 90" fill="none" stroke="#334155" stroke-width="18" stroke-linecap="round" />
-                                <path class="gauge-arc-fill" d="M 18 90 A 72 72 0 1 1 162 90" fill="none" stroke="#22c55e" stroke-width="18" stroke-linecap="round" style="stroke-dasharray:226.19;stroke-dashoffset:226.19;transition:stroke-dashoffset 0.8s ease,stroke 0.4s ease;" />
-                            </svg>
-                            <div style="position:absolute;bottom:4px;left:50%;transform:translateX(-50%);text-align:center;">
-                                <div id="ro-gauge-pct" class="gauge-pct" style="color:#64748b;" data-testid="text-gauge-pct">--%</div>
-                                <div class="gauge-label">Credits Used</div>
-                            </div>
-                        </div>
-                        <div id="ro-credit-text" class="ro-text" data-testid="text-credits-remaining">Loading...</div>
-                        <div id="ro-recharge-badge" class="badge-recharge" style="display:none;" data-testid="badge-recharge-soon">Recharge Soon</div>
-                    </div>
-                    <div class="ro-col">
-                        <div class="ro-title">Storage Health</div>
-                        <div class="vbar-wrap">
-                            <div class="vbar-labels">
-                                <div class="vbar-label">100%</div>
-                                <div class="vbar-label">50%</div>
-                                <div class="vbar-label">0%</div>
-                            </div>
-                            <div class="vbar-track" data-testid="bar-storage-vertical">
-                                <div id="ro-vbar-fill" class="vbar-fill" style="height:0%;background:#334155;"></div>
-                            </div>
-                            <div style="display:flex;flex-direction:column;justify-content:flex-end;height:100%;">
-                                <div id="ro-storage-pct" style="font-size:1.4rem;font-weight:800;color:#64748b;line-height:1;" data-testid="text-storage-pct">--%</div>
-                                <div style="font-size:0.65rem;color:#64748b;text-transform:uppercase;margin-top:2px;">Used</div>
-                            </div>
-                        </div>
-                        <div id="ro-storage-text" class="ro-text" data-testid="text-storage-detail">Loading...</div>
-                    </div>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;padding-top:16px;border-top:1px solid rgba(148,163,184,0.1);">
-                    <div>
-                        <div class="ro-title" style="margin-bottom:6px;">Last 4:01 PM Sync</div>
-                        <div id="ro-last-sync" style="font-size:0.95rem;font-weight:600;color:#64748b;" data-testid="text-last-sync">--</div>
-                    </div>
-                    <div>
-                        <div class="ro-title" style="margin-bottom:6px;">Asset Coverage</div>
-                        <div style="font-size:0.85rem;color:#e2e8f0;" data-testid="text-asset-count">Tracking <strong style="color:#38bdf8;">2</strong> Forex Pairs | <strong style="color:#38bdf8;">15</strong> Commodity ETFs</div>
-                    </div>
-                </div>
-            </div>
-            <div class="section" style="margin-top:16px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-                    <h2 style="margin-bottom:0;">API Credits</h2>
-                </div>
-                <div class="stats-grid" id="api-credits-cards" data-testid="api-credits-cards">
-                    <div class="stat-card">
-                        <div class="stat-label">Remaining</div>
-                        <div class="stat-value" id="quota-remaining" data-testid="text-quota-remaining">--</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">% Left</div>
-                        <div class="stat-value" id="quota-pct-text" data-testid="text-quota-pct" style="color:#94a3b8;">--</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Daily Avg Burn</div>
-                        <div class="stat-value" id="quota-daily-burn" data-testid="text-quota-daily-burn">--</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Est. Days Left</div>
-                        <div class="stat-value" id="quota-days-left" data-testid="text-quota-days-left">--</div>
-                    </div>
-                </div>
-            </div>
-            <div class="section" style="margin-top:16px;">
+            <div class="section">
                 <h2>FCSAPI Credit Monitor</h2>
                 {credit_html}
             </div>
