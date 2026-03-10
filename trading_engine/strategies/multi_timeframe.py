@@ -8,9 +8,16 @@ import pandas as pd
 from trading_engine.strategies.base import BaseStrategy, SignalResult, Action, Direction
 from trading_engine.indicators import IndicatorEngine
 from trading_engine.cache_layer import CacheLayer
+from datetime import datetime
 from trading_engine.database import (
     has_open_signal,
     has_open_position,
+    insert_signal,
+    open_position as db_open_position,
+    close_signal,
+    close_position,
+    get_active_signals,
+    signal_exists,
 )
 
 logger = logging.getLogger("trading_engine.strategy.multi_timeframe")
@@ -539,6 +546,52 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             )
             return atr_sl, "atr"
 
+    def _persist_entry(
+        self, asset: str, direction: str, current_price: float,
+        stop_loss: float, take_profit: float, atr_at_entry: float, entry_metadata: dict,
+    ) -> Optional[dict]:
+        try:
+            from pytz import timezone as pytz_timezone
+            now_et = datetime.now(pytz_timezone("US/Eastern"))
+        except Exception:
+            now_et = datetime.utcnow()
+        signal_timestamp = now_et.strftime("%Y-%m-%dT%H:%M:%S")
+
+        if signal_exists(STRATEGY_NAME, asset, signal_timestamp):
+            logger.warning(
+                f"[MTF-EMA] {asset} | Duplicate signal blocked for "
+                f"signal_timestamp={signal_timestamp}"
+            )
+            return None
+
+        signal = {
+            "strategy_name": STRATEGY_NAME,
+            "asset": asset,
+            "direction": direction,
+            "action": "ENTRY",
+            "entry_price": current_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "atr_at_entry": round(atr_at_entry, 6),
+            "signal_timestamp": signal_timestamp,
+        }
+        signal_id = insert_signal(signal)
+        if signal_id:
+            db_open_position({
+                "asset": asset,
+                "strategy_name": STRATEGY_NAME,
+                "direction": direction,
+                "entry_price": current_price,
+                "atr_at_entry": round(atr_at_entry, 6),
+            })
+            signal["id"] = signal_id
+            signal["status"] = "OPEN"
+            logger.info(f"[MTF-EMA] {asset} | Signal + position persisted with id={signal_id}")
+            return signal
+        else:
+            logger.error(f"[MTF-EMA] {asset} | Failed to persist signal to DB")
+            return None
+
     def _check_entry_conditions(
         self, asset: str, current_price: float, ind: MTFIndicators, tf_data: dict
     ) -> Optional[SignalResult]:
@@ -561,29 +614,38 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
 
             take_profit = current_price + (TP_ATR_MULT * ind.h4_atr100)
 
+            entry_metadata = {
+                "take_profit": take_profit,
+                "sl_method": sl_method,
+                "sl_atr_value": round(atr_sl, 6),
+                "sl_structural_value": round(structural_sl, 6) if structural_sl else None,
+                "sl_atr_mult": SL_ATR_MULT,
+                "tp_atr_mult": TP_ATR_MULT,
+                "h4_atr100": round(ind.h4_atr100, 6),
+                "d1_ema200": round(ind.d1_ema200, 6),
+                "d1_ema50": round(ind.d1_ema50, 6),
+                "h4_ema50": round(ind.h4_ema50, 6),
+                "h4_ema200": round(ind.h4_ema200, 6) if ind.h4_ema200 else None,
+                "h1_ema20": round(ind.h1_ema20, 6) if ind.h1_ema20 else None,
+                "historical_dip_timestamp": long_dip.dip_bar_timestamp,
+                "historical_dip_max_breach": round(long_dip.max_breach, 6),
+                "historical_dip_bar_index": long_dip.dip_bar_index,
+            }
+
+            persisted = self._persist_entry(
+                asset, "BUY", current_price, stop_loss, take_profit,
+                ind.h4_atr100, entry_metadata,
+            )
+            if not persisted:
+                return None
+
             return SignalResult(
                 action=Action.ENTRY,
                 direction=Direction.LONG,
                 price=current_price,
                 stop_loss=stop_loss,
                 atr_at_entry=ind.h4_atr100,
-                metadata={
-                    "take_profit": take_profit,
-                    "sl_method": sl_method,
-                    "sl_atr_value": round(atr_sl, 6),
-                    "sl_structural_value": round(structural_sl, 6) if structural_sl else None,
-                    "sl_atr_mult": SL_ATR_MULT,
-                    "tp_atr_mult": TP_ATR_MULT,
-                    "h4_atr100": round(ind.h4_atr100, 6),
-                    "d1_ema200": round(ind.d1_ema200, 6),
-                    "d1_ema50": round(ind.d1_ema50, 6),
-                    "h4_ema50": round(ind.h4_ema50, 6),
-                    "h4_ema200": round(ind.h4_ema200, 6) if ind.h4_ema200 else None,
-                    "h1_ema20": round(ind.h1_ema20, 6) if ind.h1_ema20 else None,
-                    "historical_dip_timestamp": long_dip.dip_bar_timestamp,
-                    "historical_dip_max_breach": round(long_dip.max_breach, 6),
-                    "historical_dip_bar_index": long_dip.dip_bar_index,
-                },
+                metadata={"signal": persisted, **entry_metadata},
             )
 
         short_triggered, short_dip = self._check_short_conditions(asset, ind)
@@ -601,32 +663,49 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
 
             take_profit = current_price - (TP_ATR_MULT * ind.h4_atr100)
 
+            entry_metadata = {
+                "take_profit": take_profit,
+                "sl_method": sl_method,
+                "sl_atr_value": round(atr_sl, 6),
+                "sl_structural_value": round(structural_sl, 6) if structural_sl else None,
+                "sl_atr_mult": SL_ATR_MULT,
+                "tp_atr_mult": TP_ATR_MULT,
+                "h4_atr100": round(ind.h4_atr100, 6),
+                "d1_ema200": round(ind.d1_ema200, 6),
+                "d1_ema50": round(ind.d1_ema50, 6),
+                "h4_ema50": round(ind.h4_ema50, 6),
+                "h4_ema200": round(ind.h4_ema200, 6) if ind.h4_ema200 else None,
+                "h1_ema20": round(ind.h1_ema20, 6) if ind.h1_ema20 else None,
+                "historical_dip_timestamp": short_dip.dip_bar_timestamp,
+                "historical_dip_max_breach": round(short_dip.max_breach, 6),
+                "historical_dip_bar_index": short_dip.dip_bar_index,
+            }
+
+            persisted = self._persist_entry(
+                asset, "SELL", current_price, stop_loss, take_profit,
+                ind.h4_atr100, entry_metadata,
+            )
+            if not persisted:
+                return None
+
             return SignalResult(
                 action=Action.ENTRY,
                 direction=Direction.SHORT,
                 price=current_price,
                 stop_loss=stop_loss,
                 atr_at_entry=ind.h4_atr100,
-                metadata={
-                    "take_profit": take_profit,
-                    "sl_method": sl_method,
-                    "sl_atr_value": round(atr_sl, 6),
-                    "sl_structural_value": round(structural_sl, 6) if structural_sl else None,
-                    "sl_atr_mult": SL_ATR_MULT,
-                    "tp_atr_mult": TP_ATR_MULT,
-                    "h4_atr100": round(ind.h4_atr100, 6),
-                    "d1_ema200": round(ind.d1_ema200, 6),
-                    "d1_ema50": round(ind.d1_ema50, 6),
-                    "h4_ema50": round(ind.h4_ema50, 6),
-                    "h4_ema200": round(ind.h4_ema200, 6) if ind.h4_ema200 else None,
-                    "h1_ema20": round(ind.h1_ema20, 6) if ind.h1_ema20 else None,
-                    "historical_dip_timestamp": short_dip.dip_bar_timestamp,
-                    "historical_dip_max_breach": round(short_dip.max_breach, 6),
-                    "historical_dip_bar_index": short_dip.dip_bar_index,
-                },
+                metadata={"signal": persisted, **entry_metadata},
             )
 
         return None
+
+    def _persist_exit(self, asset: str, exit_reason: str):
+        active_sigs = get_active_signals(strategy_name=STRATEGY_NAME, asset=asset)
+        for sig in active_sigs:
+            close_signal(sig["id"], exit_reason)
+            logger.info(f"[MTF-EMA] {asset} | Closed signal #{sig['id']}: {exit_reason}")
+        close_position(STRATEGY_NAME, asset)
+        logger.info(f"[MTF-EMA] {asset} | Position closed in DB")
 
     def _check_h1_ema50_exit(
         self, asset: str, pos_id: int, direction: str, ind: MTFIndicators
@@ -643,19 +722,21 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
 
         if direction == "BUY" and h1_close < h4_ema50:
             breach = h4_ema50 - h1_close
+            exit_reason = (
+                f"H1/H4-EMA50 exit: H1 close {h1_close:.5f} < "
+                f"H4 EMA50 {h4_ema50:.5f} (breach={breach:.5f})"
+            )
             logger.info(
                 f"[MTF-EMA] {asset} | EXIT LONG #{pos_id} — H1 close below H4 EMA50 | "
                 f"H1 close={h1_close:.5f} < H4 EMA50={h4_ema50:.5f} (breach={breach:.5f})"
             )
+            self._persist_exit(asset, exit_reason)
             return SignalResult(
                 action=Action.EXIT,
                 direction=Direction.LONG,
                 price=h1_close,
                 metadata={
-                    "exit_reason": (
-                        f"H1/H4-EMA50 exit: H1 close {h1_close:.5f} < "
-                        f"H4 EMA50 {h4_ema50:.5f} (breach={breach:.5f})"
-                    ),
+                    "exit_reason": exit_reason,
                     "exit_type": "h1_below_h4_ema50",
                     "h1_close": round(h1_close, 6),
                     "h4_ema50": round(h4_ema50, 6),
@@ -665,19 +746,21 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
 
         if direction == "SELL" and h1_close > h4_ema50:
             breach = h1_close - h4_ema50
+            exit_reason = (
+                f"H1/H4-EMA50 exit: H1 close {h1_close:.5f} > "
+                f"H4 EMA50 {h4_ema50:.5f} (breach={breach:.5f})"
+            )
             logger.info(
                 f"[MTF-EMA] {asset} | EXIT SHORT #{pos_id} — H1 close above H4 EMA50 | "
                 f"H1 close={h1_close:.5f} > H4 EMA50={h4_ema50:.5f} (breach={breach:.5f})"
             )
+            self._persist_exit(asset, exit_reason)
             return SignalResult(
                 action=Action.EXIT,
                 direction=Direction.SHORT,
                 price=h1_close,
                 metadata={
-                    "exit_reason": (
-                        f"H1/H4-EMA50 exit: H1 close {h1_close:.5f} > "
-                        f"H4 EMA50 {h4_ema50:.5f} (breach={breach:.5f})"
-                    ),
+                    "exit_reason": exit_reason,
                     "exit_type": "h1_above_h4_ema50",
                     "h1_close": round(h1_close, 6),
                     "h4_ema50": round(h4_ema50, 6),
