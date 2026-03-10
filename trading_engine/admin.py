@@ -598,125 +598,116 @@ def _build_spx_momentum_html(spx_data: dict, spx_signal_rows: str, spx_signal_co
 
 def _get_mtf_ema_data() -> dict:
     from zoneinfo import ZoneInfo
+    from trading_engine.strategies.multi_timeframe import TARGET_ASSETS, HISTORICAL_DIP_H4_BARS
     et_zone = ZoneInfo("America/New_York")
     et_now = datetime.now(et_zone)
     ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
 
-    forex_symbols = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "NZD/USD", "USD/CAD", "USD/CHF", "EUR/GBP"]
-    symbols_data = []
+    grouped_data = {}
+    for group_name, group_symbols in TARGET_ASSETS.items():
+        grouped_data[group_name] = []
+        for symbol in group_symbols:
+            sym_info = {
+                "symbol": symbol, "group": group_name,
+                "d1_ema200": None, "d1_ema50": None, "d1_count": 0,
+                "h4_ema200": None, "h4_ema50": None, "h4_atr100": None, "h4_count": 0,
+                "h4_close": None,
+                "h1_close": None, "h1_count": 0,
+                "cond1_d1_filter_long": False,
+                "cond1_d1_filter_short": False,
+                "cond2_dip_found": False, "cond2_within_atr": False, "cond2_recovered": False,
+                "cond2_historical_dip": False, "cond2_max_breach": None,
+                "cond2_dip_timestamp": None,
+                "long_ready": False, "short_ready": False,
+            }
 
-    for symbol in forex_symbols:
-        sym_info = {
-            "symbol": symbol,
-            "d1_ema200": None, "d1_ema50": None, "d1_close": None, "d1_count": 0,
-            "d1_ema200_prev": None,
-            "h4_ema200": None, "h4_ema50": None, "h4_atr100": None, "h4_count": 0,
-            "h4_ema200_prev": None, "h4_ema200_earlier": None,
-            "h4_close": None,
-            "h1_ema20": None, "h1_ema20_prev": None,
-            "h1_close": None, "h1_close_prev": None, "h1_open": None,
-            "h1_count": 0,
-            "cond1_d1_filter": False,
-            "cond2_d1_rising": False, "cond2_h4_accel": False, "cond2_momentum": False,
-            "cond3_dip_found": False, "cond3_within_atr": False, "cond3_recovered": False, "cond3_pullback": False,
-            "cond3_max_breach": None,
-            "cond4_prev_below": False, "cond4_curr_above": False, "cond4_bullish_body": False, "cond4_h1_confirm": False,
-            "all_conditions": False,
-        }
+            d1_candles = get_candles(symbol, "D1", 300)
+            h4_candles = get_candles(symbol, "4H", 300)
+            h1_candles = get_candles(symbol, "1H", 300)
+            sym_info["d1_count"] = len(d1_candles)
+            sym_info["h4_count"] = len(h4_candles)
+            sym_info["h1_count"] = len(h1_candles)
 
-        d1_candles = get_candles(symbol, "D1", 300)
-        h4_candles = get_candles(symbol, "4H", 300)
-        h1_candles = get_candles(symbol, "1H", 300)
-        sym_info["d1_count"] = len(d1_candles)
-        sym_info["h4_count"] = len(h4_candles)
-        sym_info["h1_count"] = len(h1_candles)
+            if len(d1_candles) >= 200 and len(h4_candles) >= 200 and len(h1_candles) >= 20:
+                d1_closes = [c["close"] for c in d1_candles]
+                h4_closes = [c["close"] for c in h4_candles]
+                h4_highs = [c["high"] for c in h4_candles]
+                h4_lows = [c["low"] for c in h4_candles]
+                h1_closes = [c["close"] for c in h1_candles]
 
-        if len(d1_candles) >= 200 and len(h4_candles) >= 200 and len(h1_candles) >= 20:
-            d1_closes = [c["close"] for c in d1_candles]
-            h4_closes = [c["close"] for c in h4_candles]
-            h4_highs = [c["high"] for c in h4_candles]
-            h4_lows = [c["low"] for c in h4_candles]
-            h1_closes = [c["close"] for c in h1_candles]
-            h1_opens = [c["open"] for c in h1_candles]
+                d1_ema200 = IndicatorEngine.ema(d1_closes, 200)
+                d1_ema50 = IndicatorEngine.ema(d1_closes, 50)
+                h4_ema200 = IndicatorEngine.ema(h4_closes, 200)
+                h4_ema50 = IndicatorEngine.ema(h4_closes, 50)
+                h4_atr100 = IndicatorEngine.atr(h4_highs, h4_lows, h4_closes, 100)
 
-            d1_ema200 = IndicatorEngine.ema(d1_closes, 200)
-            d1_ema50 = IndicatorEngine.ema(d1_closes, 50)
-            h4_ema200 = IndicatorEngine.ema(h4_closes, 200)
-            h4_ema50 = IndicatorEngine.ema(h4_closes, 50)
-            h4_atr100 = IndicatorEngine.atr(h4_highs, h4_lows, h4_closes, 100)
-            h1_ema20 = IndicatorEngine.ema(h1_closes, 20)
+                sym_info["d1_ema200"] = d1_ema200[-1]
+                sym_info["d1_ema50"] = d1_ema50[-1]
+                sym_info["h4_ema200"] = h4_ema200[-1]
+                sym_info["h4_ema50"] = h4_ema50[-1]
+                sym_info["h4_atr100"] = h4_atr100[-1] if h4_atr100 else None
+                sym_info["h4_close"] = h4_closes[-1]
+                sym_info["h1_close"] = h1_closes[-1]
 
-            current_price = h1_closes[-1]
-            sym_info["d1_close"] = d1_closes[-1]
-            sym_info["d1_ema200"] = d1_ema200[-1]
-            sym_info["d1_ema50"] = d1_ema50[-1]
-            sym_info["d1_ema200_prev"] = d1_ema200[-2] if len(d1_ema200) >= 2 else None
-            sym_info["h4_ema200"] = h4_ema200[-1]
-            sym_info["h4_ema50"] = h4_ema50[-1]
-            sym_info["h4_atr100"] = h4_atr100[-1] if h4_atr100 else None
-            sym_info["h4_ema200_prev"] = h4_ema200[-2] if len(h4_ema200) >= 2 else None
-            sym_info["h4_ema200_earlier"] = h4_ema200[-3] if len(h4_ema200) >= 3 else None
-            sym_info["h4_close"] = h4_closes[-1]
-            sym_info["h1_ema20"] = h1_ema20[-1]
-            sym_info["h1_ema20_prev"] = h1_ema20[-2] if len(h1_ema20) >= 2 else None
-            sym_info["h1_close"] = current_price
-            sym_info["h1_close_prev"] = h1_closes[-2] if len(h1_closes) >= 2 else None
-            sym_info["h1_open"] = h1_opens[-1]
+                cond1_long = (d1_ema50[-1] is not None and d1_ema200[-1] is not None
+                              and d1_ema50[-1] > d1_ema200[-1])
+                cond1_short = (d1_ema50[-1] is not None and d1_ema200[-1] is not None
+                               and d1_ema50[-1] < d1_ema200[-1])
+                sym_info["cond1_d1_filter_long"] = cond1_long
+                sym_info["cond1_d1_filter_short"] = cond1_short
 
-            cond1 = (d1_ema50[-1] is not None and d1_ema200[-1] is not None
-                     and d1_ema50[-1] > d1_ema200[-1])
-            sym_info["cond1_d1_filter"] = cond1
+                n = HISTORICAL_DIP_H4_BARS
+                h4_closes_recent = h4_closes[-(n + 1):-1] if len(h4_closes) > n else h4_closes[:-1]
+                h4_timestamps = [c.get("timestamp", "") for c in h4_candles]
+                h4_ts_recent = h4_timestamps[-(n + 1):-1] if len(h4_timestamps) > n else h4_timestamps[:-1]
+                ema50_val = sym_info["h4_ema50"]
+                atr_val = sym_info["h4_atr100"]
+                h4_close_val = sym_info["h4_close"]
 
-            d1_rising = (sym_info["d1_ema200"] is not None and sym_info["d1_ema200_prev"] is not None
-                         and sym_info["d1_ema200"] > sym_info["d1_ema200_prev"])
-            h4_accel = False
-            if (sym_info["h4_ema200"] is not None and sym_info["h4_ema200_prev"] is not None
-                    and sym_info["h4_ema200_earlier"] is not None):
-                accel_now = sym_info["h4_ema200"] - sym_info["h4_ema200_prev"]
-                accel_prev = sym_info["h4_ema200_prev"] - sym_info["h4_ema200_earlier"]
-                h4_accel = accel_now > accel_prev
-            sym_info["cond2_d1_rising"] = d1_rising
-            sym_info["cond2_h4_accel"] = h4_accel
-            sym_info["cond2_momentum"] = d1_rising and h4_accel
+                if cond1_long and ema50_val is not None:
+                    max_breach = 0.0
+                    deepest_idx = None
+                    dip_found = False
+                    for i, c in enumerate(h4_closes_recent):
+                        if c < ema50_val:
+                            breach = ema50_val - c
+                            if breach > max_breach:
+                                max_breach = breach
+                                deepest_idx = i
+                            dip_found = True
+                    within_atr = (atr_val is not None and max_breach <= atr_val) if dip_found else False
+                    recovered = h4_close_val is not None and h4_close_val > ema50_val
+                    sym_info["cond2_dip_found"] = dip_found
+                    sym_info["cond2_within_atr"] = within_atr
+                    sym_info["cond2_recovered"] = recovered
+                    sym_info["cond2_max_breach"] = max_breach if dip_found else None
+                    sym_info["cond2_historical_dip"] = dip_found and within_atr and recovered
+                    if deepest_idx is not None and deepest_idx < len(h4_ts_recent):
+                        sym_info["cond2_dip_timestamp"] = str(h4_ts_recent[deepest_idx])
+                    sym_info["long_ready"] = cond1_long and sym_info["cond2_historical_dip"]
+                elif cond1_short and ema50_val is not None:
+                    max_breach = 0.0
+                    deepest_idx = None
+                    rally_found = False
+                    for i, c in enumerate(h4_closes_recent):
+                        if c > ema50_val:
+                            breach = c - ema50_val
+                            if breach > max_breach:
+                                max_breach = breach
+                                deepest_idx = i
+                            rally_found = True
+                    within_atr = (atr_val is not None and max_breach <= atr_val) if rally_found else False
+                    recovered = h4_close_val is not None and h4_close_val < ema50_val
+                    sym_info["cond2_dip_found"] = rally_found
+                    sym_info["cond2_within_atr"] = within_atr
+                    sym_info["cond2_recovered"] = recovered
+                    sym_info["cond2_max_breach"] = max_breach if rally_found else None
+                    sym_info["cond2_historical_dip"] = rally_found and within_atr and recovered
+                    if deepest_idx is not None and deepest_idx < len(h4_ts_recent):
+                        sym_info["cond2_dip_timestamp"] = str(h4_ts_recent[deepest_idx])
+                    sym_info["short_ready"] = cond1_short and sym_info["cond2_historical_dip"]
 
-            h4_lows_12 = h4_lows[-13:-1]
-            ema50_val = sym_info["h4_ema50"]
-            atr_val = sym_info["h4_atr100"]
-            h4_close_val = sym_info["h4_close"]
-            dip_found = any(lo < ema50_val for lo in h4_lows_12) if ema50_val is not None else False
-            max_breach = 0.0
-            within_atr = True
-            if dip_found:
-                breaches = [ema50_val - lo for lo in h4_lows_12 if lo < ema50_val]
-                max_breach = max(breaches) if breaches else 0.0
-                within_atr = (atr_val is not None and max_breach <= atr_val)
-            recovered = (h4_close_val is not None and ema50_val is not None
-                         and h4_close_val > ema50_val)
-            sym_info["cond3_dip_found"] = dip_found
-            sym_info["cond3_within_atr"] = within_atr if dip_found else False
-            sym_info["cond3_recovered"] = recovered
-            sym_info["cond3_max_breach"] = max_breach if dip_found else None
-            sym_info["cond3_pullback"] = dip_found and within_atr and recovered
-
-            prev_below = (sym_info["h1_close_prev"] is not None and sym_info["h1_ema20_prev"] is not None
-                          and sym_info["h1_close_prev"] < sym_info["h1_ema20_prev"])
-            curr_above = (current_price is not None and sym_info["h1_ema20"] is not None
-                          and current_price > sym_info["h1_ema20"])
-            bullish_body = (current_price is not None and sym_info["h1_open"] is not None
-                            and current_price > sym_info["h1_open"])
-            sym_info["cond4_prev_below"] = prev_below
-            sym_info["cond4_curr_above"] = curr_above
-            sym_info["cond4_bullish_body"] = bullish_body
-            sym_info["cond4_h1_confirm"] = prev_below and curr_above and bullish_body
-
-            sym_info["all_conditions"] = all([
-                sym_info["cond1_d1_filter"],
-                sym_info["cond2_momentum"],
-                sym_info["cond3_pullback"],
-                sym_info["cond4_h1_confirm"],
-            ])
-
-        symbols_data.append(sym_info)
+            grouped_data[group_name].append(sym_info)
 
     active_trades = get_active_signals(strategy_name="mtf_ema")
     open_positions_list = get_all_open_positions(strategy_name="mtf_ema")
@@ -725,31 +716,47 @@ def _get_mtf_ema_data() -> dict:
     for sig in active_trades:
         atr_at_entry = sig.get("atr_at_entry")
         entry_price = sig["entry_price"]
+        direction = sig["direction"]
         pos = pos_by_asset.get(sig["asset"])
-        stored_highest = (pos.get("highest_price_since_entry") if pos else None) or entry_price
         sym_candles = get_candles(sig["asset"], "1H", 5)
         cur_close = sym_candles[-1]["close"] if sym_candles else None
-        if cur_close:
-            stored_highest = max(stored_highest, cur_close)
-        trailing_stop = None
-        if atr_at_entry is not None:
-            trailing_stop = stored_highest - (atr_at_entry * 2.0)
+
+        if direction == "SHORT":
+            stored_extreme = (pos.get("lowest_price_since_entry") if pos else None) or entry_price
+            if cur_close:
+                stored_extreme = min(stored_extreme, cur_close)
+            trailing_stop = None
+            if atr_at_entry is not None:
+                trailing_stop = stored_extreme + (atr_at_entry * 2.0)
+        else:
+            stored_extreme = (pos.get("highest_price_since_entry") if pos else None) or entry_price
+            if cur_close:
+                stored_extreme = max(stored_extreme, cur_close)
+            trailing_stop = None
+            if atr_at_entry is not None:
+                trailing_stop = stored_extreme - (atr_at_entry * 2.0)
+
         trade_details.append({
             "id": sig["id"],
             "symbol": sig["asset"],
-            "direction": sig["direction"],
+            "direction": direction,
             "entry_price": entry_price,
             "atr_at_entry": atr_at_entry,
-            "highest_close": stored_highest,
+            "extreme_close": stored_extreme,
             "trailing_stop": trailing_stop,
             "current_close": cur_close,
             "created_at": sig.get("created_at"),
         })
 
+    all_symbols = []
+    for group_syms in grouped_data.values():
+        all_symbols.extend(group_syms)
+
     return {
         "et_time": et_now.strftime(f"%Y-%m-%d %H:%M:%S {'EDT' if ny_dst else 'EST'}"),
         "dst_active": ny_dst,
-        "symbols": symbols_data,
+        "grouped": grouped_data,
+        "symbols": all_symbols,
         "active_trades": trade_details,
     }
 
@@ -761,41 +768,76 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
     def _cond(val):
         return '<span style="color:#6ee7b7;">YES</span>' if val else '<span style="color:#fca5a5;">NO</span>'
 
-    symbols_html = ""
-    for sym in mtf_data["symbols"]:
-        data_status = ""
-        if sym["d1_count"] < 200 or sym["h4_count"] < 200 or sym["h1_count"] < 20:
-            data_status = f'<div style="color:#fbbf24;font-size:0.8rem;margin-top:6px;">D1: {sym["d1_count"]}/200, H4: {sym["h4_count"]}/200, H1: {sym["h1_count"]}/20</div>'
-        else:
-            breach_display = f'{sym["cond3_max_breach"]:.5f}' if sym["cond3_max_breach"] is not None else "—"
+    group_colors = {
+        "indices": ("#1e3a5f", "#93c5fd", "Indices"),
+        "commodities": ("#3b2f1e", "#fcd34d", "Commodities"),
+        "crypto": ("#3b1f4e", "#c4b5fd", "Crypto"),
+        "forex": ("#1e3a2f", "#86efac", "Forex"),
+        "etfs": ("#1e2d3a", "#7dd3fc", "ETFs"),
+    }
 
-            data_status = f"""
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.8rem;">
-                <div>D1 EMA50: {_fmt(sym["d1_ema50"])}</div>
-                <div>D1 EMA200: {_fmt(sym["d1_ema200"])}</div>
-                <div>H4 EMA50: {_fmt(sym["h4_ema50"])}</div>
-                <div>H4 EMA200: {_fmt(sym["h4_ema200"])}</div>
-                <div>H4 ATR100: {_fmt(sym["h4_atr100"], 6)}</div>
-                <div>H4 Close: {_fmt(sym["h4_close"])}</div>
-                <div>H1 EMA20: {_fmt(sym["h1_ema20"])}</div>
-                <div>H1 Close: {_fmt(sym["h1_close"])}</div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr;gap:4px;margin-top:8px;font-size:0.8rem;border-top:1px solid #334155;padding-top:8px;">
-                <div><strong>C1 — D1 Filter:</strong> EMA50 &gt; EMA200: {_cond(sym["cond1_d1_filter"])}</div>
-                <div><strong>C2 — Momentum:</strong> D1 Rising: {_cond(sym["cond2_d1_rising"])} | H4 Accel: {_cond(sym["cond2_h4_accel"])} → {_cond(sym["cond2_momentum"])}</div>
-                <div><strong>C3 — H4 Pullback:</strong> Dip: {_cond(sym["cond3_dip_found"])} | ≤1 ATR: {_cond(sym["cond3_within_atr"])} (breach: {breach_display}) | Recovered: {_cond(sym["cond3_recovered"])} → {_cond(sym["cond3_pullback"])}</div>
-                <div><strong>C4 — H1 Confirm:</strong> Prev&lt;EMA20: {_cond(sym["cond4_prev_below"])} | Curr&gt;EMA20: {_cond(sym["cond4_curr_above"])} | Bull Body: {_cond(sym["cond4_bullish_body"])} → {_cond(sym["cond4_h1_confirm"])}</div>
-                <div style="margin-top:4px;padding-top:4px;border-top:1px solid #334155;"><strong>All Met:</strong> {_cond(sym["all_conditions"])}</div>
+    def _dp(sym):
+        return 5 if "/" in sym else 2
+
+    sections_html = ""
+    for group_name, group_syms in mtf_data.get("grouped", {}).items():
+        bg_color, text_color, label = group_colors.get(group_name, ("#1e293b", "#e2e8f0", group_name.title()))
+        cards_html = ""
+        for sym in group_syms:
+            dp = _dp(sym["symbol"])
+            data_status = ""
+            if sym["d1_count"] < 200 or sym["h4_count"] < 200 or sym["h1_count"] < 20:
+                data_status = f'<div style="color:#fbbf24;font-size:0.8rem;margin-top:6px;">D1: {sym["d1_count"]}/200, H4: {sym["h4_count"]}/200, H1: {sym["h1_count"]}/20</div>'
+            else:
+                breach_display = f'{sym["cond2_max_breach"]:.{dp}f}' if sym["cond2_max_breach"] is not None else "—"
+                dip_ts = sym.get("cond2_dip_timestamp") or "—"
+
+                trend_dir = "NEUTRAL"
+                trend_color = "#94a3b8"
+                if sym["cond1_d1_filter_long"]:
+                    trend_dir = "BULLISH"
+                    trend_color = "#6ee7b7"
+                elif sym["cond1_d1_filter_short"]:
+                    trend_dir = "BEARISH"
+                    trend_color = "#fca5a5"
+
+                data_status = f"""
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.8rem;">
+                    <div>D1 EMA50: {_fmt(sym["d1_ema50"], dp)}</div>
+                    <div>D1 EMA200: {_fmt(sym["d1_ema200"], dp)}</div>
+                    <div>H4 EMA50: {_fmt(sym["h4_ema50"], dp)}</div>
+                    <div>H4 ATR100: {_fmt(sym["h4_atr100"], dp + 1)}</div>
+                    <div>H4 Close: {_fmt(sym["h4_close"], dp)}</div>
+                    <div>H1 Close: {_fmt(sym["h1_close"], dp)}</div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr;gap:4px;margin-top:8px;font-size:0.8rem;border-top:1px solid #334155;padding-top:8px;">
+                    <div><strong>C1 — D1 Trend Gate:</strong> EMA50 vs EMA200: <span style="color:{trend_color};font-weight:600;">{trend_dir}</span></div>
+                    <div><strong>C2 — Historical {"Rally" if sym["cond1_d1_filter_short"] else "Dip"}:</strong> {"Rally" if sym["cond1_d1_filter_short"] else "Dip"}: {_cond(sym["cond2_dip_found"])} | &le;1 ATR: {_cond(sym["cond2_within_atr"])} (breach: {breach_display}) | Recovered: {_cond(sym["cond2_recovered"])} &rarr; {_cond(sym["cond2_historical_dip"])}</div>
+                    <div style="font-size:0.75rem;color:#64748b;padding-left:4px;">Dip timestamp: {dip_ts}</div>
+                    <div style="margin-top:4px;padding-top:4px;border-top:1px solid #334155;"><strong>Signal Ready:</strong> {_cond(sym["long_ready"] or sym["short_ready"])}</div>
+                </div>"""
+
+            signal_badge = ""
+            if sym["long_ready"]:
+                signal_badge = ' <span class="badge buy" style="font-size:0.7rem;">LONG READY</span>'
+            elif sym["short_ready"]:
+                signal_badge = ' <span class="badge sell" style="font-size:0.7rem;">SHORT READY</span>'
+
+            cards_html += f"""
+            <div class="stat-card" style="min-width:250px;" data-testid="mtf-card-{sym['symbol'].replace('/','-')}">
+                <div class="stat-label">{sym["symbol"]}{signal_badge}</div>
+                {data_status}
             </div>"""
 
-        all_badge = ""
-        if sym["all_conditions"]:
-            all_badge = ' <span class="badge status-active">READY</span>'
-
-        symbols_html += f"""
-        <div class="stat-card" style="min-width:250px;">
-            <div class="stat-label">{sym["symbol"]}{all_badge}</div>
-            {data_status}
+        sections_html += f"""
+        <div style="margin-top:16px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                <span class="badge" style="background:{bg_color};color:{text_color};font-size:0.8rem;">{label}</span>
+                <span style="color:#64748b;font-size:0.8rem;">{len(group_syms)} assets</span>
+            </div>
+            <div class="stats-grid" style="grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
+                {cards_html}
+            </div>
         </div>"""
 
     active_html = ""
@@ -804,25 +846,29 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
             entry = trade["entry_price"]
             atr_e = trade["atr_at_entry"]
             trail = trade["trailing_stop"]
-            highest = trade["highest_close"]
+            extreme = trade["extreme_close"]
             cur = trade["current_close"]
+            direction = trade["direction"]
+            is_short = direction == "SHORT"
             pnl = ""
             if cur is not None and entry:
-                diff = cur - entry
+                diff = (entry - cur) if is_short else (cur - entry)
                 pnl_pct = (diff / entry) * 100
                 pnl_color = "#6ee7b7" if diff >= 0 else "#fca5a5"
                 pnl = f'<span style="color:{pnl_color};font-weight:600;">{diff:+.5f} ({pnl_pct:+.2f}%)</span>'
+            extreme_label = "Lowest" if is_short else "Highest"
+            dir_color = "#ef4444" if is_short else "#3b82f6"
 
             active_html += f"""
-        <div class="settings-section" style="margin-top:12px;border-left:3px solid #3b82f6;">
-            <h3>{trade["symbol"]} - {trade["direction"]}</h3>
+        <div class="settings-section" style="margin-top:12px;border-left:3px solid {dir_color};">
+            <h3>{trade["symbol"]} - {direction}</h3>
             <div class="stats-grid" style="margin-top:8px;">
                 <div class="stat-card"><div class="stat-label">Entry</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(entry)}</div></div>
                 <div class="stat-card"><div class="stat-label">Fixed ATR</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(atr_e, 6)}</div></div>
                 <div class="stat-card"><div class="stat-label">Trail Stop</div><div class="stat-value" style="font-size:1.1rem;color:#fbbf24;">{_fmt(trail)}</div></div>
-                <div class="stat-card"><div class="stat-label">Highest</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(highest)}</div></div>
+                <div class="stat-card"><div class="stat-label">{extreme_label}</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(extreme)}</div></div>
                 <div class="stat-card"><div class="stat-label">Current</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(cur)}</div></div>
-                <div class="stat-card"><div class="stat-label">P&L</div><div class="stat-value" style="font-size:1.1rem;">{pnl}</div></div>
+                <div class="stat-card"><div class="stat-label">P&amp;L</div><div class="stat-value" style="font-size:1.1rem;">{pnl}</div></div>
             </div>
             <div class="stat-label" style="margin-top:6px;">Opened: {trade.get("created_at", "N/A")}</div>
         </div>"""
@@ -840,10 +886,8 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
         <div class="stat-label" style="margin-top:4px;">DST: {'Active' if mtf_data['dst_active'] else 'Inactive'}</div>
     </div>
     <div class="settings-section">
-        <h3>Multi-Timeframe Conditions</h3>
-        <div class="stats-grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
-            {symbols_html}
-        </div>
+        <h3>Multi-Timeframe Conditions <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">27 assets &middot; 5 groups &middot; Hourly at :01 ET</span></h3>
+        {sections_html}
     </div>
     {active_html}
     <div class="settings-section" style="margin-top:20px;">
@@ -871,20 +915,48 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
         <p style="color:#94a3b8;margin-top:4px;font-size:0.85rem;">Multi-Timeframe EMA strategy using D1 + H4 + H1 timeframe synchronization with trend-pullback entry logic and dual exit management.</p>
 
         <div style="margin-top:16px;">
-            <h4 style="color:#e2e8f0;margin-bottom:8px;font-size:0.95rem;">Covered Assets (12)</h4>
-            <div style="display:flex;flex-wrap:wrap;gap:6px;">
-                <span class="badge status-active">SPX</span>
-                <span class="badge status-active">NDX</span>
-                <span class="badge status-active">RUT</span>
-                <span class="badge" style="background:#1e3a5f;color:#93c5fd;">XAU/USD</span>
-                <span class="badge" style="background:#1e3a5f;color:#93c5fd;">XAG/USD</span>
-                <span class="badge" style="background:#1e3a5f;color:#93c5fd;">OSX</span>
+            <h4 style="color:#e2e8f0;margin-bottom:8px;font-size:0.95rem;">Covered Assets (27)</h4>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+                <span style="color:#93c5fd;font-size:0.75rem;font-weight:600;">INDICES:</span>
+                <span class="badge" style="background:#1e3a5f;color:#93c5fd;">SPX</span>
+                <span class="badge" style="background:#1e3a5f;color:#93c5fd;">NDX</span>
+                <span class="badge" style="background:#1e3a5f;color:#93c5fd;">RUT</span>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+                <span style="color:#fcd34d;font-size:0.75rem;font-weight:600;">COMMODITIES:</span>
+                <span class="badge" style="background:#3b2f1e;color:#fcd34d;">XAU/USD</span>
+                <span class="badge" style="background:#3b2f1e;color:#fcd34d;">XAG/USD</span>
+                <span class="badge" style="background:#3b2f1e;color:#fcd34d;">OSX</span>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+                <span style="color:#c4b5fd;font-size:0.75rem;font-weight:600;">CRYPTO:</span>
                 <span class="badge" style="background:#3b1f4e;color:#c4b5fd;">BTC/USD</span>
                 <span class="badge" style="background:#3b1f4e;color:#c4b5fd;">ETH/USD</span>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+                <span style="color:#86efac;font-size:0.75rem;font-weight:600;">FOREX:</span>
                 <span class="badge" style="background:#1e3a2f;color:#86efac;">EUR/USD</span>
                 <span class="badge" style="background:#1e3a2f;color:#86efac;">USD/JPY</span>
                 <span class="badge" style="background:#1e3a2f;color:#86efac;">GBP/USD</span>
                 <span class="badge" style="background:#1e3a2f;color:#86efac;">AUD/USD</span>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                <span style="color:#7dd3fc;font-size:0.75rem;font-weight:600;">ETFs:</span>
+                <span class="badge" style="background:#1e2d3a;color:#7dd3fc;">CORN</span>
+                <span class="badge" style="background:#1e2d3a;color:#7dd3fc;">SOYB</span>
+                <span class="badge" style="background:#1e2d3a;color:#7dd3fc;">WEAT</span>
+                <span class="badge" style="background:#1e2d3a;color:#7dd3fc;">CANE</span>
+                <span class="badge" style="background:#1e2d3a;color:#7dd3fc;">WOOD</span>
+                <span class="badge" style="background:#1e2d3a;color:#7dd3fc;">USO</span>
+                <span class="badge" style="background:#1e2d3a;color:#7dd3fc;">UNG</span>
+                <span class="badge" style="background:#1e2d3a;color:#7dd3fc;">UGA</span>
+                <span class="badge" style="background:#1e2d3a;color:#7dd3fc;">SGOL</span>
+                <span class="badge" style="background:#1e2d3a;color:#7dd3fc;">SIVR</span>
+                <span class="badge" style="background:#1e2d3a;color:#7dd3fc;">CPER</span>
+                <span class="badge" style="background:#1e2d3a;color:#7dd3fc;">PPLT</span>
+                <span class="badge" style="background:#1e2d3a;color:#7dd3fc;">PALL</span>
+                <span class="badge" style="background:#1e2d3a;color:#7dd3fc;">DBB</span>
+                <span class="badge" style="background:#1e2d3a;color:#7dd3fc;">SLX</span>
             </div>
         </div>
 
@@ -893,18 +965,18 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
             <div class="stats-grid" style="grid-template-columns:repeat(3, 1fr);">
                 <div class="stat-card">
                     <div class="stat-label">D1 (Daily)</div>
-                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:4px;">Trend Direction</div>
-                    <div style="font-size:0.78rem;margin-top:6px;">EMA 200 &mdash; Primary trend<br>EMA 50 &mdash; Secondary trend</div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:4px;">Trend Direction (Hard Gate)</div>
+                    <div style="font-size:0.78rem;margin-top:6px;">EMA 50 vs EMA 200 &mdash; Trend filter</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">H4 (4-Hour)</div>
-                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:4px;">Momentum &amp; Pullback</div>
-                    <div style="font-size:0.78rem;margin-top:6px;">EMA 50 &mdash; Pullback zone<br>EMA 200 &mdash; Slope acceleration<br>ATR 100 &mdash; Volatility measure</div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:4px;">Historical Dip Analysis</div>
+                    <div style="font-size:0.78rem;margin-top:6px;">EMA 50 &mdash; Dip/recovery zone<br>ATR 100 &mdash; Breach threshold</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">H1 (1-Hour)</div>
-                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:4px;">Entry Trigger</div>
-                    <div style="font-size:0.78rem;margin-top:6px;">EMA 20 &mdash; Crossover signal<br>Candle body &mdash; Confirmation</div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:4px;">Exit Monitoring</div>
+                    <div style="font-size:0.78rem;margin-top:6px;">H1 close vs H4 EMA 50 &mdash; Exit trigger</div>
                 </div>
             </div>
         </div>
@@ -917,55 +989,38 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
                         <tr><th>Indicator</th><th style="text-align:center;">D1</th><th style="text-align:center;">H4</th><th style="text-align:center;">H1</th><th>Purpose</th></tr>
                     </thead>
                     <tbody>
-                        <tr><td>EMA 20</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td>H1 crossover trigger</td></tr>
-                        <tr><td>EMA 50</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td>Pullback zone &amp; exit level</td></tr>
-                        <tr><td>EMA 200</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td>Trend direction &amp; slope</td></tr>
-                        <tr><td>ATR 100</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td>Stop loss &amp; trailing stop</td></tr>
+                        <tr><td>EMA 50</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#64748b;">&mdash;</td><td>D1 trend gate &amp; H4 dip/recovery zone</td></tr>
+                        <tr><td>EMA 200</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#64748b;">&mdash;</td><td style="text-align:center;color:#64748b;">&mdash;</td><td>D1 trend direction filter</td></tr>
+                        <tr><td>ATR 100</td><td style="text-align:center;color:#64748b;">&mdash;</td><td style="text-align:center;color:#6ee7b7;">&#10003;</td><td style="text-align:center;color:#64748b;">&mdash;</td><td>Dip breach threshold (1.0&times;)</td></tr>
                     </tbody>
                 </table>
             </div>
         </div>
 
         <div style="margin-top:20px;">
-            <h4 style="color:#6ee7b7;margin-bottom:8px;font-size:0.95rem;">&#9650; Long Entry Conditions (all 4 must be met)</h4>
+            <h4 style="color:#6ee7b7;margin-bottom:8px;font-size:0.95rem;">&#9650; Long Entry Conditions (both must be met)</h4>
             <div style="border-left:3px solid #22c55e;padding-left:12px;">
                 <div style="margin-bottom:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-active" style="font-size:0.7rem;">1</span><strong style="font-size:0.85rem;">D1 Trend Validation</strong></div>
-                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">Price must be above both D1 EMA 200 and D1 EMA 50, confirming a bullish macro trend.</div>
+                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-active" style="font-size:0.7rem;">1</span><strong style="font-size:0.85rem;">D1 EMA50/200 Trend Filter (Hard Gate)</strong></div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">D1 EMA 50 must be above D1 EMA 200, confirming a bullish macro trend. If this fails, Condition 2 is skipped entirely.</div>
                 </div>
                 <div style="margin-bottom:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-active" style="font-size:0.7rem;">2</span><strong style="font-size:0.85rem;">Slope Acceleration</strong></div>
-                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">D1 EMA 200 must be rising (current &gt; previous). H4 EMA 200 must be accelerating upward: (current &minus; prev) &gt; (prev &minus; earlier).</div>
-                </div>
-                <div style="margin-bottom:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-active" style="font-size:0.7rem;">3</span><strong style="font-size:0.85rem;">Pullback Validation</strong></div>
-                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">Price must be below H4 EMA 50 (dipped into pullback zone) AND within 1&times; H4 ATR 100 of the H4 EMA 50.</div>
-                </div>
-                <div style="margin-bottom:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-active" style="font-size:0.7rem;">4</span><strong style="font-size:0.85rem;">H1 Confirmation</strong></div>
-                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">Previous H1 close was below H1 EMA 20, current H1 close is above H1 EMA 20 (crossover). Current H1 candle must have a bullish body (Close &gt; Open).</div>
+                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-active" style="font-size:0.7rem;">2</span><strong style="font-size:0.85rem;">Historical H4 Dip Analysis</strong></div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">Over the last 12 H4 bars, at least one H4 <strong style="color:#e2e8f0;">close</strong> must have retraced below H4 EMA 50 within 1.0&times; ATR(100), and the current H4 close must have recovered above H4 EMA 50.</div>
                 </div>
             </div>
         </div>
 
         <div style="margin-top:20px;">
-            <h4 style="color:#fca5a5;margin-bottom:8px;font-size:0.95rem;">&#9660; Short Entry Conditions (mirrored &mdash; all 4 must be met)</h4>
+            <h4 style="color:#fca5a5;margin-bottom:8px;font-size:0.95rem;">&#9660; Short Entry Conditions (mirrored &mdash; both must be met)</h4>
             <div style="border-left:3px solid #ef4444;padding-left:12px;">
                 <div style="margin-bottom:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-closed" style="font-size:0.7rem;">1</span><strong style="font-size:0.85rem;">D1 Trend Validation</strong></div>
-                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">Price must be below both D1 EMA 200 and D1 EMA 50, confirming a bearish macro trend.</div>
+                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-closed" style="font-size:0.7rem;">1</span><strong style="font-size:0.85rem;">D1 EMA50/200 Trend Filter (Hard Gate)</strong></div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">D1 EMA 50 must be below D1 EMA 200, confirming a bearish macro trend. If this fails, Condition 2 is skipped entirely.</div>
                 </div>
                 <div style="margin-bottom:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-closed" style="font-size:0.7rem;">2</span><strong style="font-size:0.85rem;">Slope Acceleration</strong></div>
-                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">D1 EMA 200 must be falling (current &lt; previous). H4 EMA 200 must be accelerating downward: (prev &minus; current) &gt; (earlier &minus; prev).</div>
-                </div>
-                <div style="margin-bottom:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-closed" style="font-size:0.7rem;">3</span><strong style="font-size:0.85rem;">Pullback Validation</strong></div>
-                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">Price must be above H4 EMA 50 (rallied into pullback zone) AND within 1&times; H4 ATR 100 of the H4 EMA 50.</div>
-                </div>
-                <div style="margin-bottom:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-closed" style="font-size:0.7rem;">4</span><strong style="font-size:0.85rem;">H1 Confirmation</strong></div>
-                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">Previous H1 close was above H1 EMA 20, current H1 close is below H1 EMA 20 (crossover). Current H1 candle must have a bearish body (Close &lt; Open).</div>
+                    <div style="display:flex;align-items:center;gap:8px;"><span class="badge status-closed" style="font-size:0.7rem;">2</span><strong style="font-size:0.85rem;">Historical H4 Rally Analysis</strong></div>
+                    <div style="font-size:0.8rem;color:#94a3b8;margin-top:2px;padding-left:28px;">Over the last 12 H4 bars, at least one H4 <strong style="color:#e2e8f0;">close</strong> must have rallied above H4 EMA 50 within 1.0&times; ATR(100), and the current H4 close must have recovered below H4 EMA 50.</div>
                 </div>
             </div>
         </div>
@@ -1002,16 +1057,16 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
             <div class="stat-card" style="border-left:3px solid #f59e0b;margin-bottom:8px;">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
                     <span class="badge" style="background:#f59e0b;color:#1e293b;font-size:0.7rem;">PRIORITY 1</span>
-                    <strong style="font-size:0.9rem;">H4 EMA 50 Breach Exit</strong>
+                    <strong style="font-size:0.9rem;">H1 Close vs H4 EMA 50 Exit</strong>
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
                     <div style="background:#1a2332;border-radius:6px;padding:10px;">
                         <div style="font-size:0.82rem;font-weight:600;color:#6ee7b7;margin-bottom:4px;">Long Exit</div>
-                        <div style="font-size:0.78rem;color:#94a3b8;">Exit immediately when an H4 candle <strong style="color:#e2e8f0;">closes below</strong> the H4 EMA 50. The pullback zone has been lost.</div>
+                        <div style="font-size:0.78rem;color:#94a3b8;">Exit when <strong style="color:#e2e8f0;">H1 close &lt; H4 EMA 50</strong>. The pullback zone has been lost.</div>
                     </div>
                     <div style="background:#1a2332;border-radius:6px;padding:10px;">
                         <div style="font-size:0.82rem;font-weight:600;color:#fca5a5;margin-bottom:4px;">Short Exit</div>
-                        <div style="font-size:0.78rem;color:#94a3b8;">Exit immediately when an H4 candle <strong style="color:#e2e8f0;">closes above</strong> the H4 EMA 50. The pullback zone has been lost.</div>
+                        <div style="font-size:0.78rem;color:#94a3b8;">Exit when <strong style="color:#e2e8f0;">H1 close &gt; H4 EMA 50</strong>. The pullback zone has been lost.</div>
                     </div>
                 </div>
             </div>
@@ -1034,23 +1089,23 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
         </div>
 
         <div style="margin-top:20px;">
-            <h4 style="color:#e2e8f0;margin-bottom:8px;font-size:0.95rem;">Exit Diagnostics Logging</h4>
+            <h4 style="color:#e2e8f0;margin-bottom:8px;font-size:0.95rem;">Signal Metadata Logging</h4>
             <div class="stats-grid" style="grid-template-columns:1fr 1fr;">
                 <div class="stat-card">
-                    <div class="stat-label">D1 EMA 200 Slope</div>
-                    <div style="font-size:0.78rem;color:#94a3b8;margin-top:4px;">current &minus; previous value. Positive = rising daily trend, negative = falling.</div>
+                    <div class="stat-label">historical_dip_timestamp</div>
+                    <div style="font-size:0.78rem;color:#94a3b8;margin-top:4px;">Timestamp of the deepest H4 close breach below/above EMA 50 in the lookback window.</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">H4 EMA 200 Slope</div>
-                    <div style="font-size:0.78rem;color:#94a3b8;margin-top:4px;">Current and previous period slopes logged separately to show momentum direction.</div>
+                    <div class="stat-label">D1 Trend Direction</div>
+                    <div style="font-size:0.78rem;color:#94a3b8;margin-top:4px;">BULLISH (EMA50 &gt; EMA200) or BEARISH (EMA50 &lt; EMA200). Determines LONG vs SHORT direction.</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">H4 EMA 200 Acceleration</div>
-                    <div style="font-size:0.78rem;color:#94a3b8;margin-top:4px;">Difference between current slope and previous slope. Shows if momentum is increasing or decaying.</div>
+                    <div class="stat-label">Dip Breach Distance</div>
+                    <div style="font-size:0.78rem;color:#94a3b8;margin-top:4px;">Maximum distance of any H4 close from H4 EMA 50. Must be &le; 1.0 &times; ATR(100).</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">Pullback Depth</div>
-                    <div style="font-size:0.78rem;color:#94a3b8;margin-top:4px;">H4 close minus H4 EMA 50. Shows how far price has moved from the key pullback level.</div>
+                    <div class="stat-label">Recovery Status</div>
+                    <div style="font-size:0.78rem;color:#94a3b8;margin-top:4px;">Whether the current H4 close has returned to the correct side of H4 EMA 50.</div>
                 </div>
             </div>
         </div>
@@ -1086,8 +1141,9 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
                         <tr><td style="font-family:monospace;font-size:0.78rem;">TRAILING_STOP_ATR_MULT</td><td>2.0</td><td>Trailing stop distance</td></tr>
                         <tr><td style="font-family:monospace;font-size:0.78rem;">STRUCTURAL_LOOKBACK_H1</td><td>24</td><td>H1 candles to scan for structural stop</td></tr>
                         <tr><td style="font-family:monospace;font-size:0.78rem;">STRUCTURAL_PIP_BUFFER</td><td>0.0002</td><td>2-pip buffer on structural stop</td></tr>
-                        <tr><td style="font-family:monospace;font-size:0.78rem;">EMA periods</td><td>20 / 50 / 200</td><td>Fast / Medium / Slow EMA</td></tr>
-                        <tr><td style="font-family:monospace;font-size:0.78rem;">ATR period</td><td>100</td><td>Volatility lookback</td></tr>
+                        <tr><td style="font-family:monospace;font-size:0.78rem;">HISTORICAL_DIP_H4_BARS</td><td>12</td><td>H4 bars lookback for dip analysis</td></tr>
+                        <tr><td style="font-family:monospace;font-size:0.78rem;">EMA periods</td><td>50 / 200</td><td>Medium / Slow EMA (D1 gate)</td></tr>
+                        <tr><td style="font-family:monospace;font-size:0.78rem;">ATR period</td><td>100</td><td>Volatility lookback (H4)</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -1993,7 +2049,16 @@ def _get_signal_analysis_data() -> dict:
         "DBB", "SLX",
     ]
     trend_fx_symbols = ["EUR/USD", "USD/JPY"]
-    mtf_symbols = ["SPX", "NDX", "RUT", "XAU/USD", "XAG/USD", "OSX", "BTC/USD", "ETH/USD", "EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"]
+    mtf_symbols = [
+        "SPX", "NDX", "RUT",
+        "XAU/USD", "XAG/USD", "OSX",
+        "BTC/USD", "ETH/USD",
+        "EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD",
+        "CORN", "SOYB", "WEAT", "CANE", "WOOD",
+        "USO", "UNG", "UGA",
+        "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+        "DBB", "SLX",
+    ]
 
     def _dp(sym):
         return 5 if "/" in sym else 2
