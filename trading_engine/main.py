@@ -67,6 +67,9 @@ api_client = FCSAPIClient()
 cache = CacheLayer(api_client)
 strategy_engine = StrategyEngine(cache)
 
+from trading_engine import engine_registry as _engine_registry
+_engine_registry.register(strategy_engine)
+
 
 def _get_et_context() -> dict:
     now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)

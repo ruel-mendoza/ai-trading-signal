@@ -5911,3 +5911,86 @@ def api_test_user_cms_config(request: Request, config_id: int):
     if ok:
         return JSONResponse(content={"status": "ok", "message": message, "site_name": site_name or ""})
     return JSONResponse(content={"status": "error", "message": message})
+
+
+@router.post("/api/check-exits/trend-non-forex")
+def api_check_exits_trend_non_forex(request: Request):
+    """On-demand exit check for trend_non_forex — bypasses the 4:01 PM ET gate.
+    Useful for manually triggering trailing stop evaluation when a position may be stuck."""
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    user = _get_session_user(request)
+    from trading_engine import engine_registry
+    engine = engine_registry.get_engine()
+    if engine is None:
+        return JSONResponse(content={"error": "Strategy engine not available"}, status_code=503)
+    logger.info(
+        f"[ADMIN] Manual trend_non_forex exit check triggered by user={user.get('username')}"
+    )
+    try:
+        exits = engine.trend_non_forex_strategy.check_exits()
+        logger.info(f"[ADMIN] Manual exit check complete: {len(exits)} position(s) closed")
+        return JSONResponse(content={
+            "status": "ok",
+            "exits_triggered": len(exits),
+            "closed": exits,
+        })
+    except Exception as e:
+        logger.error(f"[ADMIN] Manual trend_non_forex exit check failed: {e}", exc_info=True)
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@router.post("/api/force-close-position")
+def api_force_close_position(request: Request, body: dict = Body(...)):
+    """Force-close a stuck open position and its associated open signals.
+    Body: { "strategy_name": "trend_non_forex", "asset": "SPX",
+            "exit_price": 6672.62, "exit_reason": "Manual admin close" }"""
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    user = _get_session_user(request)
+    from trading_engine.database import (
+        get_active_signals, close_signal, close_position, get_open_position
+    )
+
+    strategy_name = body.get("strategy_name")
+    asset = body.get("asset")
+    exit_price = body.get("exit_price")
+    exit_reason = body.get("exit_reason", f"Admin force-close by {user.get('username')}")
+
+    if not strategy_name or not asset:
+        return JSONResponse(content={"error": "strategy_name and asset are required"}, status_code=400)
+
+    pos = get_open_position(strategy_name, asset)
+    if not pos:
+        return JSONResponse(
+            content={"error": f"No open position found for {strategy_name}/{asset}"},
+            status_code=404,
+        )
+
+    logger.info(
+        f"[ADMIN] Force-closing position #{pos['id']} | {strategy_name}/{asset} | "
+        f"exit_price={exit_price} | reason='{exit_reason}' | "
+        f"triggered_by={user.get('username')}"
+    )
+
+    closed_sigs = []
+    active_sigs = get_active_signals(strategy_name=strategy_name, asset=asset)
+    for sig in active_sigs:
+        close_signal(sig["id"], exit_reason, exit_price=exit_price)
+        closed_sigs.append(sig["id"])
+        logger.info(f"[ADMIN] Closed signal #{sig['id']} for {asset}")
+
+    close_position(strategy_name, asset)
+    logger.info(f"[ADMIN] Closed open position #{pos['id']} for {strategy_name}/{asset}")
+
+    return JSONResponse(content={
+        "status": "closed",
+        "position_id": pos["id"],
+        "strategy_name": strategy_name,
+        "asset": asset,
+        "exit_price": exit_price,
+        "exit_reason": exit_reason,
+        "signals_closed": closed_sigs,
+    })

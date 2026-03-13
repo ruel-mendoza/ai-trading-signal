@@ -81,6 +81,8 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
         return in_window
 
     def _get_advance_price(self, asset: str) -> Optional[dict]:
+        from trading_engine.fcsapi_client import STOCK_INDEX_SYMBOLS
+
         if asset in self._batch_prices:
             quote = self._batch_prices[asset]
             logger.info(
@@ -89,16 +91,77 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             )
             return quote
 
+        # Index symbols (SPX, NDX, RUT, DJI) must use the advance endpoint with type=index,
+        # NOT stock/latest with type=fund&exchange=AMEX which returns wrong fund data.
+        if asset in STOCK_INDEX_SYMBOLS:
+            logger.info(
+                f"[TREND-NONFX] {asset} | Index symbol detected — fetching via advance endpoint "
+                f"(type=index, NOT stock/latest)"
+            )
+            try:
+                api_client = self.cache.api_client
+                advance_results = api_client.get_advance_data([asset], period="1d", merge="latest,profile")
+                logger.debug(
+                    f"[TREND-NONFX] {asset} | advance endpoint returned {len(advance_results)} result(s): "
+                    f"{[r.get('symbol') for r in advance_results]}"
+                )
+                for result in advance_results:
+                    if result.get("symbol") == asset:
+                        current = result.get("current", {})
+                        close_price = current.get("close")
+                        ts = current.get("timestamp", "")
+                        logger.info(
+                            f"[TREND-NONFX] {asset} | Advance index price: close={close_price} | "
+                            f"high={current.get('high')} | low={current.get('low')} | timestamp={ts}"
+                        )
+                        logger.debug(
+                            f"[TREND-NONFX] {asset} | Raw advance current block: {current}"
+                        )
+                        if close_price is not None:
+                            return {
+                                "close": close_price,
+                                "high": current.get("high"),
+                                "low": current.get("low"),
+                                "open": current.get("open"),
+                                "timestamp": ts,
+                            }
+                        else:
+                            logger.warning(
+                                f"[TREND-NONFX] {asset} | Advance endpoint returned null close — "
+                                f"raw current block: {current}"
+                            )
+                logger.warning(
+                    f"[TREND-NONFX] {asset} | Advance endpoint returned no matching result for index. "
+                    f"Symbols in response: {[r.get('symbol') for r in advance_results]}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"[TREND-NONFX] {asset} | Advance index price request failed: {e}", exc_info=True
+                )
+            return None
+
         logger.info(f"[TREND-NONFX] {asset} | Not in batch cache, fetching individually via stock/latest")
         try:
             api_client = self.cache.api_client
             single_result = api_client.get_stock_latest_prices([asset], batch_size=1)
+            logger.debug(
+                f"[TREND-NONFX] {asset} | stock/latest individual fetch result keys: "
+                f"{list(single_result.keys())}"
+            )
             if asset in single_result:
-                return single_result[asset]
+                q = single_result[asset]
+                logger.info(
+                    f"[TREND-NONFX] {asset} | stock/latest price: close={q.get('close')} | "
+                    f"timestamp={q.get('timestamp', '')}"
+                )
+                return q
             else:
-                logger.warning(f"[TREND-NONFX] {asset} | stock/latest returned no data")
+                logger.warning(
+                    f"[TREND-NONFX] {asset} | stock/latest returned no data. "
+                    f"Keys in response: {list(single_result.keys())}"
+                )
         except Exception as e:
-            logger.error(f"[TREND-NONFX] {asset} | stock/latest request failed: {e}")
+            logger.error(f"[TREND-NONFX] {asset} | stock/latest request failed: {e}", exc_info=True)
         return None
 
     def evaluate(
@@ -304,26 +367,47 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                 f"[TREND-NONFX-EXIT] Position #{pos_id} | ATR locked at entry: {atr_at_entry:.6f} (read from DB)"
             )
 
+            logger.debug(
+                f"[TREND-NONFX-EXIT] Position #{pos_id} | {asset} | "
+                f"Calling _get_advance_price() ..."
+            )
             advance_quote = self._get_advance_price(asset)
             if advance_quote is not None:
                 current_close = advance_quote["close"]
                 logger.info(
-                    f"[TREND-NONFX-EXIT] Position #{pos_id} | Using v4 advance pre-close price: {current_close:.5f}"
+                    f"[TREND-NONFX-EXIT] Position #{pos_id} | {asset} | "
+                    f"Price source: advance API | close={current_close:.5f} | "
+                    f"timestamp={advance_quote.get('timestamp', 'N/A')}"
+                )
+                logger.debug(
+                    f"[TREND-NONFX-EXIT] Position #{pos_id} | {asset} | "
+                    f"Full advance quote: {advance_quote}"
                 )
             else:
                 logger.warning(
-                    f"[TREND-NONFX-EXIT] Position #{pos_id} | v4 advance unavailable, falling back to cached candles"
+                    f"[TREND-NONFX-EXIT] Position #{pos_id} | {asset} | "
+                    f"Advance API returned None — falling back to cached candles"
                 )
                 try:
                     candles = self.cache.get_candles(asset, TIMEFRAME, 300)
                 except Exception as e:
-                    logger.error(f"[TREND-NONFX-EXIT] Position #{pos_id} | Exception fetching candles: {e}")
+                    logger.error(
+                        f"[TREND-NONFX-EXIT] Position #{pos_id} | {asset} | "
+                        f"Exception fetching candles: {e}", exc_info=True
+                    )
                     continue
 
                 if len(candles) < 2:
-                    logger.warning(f"[TREND-NONFX-EXIT] Position #{pos_id} | Insufficient candles: {len(candles)}")
+                    logger.warning(
+                        f"[TREND-NONFX-EXIT] Position #{pos_id} | {asset} | "
+                        f"Insufficient candles: {len(candles)}"
+                    )
                     continue
                 current_close = candles[-1]["close"]
+                logger.info(
+                    f"[TREND-NONFX-EXIT] Position #{pos_id} | {asset} | "
+                    f"Price source: cached candle | close={current_close:.5f}"
+                )
 
             stored_highest = pos.get("highest_price_since_entry") or entry_price
             highest_close = max(stored_highest, current_close)
@@ -332,10 +416,16 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             trailing_stop = highest_close - (atr_at_entry * TRAILING_STOP_ATR_MULT)
 
             logger.info(
-                f"[TREND-NONFX-EXIT] Position #{pos_id} | CLOSING-RULE CHECK | "
-                f"close={current_close:.5f} | SL_level={trailing_stop:.5f} | "
-                f"Price < SL? {current_close < trailing_stop} | "
-                f"(intraday spikes ignored — only 4:01 PM close matters)"
+                f"[TREND-NONFX-EXIT] Position #{pos_id} | {asset} | TRAILING STOP CHECK | "
+                f"API_price={current_close:.5f} | stored_highest={stored_highest:.5f} | "
+                f"effective_highest={highest_close:.5f} | "
+                f"atr_at_entry={atr_at_entry:.6f} | mult={TRAILING_STOP_ATR_MULT} | "
+                f"trailing_stop={trailing_stop:.5f} | "
+                f"price_below_stop={current_close < trailing_stop}"
+            )
+            logger.debug(
+                f"[TREND-NONFX-EXIT] Position #{pos_id} | {asset} | "
+                f"Comparison: {current_close:.5f} < {trailing_stop:.5f} = {current_close < trailing_stop}"
             )
 
             if current_close < trailing_stop:
