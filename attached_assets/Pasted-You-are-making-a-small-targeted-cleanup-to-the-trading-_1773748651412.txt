@@ -1,0 +1,116 @@
+You are making a small targeted cleanup to the trading engine.
+Read all existing code before changing anything.
+
+=============================================================
+TASK — REMOVE GBP/USD FROM THE FOREX TREND STRATEGY
+=============================================================
+
+REASON:
+- GBP/USD is NOT in trend_forex.py TARGET_SYMBOLS and never generates signals.
+- GBP/USD is NOT in the QC algorithm source of truth (only EUR/USD and USD/JPY).
+- It only appears in the admin.py display functions, creating a misleading dashboard.
+- Removing it aligns the admin panel with the actual strategy behavior.
+
+=============================================================
+CHANGE 1 — admin.py: _get_forex_trend_data()
+=============================================================
+
+FIND:
+    for symbol in ["EUR/USD", "USD/JPY", "GBP/USD"]:
+
+REPLACE WITH:
+    for symbol in ["EUR/USD", "USD/JPY"]:
+
+These are the exact two symbols in trend_forex.py TARGET_SYMBOLS
+and the QC algo self._forex list.
+
+=============================================================
+CHANGE 2 — admin.py: _get_signal_analysis_data()
+=============================================================
+
+In the trend_fx_symbols list used for the signal analysis tab:
+
+FIND:
+    trend_fx_symbols = ["EUR/USD", "USD/JPY"]
+
+If GBP/USD appears anywhere in this function or in the
+"Trend Following — Forex" analysis table, remove it.
+If it is already just ["EUR/USD", "USD/JPY"], no change needed.
+
+=============================================================
+CHANGE 3 — admin.py: _build_forex_trend_html() strategy rules note
+=============================================================
+
+In the strategy rules section at the bottom of the forex trend panel:
+
+FIND any mention of GBP/USD in the asset list description.
+REPLACE with just "EUR/USD, USD/JPY".
+
+Example:
+  FIND:   "EUR/USD, USD/JPY, GBP/USD"
+  REPLACE: "EUR/USD, USD/JPY"
+
+=============================================================
+CHANGE 4 — api_v1.py: CATEGORY_MAP
+=============================================================
+
+GBP/USD can remain in CATEGORY_MAP as "forex" — this is a global lookup
+table used for any signal that happens to be for that asset.
+Having it in the map does no harm and handles edge cases.
+
+DO NOT remove GBP/USD from CATEGORY_MAP.
+
+=============================================================
+CHANGE 5 — trend_forex.py: confirm TARGET_SYMBOLS unchanged
+=============================================================
+
+Verify that trend_forex.py TARGET_SYMBOLS is exactly:
+    TARGET_SYMBOLS = ["EUR/USD", "USD/JPY"]
+
+Do NOT add GBP/USD. Do NOT change this list.
+This is the authoritative list per the QC algo source of truth.
+
+=============================================================
+CHANGE 6 — _build_trend_following_html() in admin.py
+=============================================================
+
+The Trend Following tab (not the Forex Trend tab) has a separate
+forex section. Check if GBP/USD appears in the forex symbols
+list inside _get_trend_following_data().
+
+FIND:
+    forex_symbols = ["EUR/USD", "USD/JPY"]
+
+If GBP/USD is in this list, remove it.
+If it already reads ["EUR/USD", "USD/JPY"], no change needed.
+
+=============================================================
+VERIFICATION
+=============================================================
+
+After changes:
+
+1. Admin Forex Trend tab shows exactly 2 symbol cards:
+   EUR/USD and USD/JPY. No GBP/USD card.
+
+2. Admin Signal Analysis tab Trend FX table shows
+   exactly 2 rows: EUR/USD and USD/JPY.
+
+3. trend_forex.py TARGET_SYMBOLS unchanged = ["EUR/USD", "USD/JPY"].
+
+4. No other strategy files are touched.
+
+5. If any existing CLOSED signal for GBP/USD exists in the DB
+   under strategy_name="trend_forex", it must NOT be deleted —
+   historical data is preserved. Only the display/evaluation
+   is being scoped to the correct two symbols.
+
+=============================================================
+CONSTRAINTS
+=============================================================
+
+- Touch ONLY admin.py and verify trend_forex.py TARGET_SYMBOLS.
+- Do NOT modify trend_forex.py logic.
+- Do NOT modify api_v1.py CATEGORY_MAP.
+- Do NOT delete any existing signal records.
+- Do NOT change any other strategy file.

@@ -1520,7 +1520,7 @@ def _get_forex_trend_data() -> dict:
     ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
 
     symbols_data = []
-    for symbol in ["EUR/USD", "USD/JPY", "GBP/USD"]:
+    for symbol in ["EUR/USD", "USD/JPY"]:
         candles = get_candles(symbol, "D1", 300)
         sym_info = {
             "symbol": symbol,
@@ -1723,7 +1723,7 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
         </div>
         <div class="stat-card">
             <div class="stat-label">Target Assets</div>
-            <div class="stat-value" style="font-size:1.2rem;">EUR/USD, USD/JPY, GBP/USD</div>
+            <div class="stat-value" style="font-size:1.2rem;">EUR/USD, USD/JPY</div>
             <div class="stat-label" style="margin-top:4px;">Daily (D1) candles</div>
         </div>
         <div class="stat-card">
