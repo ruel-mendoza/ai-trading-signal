@@ -81,7 +81,23 @@ export async function registerRoutes(
         console.error("[signals] Failed to fetch strategy signals:", e);
       }
 
-      const combined = [...strategySignals, ...aiSignals];
+      // Dedup: one active signal per pair — strategy signals always beat manual AI signals
+      const seenActivePair = new Set<string>();
+
+      // Pass 1: claim pairs for all strategy active signals
+      for (const s of strategySignals) {
+        if (s.status === "active") {
+          seenActivePair.add((s.pair || "").toUpperCase());
+        }
+      }
+
+      // Pass 2: filter aiSignals — skip active ones whose pair is already claimed
+      const filteredAiSignals = aiSignals.filter((s: any) => {
+        if (s.status !== "active") return true;
+        return !seenActivePair.has((s.pair || "").toUpperCase());
+      });
+
+      const combined = [...strategySignals, ...filteredAiSignals];
       combined.sort((a: any, b: any) => {
         const da = new Date(a.createdAt).getTime();
         const db = new Date(b.createdAt).getTime();
