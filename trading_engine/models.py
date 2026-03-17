@@ -74,6 +74,8 @@ class Signal(Base):
         Index("idx_signal_status_compound", "asset", "strategy_name", "status"),
         Index("idx_signal_status", "status"),
         Index("idx_signal_status_created", "status", "created_at"),
+        Index("idx_signal_status_ts", "status", "signal_timestamp"),
+        Index("idx_signal_strategy_asset_status", "strategy_name", "asset", "status"),
     )
 
 

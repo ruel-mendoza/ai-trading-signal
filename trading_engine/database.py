@@ -180,6 +180,16 @@ def _migrate_schema():
         except Exception:
             pass
 
+        for idx_sql in [
+            "CREATE INDEX IF NOT EXISTS idx_signal_status_ts ON signals(status, signal_timestamp)",
+            "CREATE INDEX IF NOT EXISTS idx_signal_strategy_asset_status ON signals(strategy_name, asset, status)",
+        ]:
+            try:
+                conn.execute(text(idx_sql))
+                conn.commit()
+            except Exception:
+                pass
+
 
 def _purge_unsupported_symbols():
     from trading_engine.fcsapi_client import UNSUPPORTED_SYMBOLS
@@ -373,13 +383,31 @@ def insert_signal(signal: dict) -> Optional[int]:
 
 
 def get_active_signals(strategy_name: Optional[str] = None, asset: Optional[str] = None) -> list[dict]:
+    """Return all OPEN signals, deduplicated to max(id) per (strategy_name, asset).
+
+    Deduplication contract: only one OPEN signal per (strategy_name + asset) is
+    ever returned. If duplicates exist in the DB (e.g. from a race condition before
+    the idempotency guard fires), only the row with the highest id is returned.
+    """
     with _get_session() as session:
-        q = session.query(Signal).filter(Signal.status == "OPEN")
+        from sqlalchemy import func
+
+        latest_open_subq = session.query(
+            func.max(Signal.id).label("max_id")
+        ).filter(Signal.status == "OPEN")
         if strategy_name:
-            q = q.filter(Signal.strategy_name == strategy_name)
+            latest_open_subq = latest_open_subq.filter(Signal.strategy_name == strategy_name)
         if asset:
-            q = q.filter(Signal.asset == asset)
-        q = q.order_by(Signal.created_at.desc())
+            latest_open_subq = latest_open_subq.filter(Signal.asset == asset)
+        latest_open_subq = latest_open_subq.group_by(
+            Signal.strategy_name, Signal.asset
+        ).subquery()
+
+        q = (
+            session.query(Signal)
+            .filter(Signal.id.in_(session.query(latest_open_subq.c.max_id)))
+            .order_by(Signal.created_at.desc())
+        )
         rows = q.all()
         return [_signal_to_dict(r) for r in rows]
 
@@ -428,9 +456,30 @@ def update_signal_wp_fields(signal_id: int, fields: dict):
             logger.error(f"[DB] update_signal_wp_fields failed for #{signal_id}: {e}")
 
 
-def get_all_signals(strategy_name: Optional[str] = None, asset: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> list[dict]:
+def get_all_signals(
+    strategy_name: Optional[str] = None,
+    asset: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 100,
+    max_age_days: Optional[int] = None,
+) -> list[dict]:
+    """Return signals with deduplication and optional age filtering.
+
+    Deduplication contract (must never be weakened):
+    - OPEN signals: only the row with the highest id per (strategy_name, asset) is returned.
+      Rationale: the idempotency guard in evaluate() prevents duplicates, but a DB-level
+      guard ensures correctness if a race condition slips through.
+    - CLOSED signals: only the row with the highest id per (strategy_name, asset, direction)
+      is returned. This suppresses historical re-opens for the same asset+direction pair.
+    - Combined (no status filter): OPEN dedup UNION CLOSED dedup, ordered by created_at DESC.
+
+    max_age_days:
+    - When set, CLOSED signals with signal_timestamp older than this many days are excluded.
+    - OPEN signals are always included regardless of age.
+    - Default is None (no age filter) to preserve backward compatibility with existing callers.
+    """
     with _get_session() as session:
-        from sqlalchemy import func, or_
+        from sqlalchemy import func, or_, text as sa_text
 
         latest_closed_subq = session.query(
             func.max(Signal.id).label("max_id")
@@ -439,8 +488,23 @@ def get_all_signals(strategy_name: Optional[str] = None, asset: Optional[str] = 
             latest_closed_subq = latest_closed_subq.filter(Signal.strategy_name == strategy_name)
         if asset:
             latest_closed_subq = latest_closed_subq.filter(Signal.asset == asset)
+        if max_age_days is not None:
+            latest_closed_subq = latest_closed_subq.filter(
+                Signal.signal_timestamp >= sa_text(f"datetime('now', '-{int(max_age_days)} days')")
+            )
         latest_closed_subq = latest_closed_subq.group_by(
             Signal.strategy_name, Signal.asset, Signal.direction
+        ).subquery()
+
+        latest_open_subq = session.query(
+            func.max(Signal.id).label("max_id")
+        ).filter(Signal.status == "OPEN")
+        if strategy_name:
+            latest_open_subq = latest_open_subq.filter(Signal.strategy_name == strategy_name)
+        if asset:
+            latest_open_subq = latest_open_subq.filter(Signal.asset == asset)
+        latest_open_subq = latest_open_subq.group_by(
+            Signal.strategy_name, Signal.asset
         ).subquery()
 
         q = session.query(Signal)
@@ -454,16 +518,71 @@ def get_all_signals(strategy_name: Optional[str] = None, asset: Optional[str] = 
                 session.query(latest_closed_subq.c.max_id)
             ))
         elif status == "OPEN":
-            q = q.filter(Signal.status == "OPEN")
+            q = q.filter(Signal.id.in_(
+                session.query(latest_open_subq.c.max_id)
+            ))
         else:
             q = q.filter(or_(
-                Signal.status == "OPEN",
+                Signal.id.in_(session.query(latest_open_subq.c.max_id)),
                 Signal.id.in_(session.query(latest_closed_subq.c.max_id)),
             ))
 
         q = q.order_by(Signal.created_at.desc()).limit(limit)
         rows = q.all()
         return [_signal_to_dict(r) for r in rows]
+
+
+def purge_old_closed_signals(days: int = 92) -> dict:
+    """Hard-delete CLOSED signals older than `days` days and their associated CMS posts.
+
+    Uses signal_timestamp for age comparison (not created_at).
+    Returns: {"deleted_signals": N, "deleted_cms_posts": M, "cutoff_date": "YYYY-MM-DD"}
+    """
+    from datetime import timedelta, date
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+
+    with _get_session() as session:
+        try:
+            old_signals = (
+                session.query(Signal.id)
+                .filter(Signal.status == "CLOSED")
+                .filter(Signal.signal_timestamp < cutoff)
+                .all()
+            )
+            old_ids = [row[0] for row in old_signals]
+
+            deleted_cms = 0
+            if old_ids:
+                from trading_engine.models import SignalCmsPost
+                deleted_cms = (
+                    session.query(SignalCmsPost)
+                    .filter(SignalCmsPost.signal_id.in_(old_ids))
+                    .delete(synchronize_session=False)
+                )
+                deleted_sigs = (
+                    session.query(Signal)
+                    .filter(Signal.id.in_(old_ids))
+                    .delete(synchronize_session=False)
+                )
+            else:
+                deleted_sigs = 0
+
+            session.commit()
+            result = {
+                "deleted_signals": deleted_sigs,
+                "deleted_cms_posts": deleted_cms,
+                "cutoff_date": cutoff,
+            }
+            logger.info(
+                f"[DB] PURGE: Deleted {deleted_sigs} closed signal(s) and {deleted_cms} CMS post(s) "
+                f"older than {days} days (cutoff={cutoff})"
+            )
+            _invalidate_signal_cache()
+            return result
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] PURGE: Failed to purge old closed signals: {e}", exc_info=True)
+            return {"deleted_signals": 0, "deleted_cms_posts": 0, "cutoff_date": cutoff, "error": str(e)}
 
 
 def _signal_to_dict(sig: Signal) -> dict:

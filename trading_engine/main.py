@@ -38,6 +38,7 @@ from trading_engine.database import (
     create_job_log, finish_job_log, get_scheduler_health_summary,
     compute_signal_metrics,
     upsert_strategy_execution_log, get_last_successful_execution,
+    purge_old_closed_signals,
 )
 from trading_engine.models import VALID_TIMEFRAMES
 from trading_engine.fcsapi_client import FCSAPIClient
@@ -586,6 +587,23 @@ def _run_daily_backup():
     run_daily_backup()
 
 
+def _run_purge_old_closed_signals():
+    """Nightly scheduler wrapper for signal retention enforcement (2:00 AM ET).
+
+    Hard-deletes CLOSED signals older than 92 days and their CMS post records.
+    """
+    try:
+        result = purge_old_closed_signals(days=92)
+        logger.info(
+            f"[PURGE] Nightly retention run complete: "
+            f"deleted {result.get('deleted_signals', 0)} signal(s) and "
+            f"{result.get('deleted_cms_posts', 0)} CMS post(s) "
+            f"(cutoff={result.get('cutoff_date')})"
+        )
+    except Exception as exc:
+        logger.error(f"[PURGE] Nightly retention job failed: {exc}", exc_info=True)
+
+
 RECOVERY_MAX_HOURS = 4
 
 RECOVERY_STRATEGIES = [
@@ -889,6 +907,14 @@ async def lifespan(app: FastAPI):
         trigger=CronTrigger(hour=1, minute=0, timezone=ET_ZONE),
         id="daily_backup",
         name="Daily Database Backup (1:00 AM ET)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
+    scheduler.add_job(
+        _run_purge_old_closed_signals,
+        trigger=CronTrigger(hour=2, minute=0, timezone=ET_ZONE),
+        id="purge_old_closed_signals",
+        name="Nightly Closed Signal Purge (2:00 AM ET, 92-day retention)",
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )

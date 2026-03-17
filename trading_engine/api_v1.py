@@ -477,6 +477,46 @@ def _filter_by_asset_class(signals: list, asset_class: Optional[str]) -> list:
     return [s for s in signals if s["category"] == asset_class]
 
 
+def _deduplicate_signals(signals: list[dict]) -> list[dict]:
+    """Python-side safety-net deduplication applied after DB fetch.
+
+    - OPEN signals: keep only the entry with the highest id per (asset, strategy_name).
+    - CLOSED signals: keep only the entry with the highest id per (asset, strategy_name, direction).
+    List is assumed to be already sorted by id/created_at DESC from the DB, so the
+    first occurrence of each key is always the one we want to keep.
+    """
+    seen_open: dict = {}
+    seen_closed: dict = {}
+    result = []
+    for s in signals:
+        sid = s.get("id", 0)
+        st = s.get("status", "")
+        if st == "OPEN":
+            key = (s.get("asset"), s.get("strategy_name"))
+            if key not in seen_open or (sid or 0) > (seen_open[key].get("id") or 0):
+                seen_open[key] = s
+        else:
+            key = (s.get("asset"), s.get("strategy_name"), s.get("direction"))
+            if key not in seen_closed or (sid or 0) > (seen_closed[key].get("id") or 0):
+                seen_closed[key] = s
+
+    seen_keys_open: set = set()
+    seen_keys_closed: set = set()
+    for s in signals:
+        st = s.get("status", "")
+        if st == "OPEN":
+            key = (s.get("asset"), s.get("strategy_name"))
+            if key not in seen_keys_open and seen_open.get(key) is s:
+                seen_keys_open.add(key)
+                result.append(s)
+        else:
+            key = (s.get("asset"), s.get("strategy_name"), s.get("direction"))
+            if key not in seen_keys_closed and seen_closed.get(key) is s:
+                seen_keys_closed.add(key)
+                result.append(s)
+    return result
+
+
 @router.get("/signals/latest", response_model=SignalsLatestResponse, tags=["Signals"])
 @cache_response(ttl=60, prefix="signals_latest")
 def get_signals_latest(
@@ -493,6 +533,7 @@ def get_signals_latest(
     trailing-stop position metadata (highest_close, lowest_close) when available.
     """
     raw = get_active_signals(strategy_name=strategy, asset=asset)
+    raw = _deduplicate_signals(raw)
 
     positions = get_all_open_positions()
     pos_map = {}
@@ -532,8 +573,12 @@ def get_signals_history(
     Returns up to 500 signals from the local database, paginated by page/size
     (max 50 per page). Uses the legacy format (BUY/SELL direction, entry_price field).
     Cached for 60 seconds per unique filter combination.
+
+    Retention window: CLOSED signals older than 92 days are excluded. OPEN signals are
+    always returned regardless of age.
     """
-    all_raw = get_all_signals(strategy_name=strategy, asset=asset, status=status, limit=500)
+    all_raw = get_all_signals(strategy_name=strategy, asset=asset, status=status, limit=500, max_age_days=92)
+    all_raw = _deduplicate_signals(all_raw)
     all_formatted = [_format_signal(s) for s in all_raw]
     all_formatted = _filter_by_asset_class(all_formatted, asset_class)
 
@@ -565,6 +610,7 @@ def get_signals_active(
     with BUY/SELL direction and entry_price. Cached for 60 seconds.
     """
     raw = get_active_signals(strategy_name=strategy, asset=asset)
+    raw = _deduplicate_signals(raw)
     formatted = [_format_signal(s) for s in raw]
     formatted = _filter_by_category(formatted, category)
     return {"signals": formatted, "count": len(formatted)}
@@ -603,6 +649,7 @@ def get_signals(
     Results capped at 200 per request. Cached for 60 seconds.
     """
     raw = get_all_signals(strategy_name=strategy, asset=asset, status=status, limit=limit)
+    raw = _deduplicate_signals(raw)
     formatted = [_format_signal(s) for s in raw]
     formatted = _filter_by_category(formatted, category)
     return {"signals": formatted, "count": len(formatted)}

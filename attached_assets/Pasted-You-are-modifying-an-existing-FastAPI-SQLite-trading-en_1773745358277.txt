@@ -1,0 +1,143 @@
+You are modifying an existing FastAPI + SQLite trading engine. Reference all existing code carefully before making changes. Do NOT rewrite working logic — only add or modify what is specified below.
+
+=============================================================
+TASK 1 — SIGNAL DEDUPLICATION (Backend + Frontend, all strategies)
+=============================================================
+
+PROBLEM:
+- Duplicate signals appear for the same asset+strategy+direction because multiple evaluations fire before the DB unique constraint catches them, or because `get_all_signals()` returns multiple CLOSED rows for the same asset+strategy pair.
+- The frontend Active Signals panel and the backend Trading Signals tab both show duplicates.
+
+RULES:
+1. One OPEN signal per (strategy_name + asset) at any time. No exceptions.
+2. For CLOSED signals displayed in any list or API response, show only the single most recent closed signal per (strategy_name + asset + direction) — determined by the highest `id` (i.e. latest insert).
+3. The "latest timestamp" rule: when deduplicating, always keep the record with the highest `signal_timestamp`. If two records share the same timestamp, keep the one with the highest `id`.
+4. Apply this rule in every place signals are read and returned — backend DB query, admin panel HTML table, and all API endpoints.
+
+CHANGES REQUIRED:
+
+A) database.py — `get_all_signals()`
+- The existing query already attempts deduplication on CLOSED signals via a subquery (max id per strategy+asset+direction). Verify this is correct and working.
+- Add a comment block at the top of the function explaining the deduplication contract so future developers don't break it.
+- For OPEN signals: add a secondary guard — if multiple OPEN rows somehow exist for the same (strategy_name, asset), return only the one with the highest id. Use a subquery: SELECT max(id) FROM signals WHERE status='OPEN' GROUP BY strategy_name, asset.
+- The combined query must return: all deduplicated OPEN signals UNION all deduplicated CLOSED signals (latest per group), ordered by created_at DESC, limited by the `limit` parameter.
+
+B) database.py — `get_active_signals()`
+- Add the same OPEN deduplication guard: if multiple OPEN rows exist for (strategy_name, asset), return only the one with max(id).
+- This prevents the frontend Active Signals widget from ever showing two rows for the same asset+strategy.
+
+C) api_v1.py — `get_signals_latest()`, `get_signals_active()`, `get_signals()`, `get_signals_history()`
+- After fetching from DB, apply a Python-side deduplication pass as a safety net.
+- For OPEN signals: deduplicate by (asset, strategy_name) keeping the entry with max id.
+- For CLOSED signals: deduplicate by (asset, strategy_name, direction) keeping the entry with max id.
+- Do this BEFORE applying any asset_class or category filters.
+- Add a helper function `_deduplicate_signals(signals: list[dict]) -> list[dict]` in api_v1.py that implements this logic and call it from all four endpoints.
+
+D) admin.py — `_signals_to_table_rows()`
+- The existing function already deduplicates CLOSED signals in Python using a `seen_closed` set keyed on (asset, strategy_name, direction).
+- Extend this: also deduplicate OPEN signals — use a `seen_open` set keyed on (asset, strategy_name). If a duplicate OPEN row appears, keep the one encountered first (the list is already ordered by created_at DESC from the DB, so the first occurrence is the most recent).
+- Add a comment explaining why both dedup passes are needed.
+
+E) All strategy evaluate() methods (sp500_momentum.py, trend_forex.py, trend_non_forex.py, highest_lowest.py, multi_timeframe.py)
+- Before calling `insert_signal()`, always call `has_open_signal(strategy_name, asset)` AND `has_open_position(strategy_name, asset)`.
+- If either returns True, log at INFO level and return SignalResult() immediately.
+- This guard already exists in most strategies — verify each one has BOTH checks, not just one.
+- Add a standardized log line format: `[STRATEGY_NAME] {asset} | IDEMPOTENCY BLOCK: open signal={has_open_signal result} open_position={has_open_position result} — entry skipped`
+
+=============================================================
+TASK 2 — PREVIOUS SIGNALS: 3-MONTH RETENTION LIMIT
+=============================================================
+
+PROBLEM:
+- The database grows unboundedly as closed signals accumulate.
+- The frontend Previous Signals panel (and history API) currently returns all closed signals with no age limit.
+- We want to cap displayed/returned data at 3 months (92 days) AND purge older closed signals from the database on a schedule.
+
+RULES:
+1. Display limit: Previous Signals on the frontend and `/api/v1/signals/history` must never return CLOSED signals older than 92 days. OPEN signals are always returned regardless of age.
+2. Database purge: A scheduled job runs daily at 2:00 AM ET and hard-deletes CLOSED signals older than 92 days from the `signals` table. Log the count of deleted rows.
+3. The purge must also clean up orphaned rows in `signal_cms_posts` for any deleted signal IDs (cascade or manual delete).
+4. Signal metrics (`signal_metrics` table) are NOT affected — metrics are aggregated and do not store raw signal rows.
+5. The 92-day window is defined as: signal_timestamp < (NOW UTC - 92 days). Use the `signal_timestamp` column, not `created_at`.
+
+CHANGES REQUIRED:
+
+A) database.py — modify `get_all_signals()`
+- Add an optional parameter: `max_age_days: Optional[int] = None`
+- When `max_age_days` is set, add a WHERE clause: `signal_timestamp >= datetime('now', '-{max_age_days} days')` for CLOSED signals only. OPEN signals are always included.
+- Do NOT change the function signature in a way that breaks existing callers — default is None (no filter, existing behavior preserved).
+
+B) database.py — add new function `purge_old_closed_signals(days: int = 92) -> dict`
+- Hard-deletes CLOSED signals where signal_timestamp < (NOW - days).
+- Before deleting signals, collect their IDs and delete matching rows from `signal_cms_posts`.
+- Returns a dict: `{"deleted_signals": N, "deleted_cms_posts": M, "cutoff_date": "YYYY-MM-DD"}`.
+- Wrap in try/except, rollback on error, log the result at INFO level.
+- Add a DB index on `signals(status, signal_timestamp)` if it does not already exist (check models.py — add to `__table_args__` if missing).
+
+C) main.py — add scheduled purge job
+- Add a new APScheduler job that calls `purge_old_closed_signals(days=92)` daily at 2:00 AM ET.
+- Job id: `"daily_signal_purge"`, name: `"Daily Signal Purge (2:00 AM ET)"`, misfire_grace_time: 120.
+- Log the result dict returned by the function.
+- Register this job alongside the existing jobs in the `lifespan()` function.
+
+D) api_v1.py — `get_signals_history()`
+- Pass `max_age_days=92` when calling `get_all_signals()` so the history endpoint never returns signals older than 92 days.
+- Keep OPEN signals unfiltered (the DB function handles this).
+- Update the endpoint docstring to document the 92-day retention window.
+
+E) admin.py — all calls to `get_all_signals()` that feed the "Previous Signals" / "Signal History" sections
+- Identify every call to `get_all_signals()` in admin.py that is used for display (not for strategy-internal logic).
+- For each one, pass `max_age_days=92` so the admin panel tables also respect the 3-month window.
+- The active signals panel (`get_active_signals()`) is NOT affected — it shows OPEN signals only.
+
+F) admin.py — add a visible note in the Signal History table header
+- In `_signals_to_table_rows()` or the HTML template that wraps the signals table, add a small subtitle or badge:
+  `"Showing closed signals from the last 92 days"`
+- Style it as a muted label (color: #94a3b8, font-size: 0.8rem) placed just above or below the table header row.
+
+=============================================================
+TASK 3 — INDEX + QUERY PERFORMANCE
+=============================================================
+
+A) models.py — verify these indexes exist, add any that are missing:
+- `Index("idx_signal_status_ts", "status", "signal_timestamp")` on the Signal model
+- `Index("idx_signal_strategy_asset_status", "strategy_name", "asset", "status")` on the Signal model
+- These are needed for the purge query and the deduplicated history query to be fast as the table grows.
+
+B) database.py — in `_migrate_schema()`, add a migration step that creates these indexes if they don't exist via raw SQL:
+```sql
+CREATE INDEX IF NOT EXISTS idx_signal_status_ts ON signals(status, signal_timestamp);
+CREATE INDEX IF NOT EXISTS idx_signal_strategy_asset_status ON signals(strategy_name, asset, status);
+```
+Add this migration alongside the existing column migrations.
+
+=============================================================
+TASK 4 — VERIFICATION CHECKLIST
+=============================================================
+
+After making all changes, verify the following manually or via the seed script:
+
+1. Insert two OPEN signals for the same (strategy="sp500_momentum", asset="SPX") with different timestamps. Call `get_active_signals()` — should return exactly 1 row (highest id).
+
+2. Insert three CLOSED signals for the same (strategy="trend_forex", asset="EUR/USD", direction="BUY") with different timestamps. Call `get_all_signals(status="CLOSED")` — should return exactly 1 row (highest id).
+
+3. Insert a CLOSED signal with signal_timestamp = 100 days ago. Call `get_all_signals(max_age_days=92)` — should NOT appear. Call `get_all_signals()` (no filter) — SHOULD appear.
+
+4. Call `purge_old_closed_signals(days=92)` — the 100-day-old signal should be deleted. Verify deleted_signals=1 in the return dict.
+
+5. Hit `/api/v1/signals/latest` — verify no duplicate asset+strategy rows in the response.
+
+6. Hit `/api/v1/signals/history` — verify no signals older than 92 days appear, and no duplicate rows for the same asset+strategy+direction.
+
+=============================================================
+CONSTRAINTS
+=============================================================
+
+- Do NOT change the BaseStrategy interface or SignalResult dataclass.
+- Do NOT change the APScheduler job IDs for existing jobs.
+- Do NOT modify the WebSocket broadcaster logic.
+- Do NOT touch the credit_control.py kill switch logic.
+- All new DB operations must use the existing `_get_session()` / `SessionFactory` pattern.
+- All new scheduled jobs must use `ET_ZONE = pytz.timezone("America/New_York")` for the cron trigger timezone.
+- Preserve all existing log prefixes (e.g. [SP500-MOM], [TREND-FOREX]) — only add new log lines, do not change existing ones.
+- Python type hints must be maintained on all modified functions.

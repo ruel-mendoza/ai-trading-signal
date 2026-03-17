@@ -103,16 +103,32 @@ def _nth_weekday(year: int, month: int, weekday: int, n: int) -> datetime:
 
 
 def _signals_to_table_rows(signals: list[dict]) -> str:
+    """Render signal rows to HTML table rows with Python-side deduplication.
+
+    Two dedup passes are needed because the DB layer uses subqueries that may be
+    bypassed by legacy callers, and because strategy logic can produce rapid-fire
+    duplicates under concurrent APScheduler misfires:
+    - OPEN: deduplicate by (asset, strategy_name) — one active trade per pair
+    - CLOSED: deduplicate by (asset, strategy_name, direction) — show only most recent exit
+    List is ordered by created_at DESC from the DB, so the first occurrence of each
+    key is the most recent and is the one we keep.
+    """
     if not signals:
         return '<tr><td colspan="8" style="text-align:center;padding:24px;color:#94a3b8;">No signals found</td></tr>'
 
     from datetime import datetime as dt_cls
 
+    seen_open = set()
     seen_closed = set()
     rows = []
     for s in signals:
         status = s.get("status", "OPEN")
-        if status == "CLOSED":
+        if status == "OPEN":
+            dedup_key = (s.get("asset"), s.get("strategy_name"))
+            if dedup_key in seen_open:
+                continue
+            seen_open.add(dedup_key)
+        elif status == "CLOSED":
             dedup_key = (s.get("asset"), s.get("strategy_name"), s.get("direction"))
             if dedup_key in seen_closed:
                 continue
@@ -3919,7 +3935,7 @@ def admin_dashboard(
         base_path = request.scope.get("root_path", "")
         return RedirectResponse(url=base_path + "/admin/login", status_code=302)
 
-    signals = get_all_signals(strategy_name=strategy_name, asset=asset, status=status, limit=200)
+    signals = get_all_signals(strategy_name=strategy_name, asset=asset, status=status, limit=200, max_age_days=92)
     active_signals = get_active_signals()
     usage_stats = get_api_usage_stats()
     market_times = _get_market_times()
@@ -3934,33 +3950,33 @@ def admin_dashboard(
     users_html = _build_users_html(user["user_id"])
 
     spx_data = _get_spx_momentum_data()
-    spx_signals = get_all_signals(strategy_name="sp500_momentum", limit=200)
+    spx_signals = get_all_signals(strategy_name="sp500_momentum", limit=200, max_age_days=92)
     spx_signal_rows = _signals_to_table_rows(spx_signals)
     spx_signal_count = len(spx_signals)
     spx_html = _build_spx_momentum_html(spx_data, spx_signal_rows, spx_signal_count)
 
     mtf_data = _get_mtf_ema_data()
-    mtf_signals = get_all_signals(strategy_name="mtf_ema", limit=200)
+    mtf_signals = get_all_signals(strategy_name="mtf_ema", limit=200, max_age_days=92)
     mtf_signal_rows = _signals_to_table_rows(mtf_signals)
     mtf_signal_count = len(mtf_signals)
     mtf_html = _build_mtf_ema_html(mtf_data, mtf_signal_rows, mtf_signal_count)
 
     fx_trend_data = _get_forex_trend_data()
-    fx_trend_signals = get_all_signals(strategy_name="trend_forex", limit=200)
+    fx_trend_signals = get_all_signals(strategy_name="trend_forex", limit=200, max_age_days=92)
     fx_trend_signal_rows = _signals_to_table_rows(fx_trend_signals)
     fx_trend_signal_count = len(fx_trend_signals)
     forex_trend_html = _build_forex_trend_html(fx_trend_data, fx_trend_signal_rows, fx_trend_signal_count)
 
     tf_data = _get_trend_following_data()
-    tf_signals_forex = get_all_signals(strategy_name="trend_following", limit=200)
-    tf_signals_non_forex = get_all_signals(strategy_name="trend_non_forex", limit=200)
+    tf_signals_forex = get_all_signals(strategy_name="trend_following", limit=200, max_age_days=92)
+    tf_signals_non_forex = get_all_signals(strategy_name="trend_non_forex", limit=200, max_age_days=92)
     tf_signals_combined = sorted(tf_signals_forex + tf_signals_non_forex, key=lambda s: s.get("id", 0), reverse=True)
     tf_signal_rows = _signals_to_table_rows(tf_signals_combined)
     tf_signal_count = len(tf_signals_combined)
     trend_following_html = _build_trend_following_html(tf_data, tf_signal_rows, tf_signal_count)
 
     hlc_data = _get_hlc_fx_data()
-    hlc_signals = get_all_signals(strategy_name="highest_lowest_fx", limit=200)
+    hlc_signals = get_all_signals(strategy_name="highest_lowest_fx", limit=200, max_age_days=92)
     hlc_signal_rows = _signals_to_table_rows(hlc_signals)
     hlc_signal_count = len(hlc_signals)
     hlc_fx_html = _build_hlc_fx_html(hlc_data, hlc_signal_rows, hlc_signal_count)
@@ -4132,6 +4148,7 @@ def admin_dashboard(
                     <button class="btn btn-secondary" onclick="exportSignals('json')">Export JSON</button>
                     <button class="btn btn-secondary" onclick="refreshPage()">Refresh</button>
                     <span style="color:#94a3b8;font-size:0.8rem;margin-left:8px;">Active: {active_count} | Total: {total_count}</span>
+                    <span style="color:#64748b;font-size:0.75rem;margin-left:12px;" title="Closed signals older than 92 days are automatically purged nightly">&#128336; 92-day retention</span>
                 </div>
                 <div style="overflow-x:auto;">
                     <table class="data-table" data-testid="signals-table">
