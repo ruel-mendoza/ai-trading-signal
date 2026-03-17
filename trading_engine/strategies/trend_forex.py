@@ -15,9 +15,9 @@ from trading_engine.database import (
     open_position as db_open_position,
     get_open_position,
     get_all_open_positions,
-    update_position_tracking,
     close_position,
     get_active_signals,
+    update_signal_stop_loss,
 )
 
 logger = logging.getLogger("trading_engine.strategy.trend_forex")
@@ -33,6 +33,7 @@ SMA_SLOW = 100
 ATR_PERIOD = 100
 LOOKBACK_DAYS = 50
 TRAILING_STOP_ATR_MULT = 3.0
+RISK_PCT_PER_TRADE = 0.01
 MIN_BARS_REQUIRED = ATR_PERIOD + 1
 
 FOREX_CLOSE_HOUR = 17
@@ -41,8 +42,20 @@ EVAL_WINDOW_MINUTES = 2
 
 ET_ZONE = pytz.timezone("America/New_York")
 
+MODE = "LONG_SHORT"
+# All forex pairs are eligible for both LONG and SHORT per QC algo
 
-MODE = "LONG_ONLY"
+
+def _calculate_quantity(
+    portfolio_value: float,
+    atr: float,
+    atr_mult: float = TRAILING_STOP_ATR_MULT,
+) -> Optional[float]:
+    """QC algo: quantity = (portfolio_value × RISK_PCT) / (atr_mult × ATR)."""
+    stop_distance = atr_mult * atr
+    if stop_distance <= 0 or portfolio_value <= 0:
+        return None
+    return round((portfolio_value * RISK_PCT_PER_TRADE) / stop_distance, 4)
 
 
 class ForexTrendFollowingStrategy(BaseStrategy):
@@ -115,7 +128,7 @@ class ForexTrendFollowingStrategy(BaseStrategy):
         open_position_data: Optional[dict],
         batch_price: Optional[float] = None,
     ) -> SignalResult:
-        logger.info(f"[TREND-FOREX] ====== Evaluating {asset} (LONG_ONLY) ======")
+        logger.info(f"[TREND-FOREX] ====== Evaluating {asset} (LONG_SHORT) ======")
 
         if asset not in TARGET_SYMBOLS:
             logger.info(f"[TREND-FOREX] {asset} | Not a target asset (strictly EUR/USD, USD/JPY) - skipping")
@@ -172,57 +185,68 @@ class ForexTrendFollowingStrategy(BaseStrategy):
             logger.info(f"[TREND-FOREX] {asset} | Using cached candle close: {current_close:.5f} (advance unavailable)")
 
         prior_closes = closes[-(LOOKBACK_DAYS + 1):-1]
-        highest_50d = max(prior_closes)
+        highest_50d  = max(prior_closes)
+        lowest_50d   = min(prior_closes)
 
         sma50_above_sma100 = sma50_val > sma100_val
-        close_above_highest = current_close > highest_50d
+        close_above_highest = current_close >= highest_50d
+
+        sma50_below_sma100 = sma50_val < sma100_val
+        close_below_lowest  = current_close <= lowest_50d
 
         logger.info(f"[TREND-FOREX] {asset} | close={current_close:.5f} (5:01 PM ET)")
-        logger.info(f"[TREND-FOREX] {asset} | SMA(50)={sma50_val:.5f} | SMA(100)={sma100_val:.5f} | ATR(100)={atr_val:.5f}")
-        logger.info(f"[TREND-FOREX] {asset} | {LOOKBACK_DAYS}-day highest close={highest_50d:.5f}")
         logger.info(
-            f"[TREND-FOREX] {asset} | LONG check: close > highest_close={close_above_highest} "
-            f"AND SMA50 > SMA100={sma50_above_sma100} (LONG_ONLY mode)"
+            f"[TREND-FOREX] {asset} | SMA(50)={sma50_val:.5f} | SMA(100)={sma100_val:.5f} | "
+            f"ATR_live(100)={atr_val:.5f}"
+        )
+        logger.info(
+            f"[TREND-FOREX] {asset} | 50d-high={highest_50d:.5f} | 50d-low={lowest_50d:.5f}"
+        )
+        logger.info(
+            f"[TREND-FOREX] {asset} | LONG check: close >= highest_close={close_above_highest} "
+            f"AND SMA50 > SMA100={sma50_above_sma100} (LONG_SHORT mode)"
+        )
+        logger.info(
+            f"[TREND-FOREX] {asset} | SHORT check: "
+            f"close <= lowest_close={close_below_lowest} "
+            f"AND SMA50 < SMA100={sma50_below_sma100} (LONG_SHORT mode)"
         )
 
+        # ── Active position monitoring ──
         if open_position_data:
-            pos_id = open_position_data["id"]
+            pos_id  = open_position_data["id"]
             pos_dir = open_position_data.get("direction", "BUY")
-            pos_atr = open_position_data.get("atr_at_entry")
 
             if pos_dir == "BUY":
-                stored_highest = open_position_data.get("highest_price_since_entry") or open_position_data["entry_price"]
-                new_highest = max(stored_highest, current_close)
-                if new_highest > stored_highest:
-                    update_position_tracking(pos_id, highest_price=new_highest)
-                    logger.info(
-                        f"[TREND-FOREX] {asset} | PEAK UPDATE #{pos_id} | "
-                        f"prev_highest={stored_highest:.5f} -> new_highest={new_highest:.5f} (persisted to DB)"
-                    )
-                if pos_atr is not None:
-                    trailing_stop = new_highest - (pos_atr * TRAILING_STOP_ATR_MULT)
-                    logger.info(
-                        f"[TREND-FOREX] {asset} | ACTIVE TRADE #{pos_id} | "
-                        f"direction=BUY | entry={open_position_data['entry_price']:.5f} | "
-                        f"ATR_at_entry={pos_atr:.6f} (FIXED from DB) | "
-                        f"highest_since_entry={new_highest:.5f} | "
-                        f"current_trailing_stop={trailing_stop:.5f}"
-                    )
-
-            if pos_atr is None:
-                logger.warning(
-                    f"[TREND-FOREX] {asset} | ACTIVE TRADE #{pos_id} | "
-                    f"ATR_at_entry=MISSING in DB - trailing stop cannot be calculated"
+                trailing_stop_preview = current_close - (atr_val * TRAILING_STOP_ATR_MULT)
+                logger.info(
+                    f"[TREND-FOREX] {asset} | ACTIVE LONG #{pos_id} | "
+                    f"entry={open_position_data['entry_price']:.5f} | "
+                    f"ATR_live={atr_val:.6f} (dynamic) | "
+                    f"indicative_trailing_stop={trailing_stop_preview:.5f} "
+                    f"(actual stop updated by check_exits)"
                 )
+            elif pos_dir == "SELL":
+                trailing_stop_preview = current_close + (atr_val * TRAILING_STOP_ATR_MULT)
+                logger.info(
+                    f"[TREND-FOREX] {asset} | ACTIVE SHORT #{pos_id} | "
+                    f"entry={open_position_data['entry_price']:.5f} | "
+                    f"ATR_live={atr_val:.6f} (dynamic) | "
+                    f"indicative_trailing_stop={trailing_stop_preview:.5f} "
+                    f"(actual stop updated by check_exits)"
+                )
+
+            logger.info(
+                f"[TREND-FOREX] {asset} | IDEMPOTENCY: "
+                f"Existing open {pos_dir} position — skipping entry evaluation"
+            )
+            return SignalResult()
 
         now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
         signal_timestamp = now_et.strftime("%Y-%m-%dT%H:%M:%S")
 
+        # ── LONG ENTRY ──
         if close_above_highest and sma50_above_sma100:
-            if open_position_data and open_position_data.get("direction") == "BUY":
-                logger.info(f"[TREND-FOREX] {asset} | IDEMPOTENCY: Existing open LONG position - skipping")
-                return SignalResult()
-
             if has_open_signal(STRATEGY_NAME, asset):
                 logger.info(
                     f"[TREND-FOREX] {asset} | IDEMPOTENCY: An OPEN signal already exists for "
@@ -242,13 +266,24 @@ class ForexTrendFollowingStrategy(BaseStrategy):
 
             logger.info(f"[TREND-FOREX] {asset} | ALL CONDITIONS MET: LONG (5:01 PM ET)")
             logger.info(
-                f"[TREND-FOREX] {asset} | ATR({ATR_PERIOD}) at entry = {atr_val:.6f} "
-                f"(FIXED for trade lifetime)"
+                f"[TREND-FOREX] {asset} | ATR_live({ATR_PERIOD}) = {atr_val:.6f} "
+                f"(dynamic — recalculated each bar)"
             )
             logger.info(
                 f"[TREND-FOREX] {asset} | GENERATING SIGNAL: BUY @ {current_close:.5f} | "
-                f"initial_trailing_stop={stop_loss:.5f} (entry - {TRAILING_STOP_ATR_MULT}x ATR)"
+                f"initial_SL={stop_loss:.5f} ({TRAILING_STOP_ATR_MULT}×ATR_live)"
             )
+
+            portfolio_value = None
+            try:
+                from trading_engine.database import get_setting as _get_setting
+                pv_str = _get_setting("portfolio_value")
+                if pv_str:
+                    portfolio_value = float(pv_str)
+            except Exception:
+                pass
+
+            suggested_qty = _calculate_quantity(portfolio_value, atr_val) if portfolio_value else None
 
             signal = {
                 "strategy_name": STRATEGY_NAME,
@@ -258,8 +293,10 @@ class ForexTrendFollowingStrategy(BaseStrategy):
                 "entry_price": current_close,
                 "stop_loss": stop_loss,
                 "take_profit": None,
-                "atr_at_entry": round(atr_val, 6),
+                # atr_at_entry intentionally omitted — dynamic ATR strategy (QC algo behavior)
                 "signal_timestamp": signal_timestamp,
+                "suggested_quantity": suggested_qty,
+                "risk_pct": RISK_PCT_PER_TRADE if suggested_qty else None,
             }
             signal_id = insert_signal(signal)
             if signal_id:
@@ -268,28 +305,104 @@ class ForexTrendFollowingStrategy(BaseStrategy):
                     "strategy_name": STRATEGY_NAME,
                     "direction": "BUY",
                     "entry_price": current_close,
-                    "atr_at_entry": round(atr_val, 6),
+                    # atr_at_entry omitted — None is allowed for dynamic ATR strategies
                 })
                 signal["id"] = signal_id
                 signal["status"] = "OPEN"
-                logger.info(f"[TREND-FOREX] {asset} | Signal stored with id={signal_id}")
+                logger.info(f"[TREND-FOREX] {asset} | LONG signal stored with id={signal_id}")
                 return SignalResult(
                     action=Action.ENTRY,
                     direction=Direction.LONG,
                     price=current_close,
                     stop_loss=stop_loss,
-                    atr_at_entry=round(atr_val, 6),
+                    metadata={"signal": signal},
+                )
+
+        # ── SHORT ENTRY (all forex pairs per QC algo) ──
+        if sma50_below_sma100 and close_below_lowest:
+            if has_open_signal(STRATEGY_NAME, asset):
+                logger.info(
+                    f"[TREND-FOREX] {asset} | IDEMPOTENCY: Open signal exists — duplicate blocked"
+                )
+                return SignalResult()
+
+            if signal_exists(STRATEGY_NAME, asset, signal_timestamp):
+                logger.info(
+                    f"[TREND-FOREX] {asset} | IDEMPOTENCY: "
+                    f"Signal at {signal_timestamp} already exists — blocked"
+                )
+                return SignalResult()
+
+            stop_loss_distance = TRAILING_STOP_ATR_MULT * atr_val
+            stop_loss = current_close + stop_loss_distance
+
+            logger.info(f"[TREND-FOREX] {asset} | ALL SHORT CONDITIONS MET (5:01 PM ET)")
+            logger.info(
+                f"[TREND-FOREX] {asset} | ATR_live({ATR_PERIOD}) = {atr_val:.6f} (dynamic)"
+            )
+            logger.info(
+                f"[TREND-FOREX] {asset} | GENERATING SIGNAL: SELL @ {current_close:.5f} | "
+                f"initial_stop={stop_loss:.5f} (entry + {TRAILING_STOP_ATR_MULT}×ATR_live)"
+            )
+
+            portfolio_value = None
+            try:
+                from trading_engine.database import get_setting as _get_setting
+                pv_str = _get_setting("portfolio_value")
+                if pv_str:
+                    portfolio_value = float(pv_str)
+            except Exception:
+                pass
+
+            suggested_qty = _calculate_quantity(portfolio_value, atr_val) if portfolio_value else None
+
+            signal = {
+                "strategy_name": STRATEGY_NAME,
+                "asset": asset,
+                "direction": "SELL",
+                "action": "ENTRY",
+                "entry_price": current_close,
+                "stop_loss": stop_loss,
+                "take_profit": None,
+                # atr_at_entry intentionally omitted — dynamic ATR strategy
+                "signal_timestamp": signal_timestamp,
+                "suggested_quantity": suggested_qty,
+                "risk_pct": RISK_PCT_PER_TRADE if suggested_qty else None,
+            }
+            signal_id = insert_signal(signal)
+            if signal_id:
+                db_open_position({
+                    "asset": asset,
+                    "strategy_name": STRATEGY_NAME,
+                    "direction": "SELL",
+                    "entry_price": current_close,
+                    # atr_at_entry omitted — None is allowed for dynamic ATR strategies
+                })
+                signal["id"] = signal_id
+                signal["status"] = "OPEN"
+                logger.info(f"[TREND-FOREX] {asset} | SHORT signal stored id={signal_id}")
+                return SignalResult(
+                    action=Action.ENTRY,
+                    direction=Direction.SHORT,
+                    price=current_close,
+                    stop_loss=stop_loss,
                     metadata={"signal": signal},
                 )
         else:
-            logger.info(f"[TREND-FOREX] {asset} | No LONG entry conditions met — no action (LONG_ONLY mode)")
+            logger.info(
+                f"[TREND-FOREX] {asset} | "
+                f"No LONG or SHORT conditions met — no action (LONG_SHORT mode)"
+            )
 
         return SignalResult()
 
     def check_exits(self) -> list[dict]:
         closed_signals = []
         positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
-        logger.info(f"[TREND-FOREX-EXIT] ====== Checking exits (closing-rule gate) | {len(positions)} open position(s) ======")
+        logger.info(
+            f"[TREND-FOREX-EXIT] ====== Checking exits (closing-rule gate) | "
+            f"{len(positions)} open position(s) ======"
+        )
 
         if not positions:
             return closed_signals
@@ -299,69 +412,163 @@ class ForexTrendFollowingStrategy(BaseStrategy):
             pos_id = pos["id"]
             entry_price = pos["entry_price"]
             direction = pos["direction"]
-            atr_at_entry = pos["atr_at_entry"]
-            logger.info(f"[TREND-FOREX-EXIT] Position #{pos_id} | {asset} {direction} | entry={entry_price:.5f}")
+            logger.info(
+                f"[TREND-FOREX-EXIT] Position #{pos_id} | {asset} {direction} | "
+                f"entry={entry_price:.5f}"
+            )
 
-            if direction != "BUY":
-                logger.info(f"[TREND-FOREX-EXIT] Position #{pos_id} | Non-BUY position in LONG_ONLY strategy — closing")
-                active_sigs = get_active_signals(strategy_name=STRATEGY_NAME, asset=asset)
-                for sig in active_sigs:
-                    close_signal(sig["id"], "LONG_ONLY mode — closing non-BUY position")
-                close_position(STRATEGY_NAME, asset)
-                closed_signals.append({**pos, "exit_price": entry_price, "exit_reason": "long_only_cleanup"})
+            if direction not in ("BUY", "SELL"):
+                logger.info(
+                    f"[TREND-FOREX-EXIT] Position #{pos_id} | Unknown direction {direction} — skipping"
+                )
                 continue
 
-            if atr_at_entry is None:
-                logger.warning(f"[TREND-FOREX-EXIT] Position #{pos_id} | No atr_at_entry - skipping")
+            # ── STEP 1: Compute live ATR from latest candles (QC algo: never stored) ──
+            try:
+                candles_for_atr = self.cache.get_candles(asset, TIMEFRAME, 300)
+            except Exception as e:
+                logger.error(
+                    f"[TREND-FOREX-EXIT] Position #{pos_id} | Exception fetching candles for ATR: {e}"
+                )
+                continue
+
+            if len(candles_for_atr) < ATR_PERIOD + 1:
+                logger.warning(
+                    f"[TREND-FOREX-EXIT] Position #{pos_id} | "
+                    f"Insufficient candles for ATR: {len(candles_for_atr)}"
+                )
+                continue
+
+            closes_atr = [c["close"] for c in candles_for_atr]
+            highs_atr  = [c["high"]  for c in candles_for_atr]
+            lows_atr   = [c["low"]   for c in candles_for_atr]
+            atr_series = IndicatorEngine.atr(highs_atr, lows_atr, closes_atr, ATR_PERIOD)
+            live_atr = atr_series[-1] if atr_series and atr_series[-1] is not None else None
+
+            if live_atr is None:
+                logger.warning(
+                    f"[TREND-FOREX-EXIT] Position #{pos_id} | Live ATR returned None — skipping"
+                )
                 continue
 
             logger.info(
-                f"[TREND-FOREX-EXIT] Position #{pos_id} | ATR locked at entry: {atr_at_entry:.6f} (read from DB)"
+                f"[TREND-FOREX-EXIT] Position #{pos_id} | "
+                f"ATR_live({ATR_PERIOD})={live_atr:.6f} (dynamic, recalculated)"
             )
 
+            # ── STEP 2: Get current price (advance API first, candle fallback) ──
             advance_quote = self._get_advance_price(asset)
             if advance_quote is not None:
                 current_close = float(advance_quote["close"])
                 logger.info(
-                    f"[TREND-FOREX-EXIT] Position #{pos_id} | Using v4 advance pre-close price: {current_close:.5f}"
+                    f"[TREND-FOREX-EXIT] Position #{pos_id} | "
+                    f"Using v4 advance pre-close price: {current_close:.5f}"
                 )
             else:
                 logger.warning(
-                    f"[TREND-FOREX-EXIT] Position #{pos_id} | v4 advance unavailable, falling back to cached candles"
+                    f"[TREND-FOREX-EXIT] Position #{pos_id} | "
+                    f"v4 advance unavailable, using last cached candle"
                 )
-                try:
-                    candles = self.cache.get_candles(asset, TIMEFRAME, 300)
-                except Exception as e:
-                    logger.error(f"[TREND-FOREX-EXIT] Position #{pos_id} | Exception fetching candles: {e}")
+                if len(candles_for_atr) < 2:
+                    logger.warning(
+                        f"[TREND-FOREX-EXIT] Position #{pos_id} | Insufficient candles for price fallback"
+                    )
                     continue
+                current_close = candles_for_atr[-1]["close"]
 
-                if len(candles) < 2:
-                    logger.warning(f"[TREND-FOREX-EXIT] Position #{pos_id} | Insufficient candles: {len(candles)}")
-                    continue
-                current_close = candles[-1]["close"]
+            # ── STEP 3: QC ratchet trailing stop and exit check ──
+            active_sigs_stop = get_active_signals(strategy_name=STRATEGY_NAME, asset=asset)
+            stored_stop = active_sigs_stop[0].get("stop_loss") if active_sigs_stop else None
 
-            stored_highest = pos.get("highest_price_since_entry") or entry_price
-            highest_close = max(stored_highest, current_close)
-            update_position_tracking(pos_id, highest_price=highest_close)
+            if direction == "SELL":
+                # SHORT: new_stop = price + (ATR × 3), ratchet DOWN with min()
+                new_stop = current_close + (live_atr * TRAILING_STOP_ATR_MULT)
+                if stored_stop is not None:
+                    trailing_stop = min(stored_stop, new_stop)
+                else:
+                    trailing_stop = new_stop
 
-            trailing_stop = highest_close - (atr_at_entry * TRAILING_STOP_ATR_MULT)
+                if stored_stop is None or trailing_stop < stored_stop:
+                    for sig in active_sigs_stop:
+                        update_signal_stop_loss(sig["id"], trailing_stop)
+                    logger.info(
+                        f"[TREND-FOREX-EXIT] Position #{pos_id} | SELL | "
+                        f"Trailing stop updated: {stored_stop} → {trailing_stop:.5f} "
+                        f"(price={current_close:.5f} + {TRAILING_STOP_ATR_MULT}×ATR={live_atr:.6f})"
+                    )
+                else:
+                    logger.info(
+                        f"[TREND-FOREX-EXIT] Position #{pos_id} | SELL | "
+                        f"Trailing stop held: {trailing_stop:.5f} "
+                        f"(new_stop={new_stop:.5f} would move stop up — not allowed)"
+                    )
+
+                logger.info(
+                    f"[TREND-FOREX-EXIT] Position #{pos_id} | SELL | "
+                    f"close={current_close:.5f} | stop={trailing_stop:.5f} | "
+                    f"exit_trigger(close >= stop)={current_close >= trailing_stop}"
+                )
+
+                if current_close >= trailing_stop:
+                    exit_reason = (
+                        f"SHORT closing-rule exit | 5:01 PM close={current_close:.5f} >= "
+                        f"stop={trailing_stop:.5f} "
+                        f"({TRAILING_STOP_ATR_MULT}×ATR_live={live_atr:.6f})"
+                    )
+                    logger.info(
+                        f"[TREND-FOREX-EXIT] Position #{pos_id} | EXIT: SHORT trailing stop triggered"
+                    )
+                    for sig in active_sigs_stop:
+                        close_signal(sig["id"], exit_reason)
+                    close_position(STRATEGY_NAME, asset)
+                    closed_signals.append({
+                        **pos,
+                        "exit_price": current_close,
+                        "exit_reason": "closing_rule_short",
+                    })
+                else:
+                    logger.info(
+                        f"[TREND-FOREX-EXIT] Position #{pos_id} | Holding SHORT — close below stop level"
+                    )
+                continue
+
+            # BUY: new_stop = price - (ATR × 3), ratchet UP with max()
+            new_stop = current_close - (live_atr * TRAILING_STOP_ATR_MULT)
+            if stored_stop is not None:
+                trailing_stop = max(stored_stop, new_stop)
+            else:
+                trailing_stop = new_stop
+
+            if stored_stop is None or trailing_stop > stored_stop:
+                for sig in active_sigs_stop:
+                    update_signal_stop_loss(sig["id"], trailing_stop)
+                logger.info(
+                    f"[TREND-FOREX-EXIT] Position #{pos_id} | BUY | "
+                    f"Trailing stop updated: {stored_stop} → {trailing_stop:.5f} "
+                    f"(price={current_close:.5f} - {TRAILING_STOP_ATR_MULT}×ATR={live_atr:.6f})"
+                )
+            else:
+                logger.info(
+                    f"[TREND-FOREX-EXIT] Position #{pos_id} | BUY | "
+                    f"Trailing stop held: {trailing_stop:.5f} "
+                    f"(new_stop={new_stop:.5f} would move stop down — not allowed)"
+                )
 
             logger.info(
                 f"[TREND-FOREX-EXIT] Position #{pos_id} | CLOSING-RULE CHECK | "
-                f"close={current_close:.5f} | SL_level={trailing_stop:.5f} | "
-                f"Price < SL? {current_close < trailing_stop} | "
+                f"close={current_close:.5f} | stop={trailing_stop:.5f} | "
+                f"exit_trigger(close <= stop)={current_close <= trailing_stop} | "
                 f"(intraday spikes ignored — only 5:01 PM close matters)"
             )
 
-            if current_close < trailing_stop:
+            if current_close <= trailing_stop:
                 exit_reason = (
-                    f"Closing-rule exit | 5:01 PM close={current_close:.5f} < "
-                    f"SL_level={trailing_stop:.5f} (highest={highest_close:.5f} - "
-                    f"{TRAILING_STOP_ATR_MULT}x ATR={atr_at_entry:.6f})"
+                    f"Closing-rule exit | 5:01 PM close={current_close:.5f} <= "
+                    f"stop={trailing_stop:.5f} "
+                    f"({TRAILING_STOP_ATR_MULT}×ATR_live={live_atr:.6f})"
                 )
                 logger.info(f"[TREND-FOREX-EXIT] Position #{pos_id} | EXIT: closing-rule gate triggered")
-                active_sigs = get_active_signals(strategy_name=STRATEGY_NAME, asset=asset)
-                for sig in active_sigs:
+                for sig in active_sigs_stop:
                     close_signal(sig["id"], exit_reason)
                 close_position(STRATEGY_NAME, asset)
                 closed_signals.append({**pos, "exit_price": current_close, "exit_reason": "closing_rule"})

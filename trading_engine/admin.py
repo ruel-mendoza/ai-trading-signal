@@ -1559,54 +1559,41 @@ def _get_forex_trend_data() -> dict:
 
     active_trades = get_active_signals(strategy_name="trend_forex")
     open_positions = get_all_open_positions(strategy_name="trend_forex")
-    pos_by_asset = {p["asset"]: p for p in open_positions}
     trade_details = []
     for sig in active_trades:
-        atr_at_entry = sig.get("atr_at_entry")
         direction = sig["direction"]
         entry_price = sig["entry_price"]
-        pos = pos_by_asset.get(sig["asset"])
 
-        if direction == "BUY":
-            stored_extreme = (pos.get("highest_price_since_entry") if pos else None) or entry_price
-            sym_candles = get_candles(sig["asset"], "D1", 5)
-            cur_close = sym_candles[-1]["close"] if sym_candles else None
-            if cur_close:
-                stored_extreme = max(stored_extreme, cur_close)
-            trailing_stop = None
-            if atr_at_entry is not None:
-                trailing_stop = stored_extreme - (atr_at_entry * 3.0)
-            trade_details.append({
-                "id": sig["id"],
-                "symbol": sig["asset"],
-                "direction": direction,
-                "entry_price": entry_price,
-                "atr_at_entry": atr_at_entry,
-                "extreme_price": stored_extreme,
-                "trailing_stop": trailing_stop,
-                "current_close": cur_close,
-                "created_at": sig.get("created_at"),
-            })
-        elif direction == "SELL":
-            stored_extreme = (pos.get("lowest_price_since_entry") if pos else None) or entry_price
-            sym_candles = get_candles(sig["asset"], "D1", 5)
-            cur_close = sym_candles[-1]["close"] if sym_candles else None
-            if cur_close:
-                stored_extreme = min(stored_extreme, cur_close)
-            trailing_stop = None
-            if atr_at_entry is not None:
-                trailing_stop = stored_extreme + (atr_at_entry * 3.0)
-            trade_details.append({
-                "id": sig["id"],
-                "symbol": sig["asset"],
-                "direction": direction,
-                "entry_price": entry_price,
-                "atr_at_entry": atr_at_entry,
-                "extreme_price": stored_extreme,
-                "trailing_stop": trailing_stop,
-                "current_close": cur_close,
-                "created_at": sig.get("created_at"),
-            })
+        # Dynamic ATR — compute live from candles (QC algo: never stored at entry)
+        sym_candles = get_candles(sig["asset"], "D1", 300)
+        cur_close = sym_candles[-1]["close"] if sym_candles else None
+        live_atr = None
+        if len(sym_candles) >= 101:
+            _c = [c["close"] for c in sym_candles]
+            _h = [c["high"]  for c in sym_candles]
+            _l = [c["low"]   for c in sym_candles]
+            _atr = IndicatorEngine.atr(_h, _l, _c, 100)
+            live_atr = _atr[-1] if _atr and _atr[-1] is not None else None
+
+        # Use persisted stop_loss from signal (ratcheted by check_exits each run)
+        trailing_stop = sig.get("stop_loss")
+        # Fall back to indicative stop if not yet persisted
+        if trailing_stop is None and live_atr is not None and cur_close is not None:
+            if direction == "BUY":
+                trailing_stop = cur_close - (live_atr * 3.0)
+            else:
+                trailing_stop = cur_close + (live_atr * 3.0)
+
+        trade_details.append({
+            "id": sig["id"],
+            "symbol": sig["asset"],
+            "direction": direction,
+            "entry_price": entry_price,
+            "live_atr": live_atr,
+            "trailing_stop": trailing_stop,
+            "current_close": cur_close,
+            "created_at": sig.get("created_at"),
+        })
 
     return {
         "et_time": et_now.strftime(f"%Y-%m-%d %H:%M:%S {'EDT' if ny_dst else 'EST'}"),
@@ -1635,11 +1622,11 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
         breakout_long = ""
         breakout_short = ""
         if sym["current_close"] is not None and sym["highest_50d"] is not None:
-            if sym["current_close"] > sym["highest_50d"]:
-                breakout_long = ' <span class="badge buy">BREAKOUT</span>'
+            if sym["current_close"] >= sym["highest_50d"]:
+                breakout_long = ' <span class="badge buy">BREAKOUT ✓</span>'
         if sym["current_close"] is not None and sym["lowest_50d"] is not None:
-            if sym["current_close"] < sym["lowest_50d"]:
-                breakout_short = ' <span class="badge sell">BREAKDOWN</span>'
+            if sym["current_close"] <= sym["lowest_50d"]:
+                breakout_short = ' <span class="badge sell">BREAKDOWN ✓</span>'
 
         symbols_html += f"""
         <div class="settings-section" style="margin-bottom:16px;" data-testid="forex-trend-symbol-{sym['symbol'].replace('/','-')}">
@@ -1673,29 +1660,25 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
     if fx_data["active_trades"]:
         trade_rows = ""
         for t in fx_data["active_trades"]:
-            dir_class = "buy" if t["direction"] == "BUY" else "sell"
+            direction = t["direction"]
+            dir_class = "buy" if direction == "BUY" else "sell"
+            dir_color = "#3b82f6" if direction == "BUY" else "#ef4444"
             entry_display = f"{t['entry_price']:.5f}"
-            atr_display = f"{t['atr_at_entry']:.6f}" if t["atr_at_entry"] is not None else "N/A"
-            extreme_label = "Highest Close" if t["direction"] == "BUY" else "Lowest Close"
-            extreme_display = f"{t['extreme_price']:.5f}"
+            atr_display = f"{t['live_atr']:.6f}" if t.get("live_atr") is not None else "N/A"
             trail_display = f"{t['trailing_stop']:.5f}" if t["trailing_stop"] is not None else "N/A"
             cur_display = f"{t['current_close']:.5f}" if t["current_close"] is not None else "N/A"
             pnl = ""
             if t["current_close"] is not None:
-                if t["direction"] == "BUY":
-                    diff = t["current_close"] - t["entry_price"]
-                else:
-                    diff = t["entry_price"] - t["current_close"]
+                diff = t["current_close"] - t["entry_price"] if direction == "BUY" else t["entry_price"] - t["current_close"]
                 pnl_color = "#6ee7b7" if diff >= 0 else "#fca5a5"
                 pnl = f'<span style="color:{pnl_color};font-weight:600;">{diff:+.5f}</span>'
 
             trade_rows += f"""
             <tr data-testid="row-forex-trade-{t['id']}">
                 <td>{t['symbol']}</td>
-                <td><span class="badge {dir_class}">{t['direction']}</span></td>
+                <td><span class="badge {dir_class}">{direction}</span></td>
                 <td>{entry_display}</td>
-                <td>{atr_display}</td>
-                <td>{extreme_display} <span style="color:#64748b;font-size:0.75rem;">({extreme_label})</span></td>
+                <td><span style="color:#94a3b8;font-size:0.8rem;">live</span> {atr_display}</td>
                 <td style="color:#fbbf24;font-weight:600;">{trail_display}</td>
                 <td>{cur_display}</td>
                 <td>{pnl}</td>
@@ -1703,7 +1686,7 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
             </tr>"""
 
         active_html = f"""
-        <div class="settings-section" style="margin-top:20px;border-left:3px solid #3b82f6;">
+        <div class="settings-section" style="margin-top:20px;border-left:3px solid #6366f1;">
             <h3>Active Trades ({len(fx_data['active_trades'])})</h3>
             <div style="overflow-x:auto;margin-top:12px;">
                 <table class="data-table" data-testid="forex-trend-active-table">
@@ -1712,9 +1695,8 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
                             <th>Symbol</th>
                             <th>Direction</th>
                             <th>Entry Price</th>
-                            <th>Entry ATR(100)</th>
-                            <th>Tracked Extreme</th>
-                            <th>Trailing Stop</th>
+                            <th>Live ATR(100) (dynamic)</th>
+                            <th>Trailing Stop (3×ATR)</th>
                             <th>Current Close</th>
                             <th>P&amp;L</th>
                             <th>Opened</th>
@@ -1773,14 +1755,20 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
         </div>
     </div>
     <div class="timezone-note" style="margin-top:16px;">
-        <strong>Strategy Rules:</strong>
+        <strong>Strategy Rules</strong> &mdash; <em>QuantConnect Validated</em>
         <ul>
-            <li><strong>Long Entry:</strong> Close &gt; Highest Close of prior 50 days AND SMA(50) &gt; SMA(100)</li>
-            <li><strong>Short Entry:</strong> Close &lt; Lowest Close of prior 50 days AND SMA(50) &lt; SMA(100)</li>
-            <li><strong>Exit (Trailing Stop):</strong> Long exits when close &lt; highest_since_entry - (ATR_at_entry &times; 3); Short exits when close &gt; lowest_since_entry + (ATR_at_entry &times; 3)</li>
-            <li><strong>ATR:</strong> Fixed at entry value for the duration of the trade (never recalculated)</li>
-            <li><strong>Timing:</strong> Evaluates at 5:01 PM ET daily (1 min after NY close), automated via APScheduler</li>
-            <li><strong>Reversal:</strong> Closing a Long allows a Short to open the next day if conditions are met (and vice versa)</li>
+            <li><strong>Assets:</strong> EUR/USD, USD/JPY &mdash; both LONG and SHORT eligible (QC: <code>self._forex = [EURUSD, USDJPY]</code>)</li>
+            <li><strong>Mode:</strong> <code>LONG_SHORT</code> &mdash; full bidirectional trading per QC algorithm</li>
+            <li><strong>Long Entry:</strong> close <code>&gt;=</code> highest close of prior 50 days <strong>AND</strong> SMA(50) &gt; SMA(100)</li>
+            <li><strong>Short Entry:</strong> close <code>&lt;=</code> lowest close of prior 50 days <strong>AND</strong> SMA(50) &lt; SMA(100)</li>
+            <li><strong>ATR:</strong> <strong>Dynamic (live)</strong> &mdash; ATR(100) is recalculated on every evaluation bar from current candle data. ATR is <em>never</em> stored at entry. Matches QC <code>self._atr[symbol].current.value</code> behavior exactly.</li>
+            <li><strong>Trailing Stop (LONG):</strong> <code>new_stop = current_price &minus; (ATR &times; 3)</code> &mdash; ratcheted upward with <code>max(stored_stop, new_stop)</code>. Stop only moves in the trade&rsquo;s favour.</li>
+            <li><strong>Trailing Stop (SHORT):</strong> <code>new_stop = current_price + (ATR &times; 3)</code> &mdash; ratcheted downward with <code>min(stored_stop, new_stop)</code>. Stop only moves in the trade&rsquo;s favour.</li>
+            <li><strong>Exit LONG:</strong> <code>if close &lt;= trailing_stop &rarr; liquidate</code> (operator is <code>&lt;=</code>, not <code>&lt;</code>)</li>
+            <li><strong>Exit SHORT:</strong> <code>if close &gt;= trailing_stop &rarr; liquidate</code> (operator is <code>&gt;=</code>, not <code>&gt;</code>)</li>
+            <li><strong>Position Sizing:</strong> <code>quantity = (portfolio_value &times; 1%) / (3 &times; ATR)</code> &mdash; stored as <code>suggested_quantity</code> in signal metadata</li>
+            <li><strong>Timing:</strong> 5:01 PM ET daily (1 min after NY forex close), automated via APScheduler. Eval window: 17:01&ndash;17:03 ET.</li>
+            <li><strong>Timeframe:</strong> Daily (D1) candles | SMA(50), SMA(100), ATR(100) | 50-day lookback window</li>
         </ul>
     </div>
     """

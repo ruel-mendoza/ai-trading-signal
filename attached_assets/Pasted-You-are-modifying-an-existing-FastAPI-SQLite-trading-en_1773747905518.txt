@@ -1,0 +1,539 @@
+You are modifying an existing FastAPI + SQLite trading engine.
+Target file: trading_engine/strategies/trend_forex.py
+Also modify: trading_engine/database.py, trading_engine/models.py,
+             trading_engine/admin.py, trading_engine/api_v1.py
+
+The QuantConnect validated algorithm is the SOURCE OF TRUTH.
+Apply the same ATR/stop fixes already done for trend_non_forex.py
+to trend_forex.py, PLUS add full SHORT capability for all forex pairs.
+
+Read all existing code before writing a single line.
+Do NOT touch sp500_momentum.py, highest_lowest.py, multi_timeframe.py.
+
+=============================================================
+QC ALGORITHM FOREX RULES (source of truth)
+=============================================================
+
+From the QC code:
+
+  self._forex = [EURUSD, USDJPY]   ← both LONG and SHORT eligible
+
+  LONG:  price >= high_50 AND sma50 > sma100
+  SHORT: price <= low_50  AND sma50 < sma100   ← forex only, explicit in QC
+
+  ATR: self._atr[symbol].current.value  ← recalculated EVERY bar, never stored
+
+  Trailing stop LONG:
+    new_stop = price - (atr × 3)
+    stop = max(stored_stop, new_stop)   ← ratchets up, never down
+
+  Trailing stop SHORT:
+    new_stop = price + (atr × 3)
+    stop = min(stored_stop, new_stop)   ← ratchets down, never up
+
+  Exit LONG:  if price <= stop → liquidate
+  Exit SHORT: if price >= stop → liquidate
+
+  Position sizing:
+    risk_per_trade = portfolio_value × 0.01
+    quantity = risk_per_trade / (3 × atr)
+
+  Schedule: every day at 16:00 ET (we use 17:01 ET — intentional, forex closes 5 PM)
+
+=============================================================
+EXISTING BUGS IN trend_forex.py TO FIX
+=============================================================
+
+BUG 1 — Entry operator wrong
+  current: current_close > highest_50d     (strict >)
+  correct: current_close >= highest_50d    (>=, matches QC)
+
+BUG 2 — ATR stored at entry instead of dynamic
+  current: atr_at_entry stored in DB, used forever
+  correct: recalculate ATR from latest candles on every evaluation
+
+BUG 3 — Trailing stop uses peak price model
+  current: stop = highest_close_since_entry - (atr_at_entry × 3)
+  correct: stop = current_price - (live_atr × 3), ratcheted with max()
+
+BUG 4 — Exit uses strict < instead of <=
+  current: if current_close < trailing_stop
+  correct: if current_close <= trailing_stop
+
+BUG 5 — SHORT entry completely missing
+  current: MODE = "LONG_ONLY", no short path
+  correct: add full SHORT entry, trailing stop, and exit for all forex pairs
+
+=============================================================
+TASK 1 — CHANGE MODE AND ADD SHORT_ELIGIBLE LIST
+=============================================================
+
+A) At the top of trend_forex.py, REPLACE:
+     MODE = "LONG_ONLY"
+   WITH:
+     MODE = "LONG_SHORT"
+     # All forex pairs are eligible for both long and short per QC algo
+
+B) Keep TARGET_SYMBOLS unchanged:
+     TARGET_SYMBOLS = ["EUR/USD", "USD/JPY"]
+   These are the exact pairs from the QC algo forex list.
+
+C) Add a new constant for the 50-day LOW lookback (mirrors existing LOOKBACK_DAYS):
+     LOOKBACK_DAYS = 50   # already exists — used for both HIGH and LOW
+
+=============================================================
+TASK 2 — FIX ENTRY CONDITIONS
+=============================================================
+
+In trend_forex.py evaluate():
+
+A) Fix LONG entry operator:
+   FIND:
+     close_above_highest = current_close > highest_50d
+   REPLACE:
+     close_above_highest = current_close >= highest_50d
+
+B) Compute lowest_50d alongside highest_50d:
+   FIND:
+     prior_closes = closes[-(LOOKBACK_DAYS + 1):-1]
+     highest_50d = max(prior_closes)
+   REPLACE:
+     prior_closes = closes[-(LOOKBACK_DAYS + 1):-1]
+     highest_50d  = max(prior_closes)
+     lowest_50d   = min(prior_closes)   # ADD — needed for SHORT entry
+
+C) Update LONG condition log line to reflect >= :
+   FIND:   "LONG check: close > highest_close=..."
+   REPLACE: "LONG check: close >= highest_close=..."
+
+D) Add SHORT entry condition variables after the LONG ones:
+   sma50_below_sma100  = sma50_val < sma100_val
+   close_below_lowest  = current_close <= lowest_50d
+
+   logger.info(
+       f"[TREND-FOREX] {asset} | SHORT check: "
+       f"close <= lowest_close={close_below_lowest} "
+       f"AND SMA50 < SMA100={sma50_below_sma100} (LONG_SHORT mode)"
+   )
+
+=============================================================
+TASK 3 — FIX ATR HANDLING (CRITICAL — same pattern as trend_non_forex)
+=============================================================
+
+A) In trend_forex.py evaluate() — REMOVE atr_at_entry from signal and position dicts.
+
+   The signal dict currently includes:
+     "atr_at_entry": round(atr_val, 6),
+   REMOVE this line from both the LONG and SHORT signal dicts.
+
+   The db_open_position() call currently includes:
+     "atr_at_entry": round(atr_val, 6),
+   REMOVE this line from both LONG and SHORT db_open_position() calls.
+
+   After removal, db_open_position() calls look like:
+     db_open_position({
+         "asset": asset,
+         "strategy_name": STRATEGY_NAME,
+         "direction": "BUY",     # or "SELL"
+         "entry_price": current_close,
+         # atr_at_entry omitted — dynamic ATR strategy
+     })
+
+B) In trend_forex.py check_exits() — replace atr_at_entry with dynamic ATR:
+
+   FIND at the start of the per-position loop:
+     atr_at_entry = pos["atr_at_entry"]
+     if atr_at_entry is None:
+         logger.warning(...)
+         continue
+
+   REPLACE WITH:
+     # Dynamic ATR — recalculate from latest candles (QC algo behavior)
+     try:
+         candles_for_atr = self.cache.get_candles(asset, TIMEFRAME, 300)
+     except Exception as e:
+         logger.error(f"[TREND-FOREX-EXIT] Position #{pos_id} | Exception fetching candles for ATR: {e}")
+         continue
+
+     if len(candles_for_atr) < ATR_PERIOD + 1:
+         logger.warning(
+             f"[TREND-FOREX-EXIT] Position #{pos_id} | "
+             f"Insufficient candles for ATR: {len(candles_for_atr)}"
+         )
+         continue
+
+     closes_atr = [c["close"] for c in candles_for_atr]
+     highs_atr  = [c["high"]  for c in candles_for_atr]
+     lows_atr   = [c["low"]   for c in candles_for_atr]
+     atr_series = IndicatorEngine.atr(highs_atr, lows_atr, closes_atr, ATR_PERIOD)
+     live_atr   = atr_series[-1] if atr_series and atr_series[-1] is not None else None
+
+     if live_atr is None:
+         logger.warning(
+             f"[TREND-FOREX-EXIT] Position #{pos_id} | Live ATR returned None — skipping"
+         )
+         continue
+
+     logger.info(
+         f"[TREND-FOREX-EXIT] Position #{pos_id} | "
+         f"Live ATR({ATR_PERIOD})={live_atr:.6f} (dynamic, recalculated)"
+     )
+
+   Then use `live_atr` everywhere `atr_at_entry` was used below in the exit logic.
+
+C) database.py — the open_position() guard fix was already done for trend_non_forex.
+   Verify it is in place. The guard should now read:
+     if atr_value is not None and atr_value <= 0:
+         # reject only if provided but invalid
+   If the old hard-reject block is still there, apply the same fix now.
+
+D) models.py — verify atr_at_entry on OpenPosition is nullable=True.
+   This was already changed for trend_non_forex. Confirm it applies here too.
+   (It is the same column on the same table — only needs to be done once.)
+
+=============================================================
+TASK 4 — FIX TRAILING STOP MODEL FOR LONG
+=============================================================
+
+In check_exits() for LONG (BUY) positions, REPLACE the existing trailing stop block:
+
+REMOVE:
+  stored_highest = pos.get("highest_price_since_entry") or entry_price
+  highest_close  = max(stored_highest, current_close)
+  update_position_tracking(pos_id, highest_price=highest_close)
+  trailing_stop  = highest_close - (atr_at_entry * TRAILING_STOP_ATR_MULT)
+
+REPLACE WITH:
+  # QC algo: stop = current_price - (live_ATR × 3), ratchet up with max()
+  new_stop = current_close - (live_atr * TRAILING_STOP_ATR_MULT)
+
+  # Retrieve persisted stop_loss from the open signal
+  active_sigs_stop = get_active_signals(strategy_name=STRATEGY_NAME, asset=asset)
+  stored_stop = active_sigs_stop[0].get("stop_loss") if active_sigs_stop else None
+
+  # Ratchet: trailing stop only moves in favour of trade (up for LONG)
+  if stored_stop is not None:
+      trailing_stop = max(stored_stop, new_stop)
+  else:
+      trailing_stop = new_stop
+
+  # Persist updated stop if it moved
+  if stored_stop is None or trailing_stop > stored_stop:
+      for sig in active_sigs_stop:
+          update_signal_stop_loss(sig["id"], trailing_stop)
+      logger.info(
+          f"[TREND-FOREX-EXIT] Position #{pos_id} | BUY | "
+          f"Trailing stop updated: {stored_stop} → {trailing_stop:.5f} "
+          f"(price={current_close:.5f} - {TRAILING_STOP_ATR_MULT}×ATR={live_atr:.6f})"
+      )
+  else:
+      logger.info(
+          f"[TREND-FOREX-EXIT] Position #{pos_id} | BUY | "
+          f"Trailing stop held: {trailing_stop:.5f} "
+          f"(new_stop={new_stop:.5f} would move stop down — not allowed)"
+      )
+
+Import update_signal_stop_loss from trading_engine.database at the top of trend_forex.py.
+(This function was added in the trend_non_forex task — verify it exists in database.py.)
+
+=============================================================
+TASK 5 — ADD SHORT TRAILING STOP AND EXIT IN check_exits()
+=============================================================
+
+The existing check_exits() only handles BUY positions.
+Replace the non-BUY cleanup block with proper SHORT exit logic.
+
+REMOVE this block (if present from previous LONG_ONLY mode):
+  if direction != "BUY":
+      logger.info(f"[TREND-FOREX-EXIT] Position #{pos_id} | Non-BUY position — closing")
+      ...
+      continue
+
+REPLACE WITH the full SHORT exit block:
+
+  if direction == "SELL":
+      # QC algo: new_stop = price + (live_ATR × 3), ratchet DOWN with min()
+      new_stop = current_close + (live_atr * TRAILING_STOP_ATR_MULT)
+
+      # Retrieve persisted stop_loss from open signal
+      active_sigs_short = get_active_signals(strategy_name=STRATEGY_NAME, asset=asset)
+      stored_stop_short  = active_sigs_short[0].get("stop_loss") if active_sigs_short else None
+
+      # Ratchet: trailing stop only moves in favour of trade (down for SHORT)
+      if stored_stop_short is not None:
+          trailing_stop_short = min(stored_stop_short, new_stop)
+      else:
+          trailing_stop_short = new_stop
+
+      # Persist updated stop if it moved
+      if stored_stop_short is None or trailing_stop_short < stored_stop_short:
+          for sig in active_sigs_short:
+              update_signal_stop_loss(sig["id"], trailing_stop_short)
+          logger.info(
+              f"[TREND-FOREX-EXIT] Position #{pos_id} | SELL | "
+              f"Trailing stop updated: {stored_stop_short} → {trailing_stop_short:.5f} "
+              f"(price={current_close:.5f} + {TRAILING_STOP_ATR_MULT}×ATR={live_atr:.6f})"
+          )
+      else:
+          logger.info(
+              f"[TREND-FOREX-EXIT] Position #{pos_id} | SELL | "
+              f"Trailing stop held: {trailing_stop_short:.5f} "
+              f"(new_stop={new_stop:.5f} would move stop up — not allowed)"
+          )
+
+      logger.info(
+          f"[TREND-FOREX-EXIT] Position #{pos_id} | SELL | "
+          f"close={current_close:.5f} | stop={trailing_stop_short:.5f} | "
+          f"price_above_stop={current_close >= trailing_stop_short}"
+      )
+
+      # EXIT: QC algo uses >= for short exit
+      if current_close >= trailing_stop_short:
+          exit_reason = (
+              f"SHORT closing-rule exit | 5:01 PM close={current_close:.5f} >= "
+              f"stop={trailing_stop_short:.5f} "
+              f"(trough + {TRAILING_STOP_ATR_MULT}×live_ATR={live_atr:.6f})"
+          )
+          logger.info(
+              f"[TREND-FOREX-EXIT] Position #{pos_id} | EXIT: SHORT trailing stop triggered"
+          )
+          active_sigs_exit = get_active_signals(strategy_name=STRATEGY_NAME, asset=asset)
+          for sig in active_sigs_exit:
+              close_signal(sig["id"], exit_reason)
+          close_position(STRATEGY_NAME, asset)
+          closed_signals.append({
+              **pos,
+              "exit_price": current_close,
+              "exit_reason": "closing_rule_short",
+          })
+      else:
+          logger.info(
+              f"[TREND-FOREX-EXIT] Position #{pos_id} | Holding SHORT — close below stop level"
+          )
+      continue   # ← important: skip the BUY block below
+
+=============================================================
+TASK 6 — FIX LONG EXIT OPERATOR
+=============================================================
+
+In check_exits(), in the LONG (BUY) exit comparison:
+
+FIND:
+  if current_close < trailing_stop:
+REPLACE:
+  if current_close <= trailing_stop:
+
+Update the exit reason string to say "closing-rule exit | close <= stop" not "< stop".
+
+Also remove all references to update_position_tracking() in trend_forex.py.
+The highest_price_since_entry peak model is no longer used by this strategy.
+Do NOT remove update_position_tracking() from database.py — other strategies need it.
+
+=============================================================
+TASK 7 — ADD SHORT ENTRY IN evaluate()
+=============================================================
+
+After the existing LONG entry block in evaluate(), add the SHORT entry block.
+The structure mirrors the LONG block exactly but inverted.
+
+  # --- SHORT ENTRY (all forex pairs per QC algo) ---
+  if sma50_below_sma100 and close_below_lowest:
+
+      # Idempotency guards
+      if open_position_data and open_position_data.get("direction") == "SELL":
+          logger.info(
+              f"[TREND-FOREX] {asset} | IDEMPOTENCY: "
+              f"Existing open SHORT — skipping entry"
+          )
+          return SignalResult()
+
+      if has_open_signal(STRATEGY_NAME, asset):
+          logger.info(
+              f"[TREND-FOREX] {asset} | IDEMPOTENCY: "
+              f"Open signal exists — duplicate blocked"
+          )
+          return SignalResult()
+
+      if signal_exists(STRATEGY_NAME, asset, signal_timestamp):
+          logger.info(
+              f"[TREND-FOREX] {asset} | IDEMPOTENCY: "
+              f"Signal at {signal_timestamp} already exists — blocked"
+          )
+          return SignalResult()
+
+      # Initial stop set at entry, ratcheted by check_exits() on each tick
+      stop_loss_distance = TRAILING_STOP_ATR_MULT * atr_val
+      stop_loss = current_close + stop_loss_distance   # SHORT stop is ABOVE entry
+
+      logger.info(f"[TREND-FOREX] {asset} | ALL SHORT CONDITIONS MET (5:01 PM ET)")
+      logger.info(
+          f"[TREND-FOREX] {asset} | ATR({ATR_PERIOD}) live = {atr_val:.6f} (dynamic)"
+      )
+      logger.info(
+          f"[TREND-FOREX] {asset} | GENERATING SIGNAL: SELL @ {current_close:.5f} | "
+          f"initial_stop={stop_loss:.5f} (entry + {TRAILING_STOP_ATR_MULT}×live_ATR)"
+      )
+
+      signal = {
+          "strategy_name": STRATEGY_NAME,
+          "asset": asset,
+          "direction": "SELL",
+          "action": "ENTRY",
+          "entry_price": current_close,
+          "stop_loss": stop_loss,
+          "take_profit": None,
+          "signal_timestamp": signal_timestamp,
+          # atr_at_entry intentionally omitted — dynamic ATR strategy
+      }
+
+      signal_id = insert_signal(signal)
+      if signal_id:
+          db_open_position({
+              "asset": asset,
+              "strategy_name": STRATEGY_NAME,
+              "direction": "SELL",
+              "entry_price": current_close,
+              # atr_at_entry omitted — None is now allowed after DB guard fix
+          })
+          signal["id"] = signal_id
+          signal["status"] = "OPEN"
+          logger.info(
+              f"[TREND-FOREX] {asset} | SHORT signal stored id={signal_id}"
+          )
+          return SignalResult(
+              action=Action.ENTRY,
+              direction=Direction.SHORT,
+              price=current_close,
+              stop_loss=stop_loss,
+              atr_at_entry=None,   # dynamic ATR — not stored
+              metadata={"signal": signal},
+          )
+
+  else:
+      logger.info(
+          f"[TREND-FOREX] {asset} | "
+          f"No LONG or SHORT conditions met — no action (LONG_SHORT mode)"
+      )
+
+  return SignalResult()
+
+=============================================================
+TASK 8 — UPDATE OPEN POSITION TRACKING IN evaluate()
+=============================================================
+
+The existing evaluate() has a block that tracks highest_price_since_entry for BUY.
+This must be updated to handle SELL and to use the new dynamic ATR model.
+
+FIND the existing position tracking block inside evaluate() (it runs when open_position_data exists):
+
+REPLACE the entire block WITH:
+
+  if open_position_data:
+      pos_id  = open_position_data["id"]
+      pos_dir = open_position_data.get("direction", "BUY")
+      pos_atr_entry = open_position_data.get("atr_at_entry")  # may be None for this strategy
+
+      if pos_dir == "BUY":
+          # Dynamic trailing stop — log current state for monitoring
+          trailing_stop_preview = current_close - (atr_val * TRAILING_STOP_ATR_MULT)
+          logger.info(
+              f"[TREND-FOREX] {asset} | ACTIVE LONG #{pos_id} | "
+              f"entry={open_position_data['entry_price']:.5f} | "
+              f"live_ATR={atr_val:.6f} | "
+              f"current_stop_preview={trailing_stop_preview:.5f} "
+              f"(actual stop updated by check_exits)"
+          )
+
+      elif pos_dir == "SELL":
+          # Dynamic trailing stop — log current state for monitoring
+          trailing_stop_preview = current_close + (atr_val * TRAILING_STOP_ATR_MULT)
+          logger.info(
+              f"[TREND-FOREX] {asset} | ACTIVE SHORT #{pos_id} | "
+              f"entry={open_position_data['entry_price']:.5f} | "
+              f"live_ATR={atr_val:.6f} | "
+              f"current_stop_preview={trailing_stop_preview:.5f} "
+              f"(actual stop updated by check_exits)"
+          )
+
+      logger.info(
+          f"[TREND-FOREX] {asset} | IDEMPOTENCY: "
+          f"Existing open {pos_dir} position — skipping entry evaluation"
+      )
+      return SignalResult()
+
+=============================================================
+TASK 9 — POSITION SIZING (1% RISK MODEL)
+=============================================================
+
+Same pattern as trend_non_forex. Add at the top of trend_forex.py:
+  RISK_PCT_PER_TRADE = 0.01
+
+Add the same helper function:
+  def _calculate_quantity(
+      portfolio_value: float,
+      atr: float,
+      atr_mult: float = TRAILING_STOP_ATR_MULT
+  ) -> Optional[float]:
+      stop_distance = atr_mult * atr
+      if stop_distance <= 0 or portfolio_value <= 0:
+          return None
+      return round((portfolio_value * RISK_PCT_PER_TRADE) / stop_distance, 4)
+
+In both LONG and SHORT signal dicts, add suggested_quantity as metadata (not a DB column):
+  portfolio_value = None
+  try:
+      from trading_engine.database import get_setting
+      pv_str = get_setting("portfolio_value")
+      if pv_str:
+          portfolio_value = float(pv_str)
+  except Exception:
+      pass
+
+  suggested_qty = _calculate_quantity(portfolio_value or 0, atr_val) if portfolio_value else None
+
+  # Add to signal metadata (not persisted to signals table directly)
+  signal["suggested_quantity"] = suggested_qty
+  signal["risk_pct"] = RISK_PCT_PER_TRADE if suggested_qty else None
+
+=============================================================
+TASK 10 — ADMIN DASHBOARD UPDATES (admin.py)
+=============================================================
+
+The existing Trend Forex panel shows only LONG metrics.
+Update it to show both LONG and SHORT state.
+
+A) In _get_forex_trend_data() (admin.py):
+
+   For each symbol, add lowest_50d:
+     FIND:
+       if len(closes) > 50:
+           prior_closes = closes[-51:-1]
+           sym_info["highest_50d"] = max(prior_closes)
+     ADD AFTER:
+           sym_info["lowest_50d"]  = min(prior_closes)
+
+   Add to sym_info init dict:
+     "lowest_50d": None,
+     "cond_price_below_50d_low": False,
+     "short_met": False,
+
+   Add condition computation after existing LONG conditions:
+     if sym_info["lowest_50d"] is not None and sym_info["current_close"] is not None:
+         sym_info["cond_price_below_50d_low"] = (
+             sym_info["current_close"] <= sym_info["lowest_50d"]
+         )
+     sma50_below = (
+         sym_info["sma50"] is not None
+         and sym_info["sma100"] is not None
+         and sym_info["sma50"] < sym_info["sma100"]
+     )
+     sym_info["short_met"] = (
+         sym_info["cond_price_below_50d_low"] and sma50_below
+     )
+
+B) In _build_forex_trend_html() — add lowest_50d and SHORT ready display:
+
+   In the stat cards grid for each symbol, add after existing 50-Day High card:
+     <div class="stat-card">
+         <div class="stat-label">50-Day Low{breakout_short}</div>
+         <div class=
