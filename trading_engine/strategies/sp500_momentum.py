@@ -10,6 +10,7 @@ from trading_engine.cache_layer import CacheLayer
 from trading_engine.database import (
     signal_exists,
     has_open_signal,
+    has_any_open_signal_for_asset,
     insert_signal,
     close_signal,
     open_position as db_open_position,
@@ -215,6 +216,14 @@ class SP500MomentumStrategy(BaseStrategy):
 
         if not rsi_crosses_above:
             logger.info(f"[SP500-MOM] {asset} | Entry conditions not met - no action")
+            return SignalResult()
+
+        if has_any_open_signal_for_asset(asset):
+            logger.info(
+                f"[SP500-MOM] {asset} | IDEMPOTENCY BLOCK: "
+                f"An OPEN signal already exists for this asset "
+                f"(cross-strategy check) — entry skipped"
+            )
             return SignalResult()
 
         if has_open_signal(STRATEGY_NAME, asset):

@@ -482,19 +482,20 @@ def _filter_by_asset_class(signals: list, asset_class: Optional[str]) -> list:
 def _deduplicate_signals(signals: list[dict]) -> list[dict]:
     """Python-side safety-net deduplication applied after DB fetch.
 
-    - OPEN signals: keep only the entry with the highest id per (asset, strategy_name).
+    - OPEN signals: keep only the entry with the highest id per ASSET (across all strategies).
+      This prevents manual/AI signals and strategy signals from both appearing active.
     - CLOSED signals: keep only the entry with the highest id per (asset, strategy_name, direction).
     List is assumed to be already sorted by id/created_at DESC from the DB, so the
     first occurrence of each key is always the one we want to keep.
     """
     seen_open: dict = {}
     seen_closed: dict = {}
-    result = []
     for s in signals:
         sid = s.get("id", 0)
         st = s.get("status", "")
         if st == "OPEN":
-            key = (s.get("asset"), s.get("strategy_name"))
+            # One OPEN signal per ASSET across all strategies
+            key = s.get("asset")
             if key not in seen_open or (sid or 0) > (seen_open[key].get("id") or 0):
                 seen_open[key] = s
         else:
@@ -502,12 +503,13 @@ def _deduplicate_signals(signals: list[dict]) -> list[dict]:
             if key not in seen_closed or (sid or 0) > (seen_closed[key].get("id") or 0):
                 seen_closed[key] = s
 
+    result = []
     seen_keys_open: set = set()
     seen_keys_closed: set = set()
     for s in signals:
         st = s.get("status", "")
         if st == "OPEN":
-            key = (s.get("asset"), s.get("strategy_name"))
+            key = s.get("asset")
             if key not in seen_keys_open and seen_open.get(key) is s:
                 seen_keys_open.add(key)
                 result.append(s)
@@ -555,6 +557,24 @@ def get_signals_latest(
 
     for f in formatted:
         f.pop("_category", None)
+
+    # Final safety net: one OPEN signal per asset regardless of direction or strategy
+    KNOWN_STRATEGIES = {"mtf_ema", "trend_forex", "trend_non_forex",
+                        "sp500_momentum", "highest_lowest_fx", "trend_following"}
+    final: dict[str, dict] = {}
+    for f in formatted:
+        key = f["asset"]
+        if key not in final:
+            final[key] = f
+        else:
+            existing_known = final[key].get("strategy") in KNOWN_STRATEGIES
+            new_known = f.get("strategy") in KNOWN_STRATEGIES
+            if new_known and not existing_known:
+                final[key] = f
+            elif not existing_known and not new_known:
+                if f.get("id", 0) > final[key].get("id", 0):
+                    final[key] = f
+    formatted = list(final.values())
 
     return {"count": len(formatted), "data": formatted}
 

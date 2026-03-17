@@ -11,6 +11,7 @@ from trading_engine.cache_layer import CacheLayer
 from trading_engine.database import (
     signal_exists,
     has_open_signal,
+    has_any_open_signal_for_asset,
     insert_signal,
     close_signal,
     open_position as db_open_position,
@@ -325,6 +326,14 @@ class HighestLowestFXStrategy(BaseStrategy):
             return SignalResult()
 
         direction = signal_data["direction"]
+
+        if has_any_open_signal_for_asset(asset):
+            logger.info(
+                f"[HLC-FX] {asset} | IDEMPOTENCY BLOCK: "
+                f"An OPEN signal already exists for this asset "
+                f"(cross-strategy check) — entry skipped"
+            )
+            return SignalResult()
 
         if has_open_signal(STRATEGY_NAME, asset):
             logger.info(f"[HLC-FX] {asset} | IDEMPOTENCY: An OPEN signal already exists — duplicate blocked")

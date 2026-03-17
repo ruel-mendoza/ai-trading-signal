@@ -12,6 +12,7 @@ from datetime import datetime
 from trading_engine.database import (
     has_open_signal,
     has_open_position,
+    has_any_open_signal_for_asset,
     insert_signal,
     open_position as db_open_position,
     close_signal,
@@ -823,6 +824,14 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
 
         if has_open_position(STRATEGY_NAME, asset):
             logger.info(f"[MTF-EMA] {asset} | Position already open — skipping entry check")
+            return SignalResult()
+
+        if has_any_open_signal_for_asset(asset):
+            logger.info(
+                f"[MTF-EMA] {asset} | IDEMPOTENCY BLOCK: "
+                f"An OPEN signal already exists for this asset "
+                f"(cross-strategy check) — entry skipped"
+            )
             return SignalResult()
 
         if has_open_signal(STRATEGY_NAME, asset):

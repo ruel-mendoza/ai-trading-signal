@@ -10,6 +10,7 @@ from trading_engine.cache_layer import CacheLayer
 from trading_engine.database import (
     signal_exists,
     has_open_signal,
+    has_any_open_signal_for_asset,
     insert_signal,
     close_signal,
     open_position as db_open_position,
@@ -288,6 +289,14 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                 logger.info(f"[TREND-NONFX] {asset} | IDEMPOTENCY: Existing open LONG position - skipping")
                 return SignalResult()
 
+            if has_any_open_signal_for_asset(asset):
+                logger.info(
+                    f"[TREND-NONFX] {asset} | IDEMPOTENCY BLOCK: "
+                    f"An OPEN signal already exists for this asset "
+                    f"(cross-strategy check) — entry skipped"
+                )
+                return SignalResult()
+
             if has_open_signal(STRATEGY_NAME, asset):
                 logger.info(
                     f"[TREND-NONFX] {asset} | IDEMPOTENCY: An OPEN signal already exists for "
@@ -373,6 +382,14 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             if close_below_lowest and sma50_below_sma100:
                 if open_position_data and open_position_data.get("direction") == "SELL":
                     logger.info(f"[TREND-NONFX] {asset} | IDEMPOTENCY: Existing open SHORT position - skipping")
+                    return SignalResult()
+
+                if has_any_open_signal_for_asset(asset):
+                    logger.info(
+                        f"[TREND-NONFX] {asset} | IDEMPOTENCY BLOCK: "
+                        f"An OPEN signal already exists for this asset "
+                        f"(cross-strategy check) — entry skipped"
+                    )
                     return SignalResult()
 
                 if has_open_signal(STRATEGY_NAME, asset):

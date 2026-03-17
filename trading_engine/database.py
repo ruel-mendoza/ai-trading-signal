@@ -213,6 +213,113 @@ def _purge_unsupported_symbols():
             logger.warning(f"[DB] Error purging unsupported symbols: {e}")
 
 
+def close_stale_manual_signals():
+    """One-time cleanup: close OPEN signals not from known strategies that are older than 7 days.
+
+    Idempotent — safe to call on every startup.
+    """
+    KNOWN_STRATEGIES = {
+        "mtf_ema", "trend_forex", "trend_non_forex",
+        "sp500_momentum", "highest_lowest_fx", "trend_following",
+    }
+    cutoff = (datetime.utcnow() - timedelta(days=7)).isoformat()
+
+    with _get_session() as session:
+        try:
+            stale = session.query(Signal).filter(
+                Signal.status == "OPEN",
+                Signal.created_at <= cutoff,
+                Signal.strategy_name.notin_(KNOWN_STRATEGIES),
+            ).all()
+
+            if not stale:
+                logger.info("[DB] close_stale_manual_signals: no stale signals found")
+                return
+
+            for sig in stale:
+                sig.status = "CLOSED"
+                sig.exit_reason = "Auto-closed: stale manual/AI signal predates strategy engine"
+                logger.info(
+                    f"[DB] close_stale_manual_signals: closing signal #{sig.id} | "
+                    f"asset={sig.asset} | direction={sig.direction} | "
+                    f"strategy={sig.strategy_name} | created={sig.created_at}"
+                )
+
+            session.commit()
+            logger.info(f"[DB] close_stale_manual_signals: closed {len(stale)} stale signal(s)")
+            _invalidate_signal_cache()
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] close_stale_manual_signals failed: {e}")
+
+
+def close_specific_stale_signals():
+    """Direct close for confirmed stale signals identified in the Mar 17 audit.
+
+    Keyed on (asset, direction, entry_price ±1%) to avoid touching valid signals.
+    Idempotent — safe to call on every startup, no-op if already closed.
+    """
+    STALE_TARGETS = [
+        ("XAG/USD", "SELL", 24.75,   "AI signal Mar 4 — wrong price level"),
+        ("USD/JPY", "SELL", 154.80,  "AI signal Feb 22 — stale"),
+        ("XAU/USD", "BUY",  2340.50, "AI signal Feb 22 — stale, lower entry than engine"),
+        ("GBP/USD", "SELL", 1.29,    "AI signal Mar 4 — stale"),
+        ("EUR/USD", "SELL", 1.075,   "AI signal Mar 2 — stale"),
+        ("BTC/USD", "BUY",  67500.0, "AI signal Feb 22 — stale"),
+    ]
+
+    with _get_session() as session:
+        try:
+            closed = 0
+            for asset, direction, entry_px, note in STALE_TARGETS:
+                lower = entry_px * 0.99
+                upper = entry_px * 1.01
+                sigs = session.query(Signal).filter(
+                    Signal.status == "OPEN",
+                    Signal.asset == asset,
+                    Signal.direction == direction,
+                    Signal.entry_price >= lower,
+                    Signal.entry_price <= upper,
+                ).all()
+                for sig in sigs:
+                    sig.status = "CLOSED"
+                    sig.exit_reason = f"Auto-closed: {note}"
+                    logger.info(
+                        f"[DB] close_specific_stale_signals: closed #{sig.id} | "
+                        f"{asset} {direction} @ {sig.entry_price} | {note}"
+                    )
+                    closed += 1
+            session.commit()
+            if closed:
+                logger.info(f"[DB] close_specific_stale_signals: closed {closed} signal(s)")
+                _invalidate_signal_cache()
+            else:
+                logger.info(
+                    "[DB] close_specific_stale_signals: no matching stale signals found "
+                    "(already closed or not present)"
+                )
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] close_specific_stale_signals failed: {e}")
+
+
+def has_any_open_signal_for_asset(asset: str) -> bool:
+    """Return True if ANY open signal exists for this asset, regardless of strategy or direction.
+
+    Use as the primary cross-strategy idempotency guard to prevent a second strategy
+    from opening a position on an asset that already has one open (e.g. mtf_ema BUY
+    while a manual SELL is still OPEN in the DB).
+    """
+    with _get_session() as session:
+        row = (
+            session.query(Signal.id)
+            .filter(Signal.asset == asset, Signal.status == "OPEN")
+            .first()
+        )
+        return row is not None
+
+
 def init_db():
     logger.info("[DB] Initializing database tables via SQLAlchemy...")
     Base.metadata.create_all(engine)
@@ -224,6 +331,8 @@ def init_db():
         _seed_default_admin(session)
 
     _purge_unsupported_symbols()
+    close_stale_manual_signals()
+    close_specific_stale_signals()
 
     health = check_db_health()
     logger.info(f"[DB] Startup health check: {health['status']}")
@@ -409,7 +518,25 @@ def get_active_signals(strategy_name: Optional[str] = None, asset: Optional[str]
             .order_by(Signal.created_at.desc())
         )
         rows = q.all()
-        return [_signal_to_dict(r) for r in rows]
+        all_sigs = [_signal_to_dict(r) for r in rows]
+
+        # Asset-level dedup: one OPEN signal per asset across ALL strategies (highest id wins)
+        seen_assets: dict[str, dict] = {}
+        for sig in all_sigs:
+            asset_key = sig["asset"]
+            if asset_key not in seen_assets:
+                seen_assets[asset_key] = sig
+            elif sig["id"] > seen_assets[asset_key]["id"]:
+                seen_assets[asset_key] = sig
+
+        if len(seen_assets) < len(all_sigs):
+            logger.warning(
+                f"[DB] get_active_signals: deduplicated {len(all_sigs)} rows → "
+                f"{len(seen_assets)} unique assets "
+                f"(suppressed {len(all_sigs) - len(seen_assets)} duplicate(s))"
+            )
+
+        return list(seen_assets.values())
 
 
 def close_signal(signal_id: int, exit_reason: str = "", exit_price: Optional[float] = None):
@@ -529,7 +656,24 @@ def get_all_signals(
 
         q = q.order_by(Signal.created_at.desc()).limit(limit)
         rows = q.all()
-        return [_signal_to_dict(r) for r in rows]
+        raw = [_signal_to_dict(r) for r in rows]
+
+        # OPEN signals: one per asset across all strategies (highest id wins)
+        open_seen: dict[str, dict] = {}
+        closed_rows = []
+        for sig in raw:
+            if sig["status"] == "OPEN":
+                key = sig["asset"]
+                if key not in open_seen:
+                    open_seen[key] = sig
+                elif sig["id"] > open_seen[key]["id"]:
+                    open_seen[key] = sig
+            else:
+                closed_rows.append(sig)
+
+        result = list(open_seen.values()) + closed_rows
+        result.sort(key=lambda s: s.get("created_at") or "", reverse=True)
+        return result[:limit]
 
 
 def purge_old_closed_signals(days: int = 92) -> dict:

@@ -1,0 +1,403 @@
+You are fixing two related problems in the trading engine.
+Read all existing code carefully before making any change.
+Target files: database.py, api_v1.py, admin.py
+
+=============================================================
+PROBLEM SUMMARY
+=============================================================
+
+The active signals panel shows duplicate entries for the same asset
+where one signal is from a strategy (strategy_name="mtf_ema" etc.)
+and another is from an old AI/manual source (different strategy_name
+or no strategy_name). Both show as OPEN simultaneously.
+
+Root cause: deduplication keys on (asset + strategy_name), meaning
+signals from different strategies for the same asset are both shown.
+
+Correct rule: only ONE open signal per asset across ALL strategies.
+If any signal is OPEN for an asset, no other signal for that asset
+should appear as active regardless of which strategy created it.
+
+=============================================================
+TASK 1 — CLOSE ALL STALE MANUAL/AI SIGNALS IMMEDIATELY
+=============================================================
+
+These signals are confirmed stale and must be force-closed in the DB.
+Add a one-time migration function and call it from init_db().
+
+A) In database.py, add this function:
+
+def close_stale_manual_signals():
+    """
+    One-time cleanup: close any OPEN signals that were created manually
+    or by an external AI service before the strategy engine was running.
+    Identified by: no matching open position record in open_positions table,
+    AND signal is older than 7 days, AND not created by a known strategy.
+
+    Known strategy names: mtf_ema, trend_forex, trend_non_forex,
+    sp500_momentum, highest_lowest_fx, trend_following
+    """
+    KNOWN_STRATEGIES = {
+        "mtf_ema",
+        "trend_forex",
+        "trend_non_forex",
+        "sp500_momentum",
+        "highest_lowest_fx",
+        "trend_following",
+    }
+    cutoff = (datetime.utcnow() - timedelta(days=7)).isoformat()
+
+    with _get_session() as session:
+        try:
+            # Find OPEN signals not from known strategies that are older than 7 days
+            stale = session.query(Signal).filter(
+                Signal.status == "OPEN",
+                Signal.created_at <= cutoff,
+                Signal.strategy_name.notin_(KNOWN_STRATEGIES),
+            ).all()
+
+            if not stale:
+                logger.info("[DB] close_stale_manual_signals: no stale signals found")
+                return
+
+            for sig in stale:
+                sig.status = "CLOSED"
+                sig.exit_reason = "Auto-closed: stale manual/AI signal predates strategy engine"
+                logger.info(
+                    f"[DB] close_stale_manual_signals: closing signal #{sig.id} | "
+                    f"asset={sig.asset} | direction={sig.direction} | "
+                    f"strategy={sig.strategy_name} | created={sig.created_at}"
+                )
+
+            session.commit()
+            logger.info(
+                f"[DB] close_stale_manual_signals: closed {len(stale)} stale signal(s)"
+            )
+            _invalidate_signal_cache()
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] close_stale_manual_signals failed: {e}")
+
+B) In database.py init_db(), after _purge_unsupported_symbols(), add:
+    close_stale_manual_signals()
+
+C) Also add a one-time direct close for the specific known stale signals
+   identified in the audit (belt-and-suspenders, in case strategy_name
+   doesn't match the filter above):
+
+def close_specific_stale_signals():
+    """
+    Direct close for confirmed stale signals identified in the Mar 17 audit.
+    Keyed on (asset, direction, entry_price) to avoid touching valid signals.
+    Safe to run multiple times — skips already-closed signals.
+    """
+    STALE_TARGETS = [
+        # (asset, direction, entry_price_approx, note)
+        ("XAG/USD", "SELL", 24.75,   "AI signal Mar 4 — wrong price level"),
+        ("USD/JPY", "SELL", 154.80,  "AI signal Feb 22 — stale"),
+        ("XAU/USD", "BUY",  2340.50, "AI signal Feb 22 — stale, lower entry than engine"),
+        ("GBP/USD", "SELL", 1.29,    "AI signal Mar 4 — stale"),
+        ("EUR/USD", "SELL", 1.075,   "AI signal Mar 2 — stale"),
+        ("BTC/USD", "BUY",  67500.0, "AI signal Feb 22 — stale"),
+    ]
+
+    with _get_session() as session:
+        try:
+            closed = 0
+            for asset, direction, entry_px, note in STALE_TARGETS:
+                # Match within 1% of entry price to avoid false positives
+                lower = entry_px * 0.99
+                upper = entry_px * 1.01
+                sigs = session.query(Signal).filter(
+                    Signal.status == "OPEN",
+                    Signal.asset == asset,
+                    Signal.direction == direction,
+                    Signal.entry_price >= lower,
+                    Signal.entry_price <= upper,
+                ).all()
+                for sig in sigs:
+                    sig.status = "CLOSED"
+                    sig.exit_reason = f"Auto-closed: {note}"
+                    logger.info(
+                        f"[DB] close_specific_stale_signals: closed #{sig.id} | "
+                        f"{asset} {direction} @ {sig.entry_price} | {note}"
+                    )
+                    closed += 1
+            session.commit()
+            if closed:
+                logger.info(
+                    f"[DB] close_specific_stale_signals: closed {closed} signal(s)"
+                )
+                _invalidate_signal_cache()
+            else:
+                logger.info(
+                    "[DB] close_specific_stale_signals: no matching stale signals found "
+                    "(already closed or not present)"
+                )
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] close_specific_stale_signals failed: {e}")
+
+D) Also call close_specific_stale_signals() from init_db(), after close_stale_manual_signals():
+    close_stale_manual_signals()
+    close_specific_stale_signals()
+
+=============================================================
+TASK 2 — FIX DEDUPLICATION: ONE OPEN SIGNAL PER ASSET
+=============================================================
+
+The core rule: only ONE signal per asset may be OPEN at any time,
+regardless of strategy_name. This must be enforced at three layers.
+
+A) database.py — get_active_signals()
+
+Add an asset-level deduplication pass after fetching all OPEN signals.
+Keep the signal with the highest id for each asset.
+
+FIND the end of get_active_signals() where it builds the return list:
+    return [_signal_to_dict(r) for r in rows]
+
+REPLACE WITH:
+    all_sigs = [_signal_to_dict(r) for r in rows]
+
+    # Deduplicate: one OPEN signal per asset — keep highest id
+    # This prevents manual/AI signals and strategy signals from
+    # both appearing as active for the same asset simultaneously.
+    seen_assets: dict[str, dict] = {}
+    for sig in all_sigs:
+        asset_key = sig["asset"]
+        if asset_key not in seen_assets:
+            seen_assets[asset_key] = sig
+        else:
+            # Keep the one with the higher id (most recent insert)
+            if sig["id"] > seen_assets[asset_key]["id"]:
+                seen_assets[asset_key] = sig
+
+    if len(seen_assets) < len(all_sigs):
+        logger.warning(
+            f"[DB] get_active_signals: deduplicated {len(all_sigs)} rows → "
+            f"{len(seen_assets)} unique assets "
+            f"(suppressed {len(all_sigs) - len(seen_assets)} duplicate(s))"
+        )
+
+    return list(seen_assets.values())
+
+B) database.py — get_all_signals()
+
+The existing subquery deduplicates CLOSED signals by (strategy_name, asset, direction).
+Add an additional Python-side pass for OPEN signals to deduplicate by asset only.
+
+FIND the end of get_all_signals() where it returns:
+    return [_signal_to_dict(r) for r in rows]
+
+REPLACE WITH:
+    raw = [_signal_to_dict(r) for r in rows]
+
+    # OPEN signals: one per asset across all strategies (highest id wins)
+    open_seen: dict[str, dict] = {}
+    closed_rows = []
+    for sig in raw:
+        if sig["status"] == "OPEN":
+            key = sig["asset"]
+            if key not in open_seen:
+                open_seen[key] = sig
+            elif sig["id"] > open_seen[key]["id"]:
+                open_seen[key] = sig
+        else:
+            closed_rows.append(sig)
+
+    result = list(open_seen.values()) + closed_rows
+    # Re-sort by created_at DESC to preserve original order
+    result.sort(key=lambda s: s.get("created_at") or "", reverse=True)
+    return result[:limit]
+
+C) api_v1.py — update _deduplicate_signals()
+
+The existing _deduplicate_signals() helper (added in previous task) keys on
+(asset, strategy_name) for OPEN signals. Change it to key on asset only.
+
+FIND _deduplicate_signals():
+    # For OPEN: key on (asset, strategy_name)
+    ...
+
+REPLACE the OPEN deduplication logic with:
+    # For OPEN signals: one per ASSET across all strategies
+    # This prevents simultaneous BUY and SELL on the same asset
+    # from different strategies appearing in the active feed
+    open_seen: dict[str, dict] = {}
+    for sig in signals:
+        if sig.get("status") == "OPEN" or sig.get("action") == "ENTRY":
+            key = sig["asset"]
+            if key not in open_seen:
+                open_seen[key] = sig
+            elif sig.get("id", 0) > open_seen[key].get("id", 0):
+                open_seen[key] = sig
+
+Keep the CLOSED deduplication keyed on (asset, strategy_name, direction) — unchanged.
+
+D) api_v1.py — get_signals_latest()
+
+After the existing deduplication pass, add one more asset-level check:
+
+    # Final safety net: one OPEN signal per asset regardless of direction or strategy
+    final: dict[str, dict] = {}
+    for f in formatted:
+        key = f["asset"]
+        if key not in final:
+            final[key] = f
+        else:
+            # Prefer the signal from a known strategy over a manual one
+            KNOWN = {"mtf_ema","trend_forex","trend_non_forex",
+                     "sp500_momentum","highest_lowest_fx","trend_following"}
+            existing_known = final[key].get("strategy") in KNOWN
+            new_known      = f.get("strategy") in KNOWN
+            if new_known and not existing_known:
+                final[key] = f
+            elif not existing_known and not new_known:
+                # Both manual — keep most recent (higher id)
+                if f.get("id", 0) > final[key].get("id", 0):
+                    final[key] = f
+
+    formatted = list(final.values())
+
+=============================================================
+TASK 3 — PREVENT FUTURE CROSS-STRATEGY DUPLICATES AT INSERT TIME
+=============================================================
+
+The has_open_signal() guard currently checks (strategy_name, asset).
+Add a new function has_any_open_signal_for_asset() that checks asset only.
+
+A) database.py — add new function:
+
+def has_any_open_signal_for_asset(asset: str) -> bool:
+    """
+    Returns True if ANY open signal exists for this asset,
+    regardless of strategy_name or direction.
+    Use this as the primary idempotency guard to prevent cross-strategy
+    duplicates (e.g. MTF EMA trying to BUY while a manual SELL is open).
+    """
+    with _get_session() as session:
+        row = (
+            session.query(Signal.id)
+            .filter(
+                Signal.asset == asset,
+                Signal.status == "OPEN",
+            )
+            .first()
+        )
+        return row is not None
+
+B) In every strategy's evaluate() method — add this check BEFORE the
+   existing has_open_signal() check:
+
+   For trend_forex.py — in both LONG and SHORT entry blocks:
+     FIND the idempotency block that starts with:
+       if has_open_signal(STRATEGY_NAME, asset) or has_open_position(...)
+
+     REPLACE WITH:
+       if has_any_open_signal_for_asset(asset):
+           logger.info(
+               f"[TREND-FOREX] {asset} | IDEMPOTENCY BLOCK: "
+               f"An OPEN signal already exists for this asset "
+               f"(cross-strategy check) — entry skipped"
+           )
+           return SignalResult()
+
+       if has_open_signal(STRATEGY_NAME, asset) or has_open_position(STRATEGY_NAME, asset):
+           ...existing block unchanged...
+
+   Apply the same pattern to:
+   - trend_non_forex.py — both LONG and SHORT entry blocks
+   - sp500_momentum.py — before the LONG entry block
+   - highest_lowest.py — before the LONG and SHORT signal_data block
+   - multi_timeframe.py — in _check_entry_conditions() before _persist_entry()
+
+   Import has_any_open_signal_for_asset in each strategy file:
+     from trading_engine.database import (
+         ...existing imports...,
+         has_any_open_signal_for_asset,
+     )
+
+=============================================================
+TASK 4 — ADMIN PANEL: FLAG CROSS-STRATEGY DUPLICATES
+=============================================================
+
+A) In admin.py _signals_to_table_rows(), add a warning badge when
+   two OPEN rows exist for the same asset:
+
+   Before building rows, detect duplicates:
+     asset_open_count: dict[str, int] = {}
+     for s in signals:
+         if s.get("status") == "OPEN":
+             asset_open_count[s["asset"]] = asset_open_count.get(s["asset"], 0) + 1
+
+   In the row builder, add a badge after the status badge if duplicated:
+     is_duplicate_asset = (
+         s.get("status") == "OPEN"
+         and asset_open_count.get(s["asset"], 0) > 1
+     )
+     if is_duplicate_asset:
+         exit_info += (
+             '<div style="font-size:0.75rem;color:#f59e0b;margin-top:2px;">'
+             'WARNING: multiple OPEN signals for this asset</div>'
+         )
+
+B) In admin.py _build_signal_analysis_html(), in the summary cards section,
+   add a "Duplicate Assets" stat card:
+
+   # Count assets with more than one OPEN signal
+   open_by_asset: dict[str, int] = {}
+   for s in all_signals:
+       if s.get("status") == "OPEN":
+           open_by_asset[s["asset"]] = open_by_asset.get(s["asset"], 0) + 1
+   duplicate_asset_count = sum(1 for v in open_by_asset.values() if v > 1)
+
+   Add to summary_cards HTML:
+     <div class="stat-card">
+         <div class="stat-label">Duplicate Active Assets</div>
+         <div class="stat-value" style="color:{'#ef4444' if duplicate_asset_count > 0 else '#22c55e'};"
+              data-testid="text-duplicate-assets">{duplicate_asset_count}</div>
+         <div class="stat-label" style="margin-top:4px;">
+             {'ACTION REQUIRED' if duplicate_asset_count > 0 else 'Clean'}
+         </div>
+     </div>
+
+=============================================================
+TASK 5 — VERIFICATION CHECKLIST
+=============================================================
+
+1. After init_db() runs:
+   - XAG/USD SELL @ 24.75 → status = CLOSED
+   - USD/JPY SELL @ 154.80 → status = CLOSED
+   - XAU/USD BUY @ 2340.50 → status = CLOSED
+   - GBP/USD SELL @ 1.29 → status = CLOSED
+   - EUR/USD SELL @ 1.075 → status = CLOSED
+   - BTC/USD BUY @ 67500 → status = CLOSED
+
+2. Active signals count drops from 20 to approximately 13-14
+   (the 7 MTF EMA ETF signals + EUR/USD HLC + SPX trend + the clean remainder).
+
+3. GET /api/v1/signals/latest — no two rows share the same asset value.
+
+4. Insert a manual OPEN signal for EUR/USD.
+   Then run MTF EMA evaluate() for EUR/USD.
+   Verify: has_any_open_signal_for_asset("EUR/USD") = True → entry blocked.
+
+5. Admin Signal Analysis panel shows "Duplicate Active Assets = 0" after cleanup.
+
+6. has_any_open_signal_for_asset() returns True for any asset with an OPEN signal
+   regardless of which strategy_name created it.
+
+=============================================================
+CONSTRAINTS
+=============================================================
+
+- Do NOT delete any signal records — only change status to CLOSED.
+- Do NOT touch strategy evaluation logic beyond adding the new guard call.
+- Do NOT change TRAILING_STOP_ATR_MULT, ATR_PERIOD, or LOOKBACK_DAYS.
+- close_stale_manual_signals() and close_specific_stale_signals() must be
+  idempotent — safe to call on every startup, no-op if already closed.
+- All DB operations use _get_session() / SessionFactory.
+- Preserve all existing log prefixes.
+- Python type hints required on all modified functions.

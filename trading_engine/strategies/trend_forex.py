@@ -10,6 +10,7 @@ from trading_engine.cache_layer import CacheLayer
 from trading_engine.database import (
     signal_exists,
     has_open_signal,
+    has_any_open_signal_for_asset,
     insert_signal,
     close_signal,
     open_position as db_open_position,
@@ -247,6 +248,14 @@ class ForexTrendFollowingStrategy(BaseStrategy):
 
         # ── LONG ENTRY ──
         if close_above_highest and sma50_above_sma100:
+            if has_any_open_signal_for_asset(asset):
+                logger.info(
+                    f"[TREND-FOREX] {asset} | IDEMPOTENCY BLOCK: "
+                    f"An OPEN signal already exists for this asset "
+                    f"(cross-strategy check) — entry skipped"
+                )
+                return SignalResult()
+
             if has_open_signal(STRATEGY_NAME, asset):
                 logger.info(
                     f"[TREND-FOREX] {asset} | IDEMPOTENCY: An OPEN signal already exists for "
@@ -320,6 +329,14 @@ class ForexTrendFollowingStrategy(BaseStrategy):
 
         # ── SHORT ENTRY (all forex pairs per QC algo) ──
         if sma50_below_sma100 and close_below_lowest:
+            if has_any_open_signal_for_asset(asset):
+                logger.info(
+                    f"[TREND-FOREX] {asset} | IDEMPOTENCY BLOCK: "
+                    f"An OPEN signal already exists for this asset "
+                    f"(cross-strategy check) — entry skipped"
+                )
+                return SignalResult()
+
             if has_open_signal(STRATEGY_NAME, asset):
                 logger.info(
                     f"[TREND-FOREX] {asset} | IDEMPOTENCY: Open signal exists — duplicate blocked"

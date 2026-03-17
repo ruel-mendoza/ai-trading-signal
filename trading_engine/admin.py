@@ -105,18 +105,21 @@ def _nth_weekday(year: int, month: int, weekday: int, n: int) -> datetime:
 def _signals_to_table_rows(signals: list[dict]) -> str:
     """Render signal rows to HTML table rows with Python-side deduplication.
 
-    Two dedup passes are needed because the DB layer uses subqueries that may be
-    bypassed by legacy callers, and because strategy logic can produce rapid-fire
-    duplicates under concurrent APScheduler misfires:
-    - OPEN: deduplicate by (asset, strategy_name) — one active trade per pair
+    Dedup rules:
+    - OPEN: deduplicate by asset only — one active trade per asset across all strategies
     - CLOSED: deduplicate by (asset, strategy_name, direction) — show only most recent exit
-    List is ordered by created_at DESC from the DB, so the first occurrence of each
-    key is the most recent and is the one we keep.
+    A warning badge is shown when multiple OPEN rows share the same asset (cross-strategy dup).
     """
     if not signals:
         return '<tr><td colspan="8" style="text-align:center;padding:24px;color:#94a3b8;">No signals found</td></tr>'
 
     from datetime import datetime as dt_cls
+
+    # Pre-scan: count OPEN signals per asset to detect cross-strategy duplicates
+    asset_open_count: dict[str, int] = {}
+    for s in signals:
+        if s.get("status") == "OPEN":
+            asset_open_count[s["asset"]] = asset_open_count.get(s["asset"], 0) + 1
 
     seen_open = set()
     seen_closed = set()
@@ -124,7 +127,7 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
     for s in signals:
         status = s.get("status", "OPEN")
         if status == "OPEN":
-            dedup_key = (s.get("asset"), s.get("strategy_name"))
+            dedup_key = s.get("asset")  # one OPEN signal per asset across all strategies
             if dedup_key in seen_open:
                 continue
             seen_open.add(dedup_key)
@@ -164,6 +167,16 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
                 exit_info = f'<div style="font-size:0.75rem;color:#94a3b8;margin-top:2px;">Exit: {exit_price:.5f} ({exit_reason})</div>'
             elif exit_reason:
                 exit_info = f'<div style="font-size:0.75rem;color:#94a3b8;margin-top:2px;">({exit_reason})</div>'
+
+        # Show warning badge if this asset has multiple OPEN signals in raw data
+        is_duplicate_asset = (
+            status == "OPEN" and asset_open_count.get(s.get("asset", ""), 0) > 1
+        )
+        if is_duplicate_asset:
+            exit_info += (
+                '<div style="font-size:0.75rem;color:#f59e0b;margin-top:2px;">'
+                '⚠ Multiple OPEN signals for this asset — auto-deduped</div>'
+            )
 
         rows.append(f"""
         <tr>
@@ -2343,6 +2356,7 @@ def _get_signal_analysis_data() -> dict:
         "signal_counts": {k: len(v) for k, v in sig_by_strat.items()},
         "total_signals": len(all_signals),
         "open_positions": len(all_positions),
+        "all_signals": all_signals,
         "trend_nf": trend_nf_rows,
         "trend_fx": trend_fx_rows,
         "hlc": hlc_row,
@@ -2352,6 +2366,17 @@ def _get_signal_analysis_data() -> dict:
 
 
 def _build_signal_analysis_html(data: dict) -> str:
+    all_signals = data.get("all_signals", [])
+
+    # Count assets with more than one OPEN signal (cross-strategy duplicates)
+    open_by_asset: dict[str, int] = {}
+    for s in all_signals:
+        if s.get("status") == "OPEN":
+            open_by_asset[s["asset"]] = open_by_asset.get(s["asset"], 0) + 1
+    duplicate_asset_count = sum(1 for v in open_by_asset.values() if v > 1)
+    dup_color = "#ef4444" if duplicate_asset_count > 0 else "#22c55e"
+    dup_label = "ACTION REQUIRED" if duplicate_asset_count > 0 else "Clean"
+
     summary_cards = f"""
     <div class="stats-grid" style="margin-bottom:24px;">
         <div class="stat-card">
@@ -2366,6 +2391,11 @@ def _build_signal_analysis_html(data: dict) -> str:
         <div class="stat-card">
             <div class="stat-label">Open Positions</div>
             <div class="stat-value" data-testid="text-open-positions">{data['open_positions']}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Duplicate Active Assets</div>
+            <div class="stat-value" style="color:{dup_color};" data-testid="text-duplicate-assets">{duplicate_asset_count}</div>
+            <div class="stat-label" style="margin-top:4px;">{dup_label}</div>
         </div>
     </div>
     """
