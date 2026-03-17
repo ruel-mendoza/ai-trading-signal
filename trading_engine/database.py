@@ -607,13 +607,28 @@ def _signal_to_dict(sig: Signal) -> dict:
     }
 
 
+def update_signal_stop_loss(signal_id: int, new_stop_loss: float):
+    """Update the stop_loss on an open signal. Used by dynamic trailing stop strategies."""
+    with _get_session() as session:
+        try:
+            sig = session.query(Signal).filter_by(id=signal_id, status="OPEN").first()
+            if sig:
+                sig.stop_loss = new_stop_loss
+                session.commit()
+                logger.debug(f"[DB] Updated stop_loss for signal #{signal_id}: {new_stop_loss}")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] update_signal_stop_loss failed for #{signal_id}: {e}")
+
+
 def open_position(position: dict) -> Optional[int]:
     atr_value = position.get("atr_at_entry")
-    if not atr_value or atr_value <= 0:
+    # atr_at_entry is optional — trend_non_forex uses dynamic ATR, other strategies store it.
+    # Only reject if explicitly provided but invalid (not if simply absent).
+    if atr_value is not None and atr_value <= 0:
         logger.error(
-            f"[DB] STATE LOCK VIOLATION: open_position() called without valid atr_at_entry "
-            f"for {position.get('asset')}/{position.get('strategy_name')} — "
-            f"ATR must be calculated once at entry and stored. Got: {atr_value}"
+            f"[DB] open_position() called with invalid atr_at_entry={atr_value} "
+            f"for {position.get('asset')}/{position.get('strategy_name')} — rejected"
         )
         return None
 

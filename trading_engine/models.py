@@ -87,7 +87,7 @@ class OpenPosition(Base):
     strategy_name = Column(Text, nullable=False)
     direction = Column(Text, nullable=False)
     entry_price = Column(Float, nullable=False)
-    atr_at_entry = Column(Float, nullable=False)
+    atr_at_entry = Column(Float, nullable=True)
     highest_price_since_entry = Column(Float)
     lowest_price_since_entry = Column(Float)
     n_period_high_close = Column(Float)

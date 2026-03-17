@@ -1273,25 +1273,45 @@ def _get_trend_following_data() -> dict:
         pos_by_asset = {p["asset"]: p for p in open_positions_list}
         trade_details = []
         for sig in active_trades:
-            atr_at_entry = sig.get("atr_at_entry")
             entry_price = sig["entry_price"]
             direction = sig["direction"]
             pos = pos_by_asset.get(sig["asset"])
-            stored_highest = (pos.get("highest_price_since_entry") if pos else None) or entry_price
-            sym_candles = get_candles(sig["asset"], "D1", 5)
+
+            # Fetch candles to compute live ATR (trend_non_forex uses dynamic ATR)
+            sym_candles = get_candles(sig["asset"], "D1", 300)
             cur_close = sym_candles[-1]["close"] if sym_candles else None
+
+            # Compute live ATR(100) from candles
+            live_atr = None
+            if len(sym_candles) >= 101:
+                _closes = [c["close"] for c in sym_candles]
+                _highs  = [c["high"]  for c in sym_candles]
+                _lows   = [c["low"]   for c in sym_candles]
+                _atr_vals = IndicatorEngine.atr(_highs, _lows, _closes, 100)
+                live_atr = _atr_vals[-1] if _atr_vals and _atr_vals[-1] is not None else None
+
+            # Use the stored stop_loss from the signal (ratcheted by check_exits each run)
+            trailing_stop = sig.get("stop_loss")
+
+            # Compute indicative current stop using live ATR if no stored stop
+            if trailing_stop is None and live_atr is not None and cur_close is not None:
+                if direction == "BUY":
+                    trailing_stop = cur_close - (live_atr * 3.0)
+                else:
+                    trailing_stop = cur_close + (live_atr * 3.0)
+
+            # For display: use cur_close as reference for highest/lowest
+            stored_highest = (pos.get("highest_price_since_entry") if pos else None) or entry_price
             if cur_close and direction == "BUY":
                 stored_highest = max(stored_highest, cur_close)
-            trailing_stop = None
-            if atr_at_entry is not None:
-                trailing_stop = stored_highest - (atr_at_entry * 3.0)
+
             trade_details.append({
                 "id": sig["id"],
                 "symbol": sig["asset"],
                 "direction": direction,
                 "strategy": strategy_name,
                 "entry_price": entry_price,
-                "atr_at_entry": atr_at_entry,
+                "live_atr": live_atr,
                 "highest_close": stored_highest,
                 "trailing_stop": trailing_stop,
                 "current_close": cur_close,
@@ -1377,24 +1397,26 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
         html = ""
         for trade in trades:
             entry = trade["entry_price"]
-            atr_e = trade["atr_at_entry"]
+            live_atr = trade.get("live_atr")
             trail = trade["trailing_stop"]
             highest = trade["highest_close"]
             cur = trade["current_close"]
+            direction = trade["direction"]
+            dir_color = "#ef4444" if direction == "SELL" else "#3b82f6"
             pnl = ""
             if cur is not None and entry:
-                diff = cur - entry if trade["direction"] == "BUY" else entry - cur
+                diff = cur - entry if direction == "BUY" else entry - cur
                 pnl_pct = (diff / entry) * 100
                 pnl_color = "#6ee7b7" if diff >= 0 else "#fca5a5"
                 pnl = f'<span style="color:{pnl_color};font-weight:600;">{diff:+.5f} ({pnl_pct:+.2f}%)</span>'
 
             html += f"""
-            <div class="settings-section" style="margin-top:12px;border-left:3px solid #3b82f6;">
-                <h3>{trade["symbol"]} - {trade["direction"]}</h3>
+            <div class="settings-section" style="margin-top:12px;border-left:3px solid {dir_color};">
+                <h3>{trade["symbol"]} - {direction}</h3>
                 <div class="stats-grid" style="margin-top:8px;">
                     <div class="stat-card"><div class="stat-label">Entry</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(entry)}</div></div>
-                    <div class="stat-card"><div class="stat-label">Fixed ATR</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(atr_e, 6)}</div></div>
-                    <div class="stat-card"><div class="stat-label">Trail Stop (3x)</div><div class="stat-value" style="font-size:1.1rem;color:#fbbf24;">{_fmt(trail)}</div></div>
+                    <div class="stat-card"><div class="stat-label">Live ATR (dynamic)</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(live_atr, 6)}</div></div>
+                    <div class="stat-card"><div class="stat-label">Trail Stop (3×ATR)</div><div class="stat-value" style="font-size:1.1rem;color:#fbbf24;">{_fmt(trail)}</div></div>
                     <div class="stat-card"><div class="stat-label">Highest</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(highest)}</div></div>
                     <div class="stat-card"><div class="stat-label">Current</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(cur)}</div></div>
                     <div class="stat-card"><div class="stat-label">P&L</div><div class="stat-value" style="font-size:1.1rem;">{pnl}</div></div>
@@ -1454,14 +1476,18 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
         </div>
     </div>
     <div class="timezone-note" style="margin-top:16px;">
-        <strong>Strategy Rules (Trend Following &mdash; LONG ONLY):</strong>
+        <strong>Strategy Rules (Trend Following &mdash; Commodity ETF | QuantConnect Validated):</strong>
         <ul>
-            <li><strong>Forex Entry (LONG):</strong> Close &ge; highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
-            <li><strong>Non-Forex Entry (LONG):</strong> Close &ge; highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
-            <li><strong>Trailing Stop:</strong> Highest close since entry &minus; (Fixed ATR at entry &times; 3)</li>
-            <li><strong>Exit Rule:</strong> Closing-rule gate &mdash; only the 5:01 PM ET close is evaluated, intraday spikes are ignored</li>
-            <li><strong>Timeframe:</strong> Daily (D1) candles</li>
-            <li><strong>ATR:</strong> Fixed at entry value for the duration of the trade</li>
+            <li><strong>LONG Entry (all 15 ETFs):</strong> Close <strong>&ge;</strong> highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
+            <li><strong>SHORT Entry (USO, UNG, UGA, DBB, SLX only):</strong> Close <strong>&le;</strong> lowest close of last 50 days AND SMA(50) &lt; SMA(100)</li>
+            <li><strong>ATR:</strong> <strong>Dynamic (live)</strong> &mdash; ATR(100) is recalculated on every evaluation bar from current candle data. ATR is <em>never</em> stored at entry. This matches the QC <code>self._atr[symbol].current.value</code> behavior exactly.</li>
+            <li><strong>Trailing Stop (LONG):</strong> <code>new_stop = current_price &minus; (ATR &times; 3)</code> &mdash; ratcheted upward with <code>max(stored_stop, new_stop)</code>. Stop only moves in the trade&rsquo;s favour (never back down).</li>
+            <li><strong>Trailing Stop (SHORT):</strong> <code>new_stop = current_price + (ATR &times; 3)</code> &mdash; ratcheted downward with <code>min(stored_stop, new_stop)</code>. Stop only moves in the trade&rsquo;s favour (never back up).</li>
+            <li><strong>Exit Condition (LONG):</strong> Close <strong>&le;</strong> trailing stop &rarr; exit triggered</li>
+            <li><strong>Exit Condition (SHORT):</strong> Close <strong>&ge;</strong> trailing stop &rarr; exit triggered</li>
+            <li><strong>Position Sizing:</strong> <code>quantity = (portfolio_value &times; 1%) / (3 &times; ATR)</code> &mdash; stored as <code>suggested_quantity</code> in signal metadata</li>
+            <li><strong>Closing-Rule Gate:</strong> Evaluation runs at 4:01 PM ET only &mdash; intraday prices are ignored (intentional architectural difference from the QC intraday loop)</li>
+            <li><strong>Timeframe:</strong> Daily (D1) candles | SMA(50), SMA(100), ATR(100) | 50-day lookback window</li>
         </ul>
     </div>
     <div class="timezone-note" style="margin-top:16px;border-left:3px solid #f59e0b;padding:12px 16px;background:rgba(245,158,11,0.06);border-radius:6px;">

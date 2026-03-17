@@ -1,0 +1,454 @@
+You are modifying an existing FastAPI + SQLite trading engine.
+The new rules below SUPERSEDE the previous prompt for trend_non_forex.py.
+Read all existing code before making any change.
+
+THE SOURCE OF TRUTH IS: the QuantConnect validated implementation.
+Where the previous prompt conflicts with the rules below, the rules below win.
+
+=============================================================
+CONFLICTS TO RESOLVE FIRST (before any new code)
+=============================================================
+
+The previous prompt made wrong assumptions. Fix these before adding anything:
+
+CONFLICT 1 — Entry condition used > instead of >=
+  Previous prompt said: current_close > highest_50d
+  Correct rule:         current_close >= highest_50d
+  Same fix for SHORT:   current_close <= lowest_50d  (not <)
+  Apply to: trend_non_forex.py evaluate() and any existing trend_forex.py that has the same bug.
+
+CONFLICT 2 — Previous prompt said ATR is "fixed at entry" as a deliberate design choice.
+  This is WRONG for this strategy. The QC algo recalculates ATR on every candle.
+  The new rules remove atr_at_entry from this strategy entirely.
+  See TASK 2 below for the full fix including the DB layer change.
+
+CONFLICT 3 — Previous prompt used highest_price_since_entry for trailing stop.
+  This is wrong. The QC algo does NOT track peak price.
+  It recalculates stop = current_price - (live_ATR × 3) on every candle
+  and ratchets it up with max(). The stop follows the live ATR, not the historical peak.
+  See TASK 3 below for the correct implementation.
+
+CONFLICT 4 — Previous prompt used < for exit. Correct operator is <=.
+  LONG exit:  current_price <= position.stop_loss
+  SHORT exit: current_price >= position.stop_loss
+
+=============================================================
+SCOPE — WHAT FILES TO CHANGE
+=============================================================
+
+Primary: trading_engine/strategies/trend_non_forex.py
+Database: trading_engine/database.py  (open_position guard fix)
+Models:   trading_engine/models.py    (make atr_at_entry nullable)
+Admin:    trading_engine/admin.py     (dashboard updates)
+API:      trading_engine/api_v1.py    (direction mapping check)
+
+DO NOT change:
+  sp500_momentum.py, highest_lowest.py, trend_forex.py, multi_timeframe.py
+  These strategies intentionally keep ATR fixed at entry. Only trend_non_forex changes.
+
+=============================================================
+TASK 1 — FIX ENTRY CONDITIONS
+=============================================================
+
+In trend_non_forex.py evaluate():
+
+A) LONG entry — fix comparison operator:
+   FIND:
+     close_above_highest = current_close > highest_50d
+   REPLACE WITH:
+     close_above_highest = current_close >= highest_50d
+
+B) SHORT entry (for SHORT_ELIGIBLE_SYMBOLS) — use <= not <:
+   When computing close_below_lowest:
+     close_below_lowest = current_close <= lowest_50d
+
+C) Also fix the log lines that describe the condition to say >= and <=:
+   FIND:   "close > highest_close={close_above_highest}"
+   REPLACE: "close >= highest_close={close_above_highest}"
+
+=============================================================
+TASK 2 — ATR HANDLING FIX (CRITICAL — READ CAREFULLY)
+=============================================================
+
+The QC algo never stores ATR. It calls self._atr[symbol].current.value on every bar.
+In our system, ATR is calculated from candle history each evaluation cycle.
+We must calculate it fresh every time — never store it.
+
+A) In trend_non_forex.py — REMOVE atr_at_entry from all signal and position dicts:
+
+   In evaluate(), find where signal dict is built. REMOVE these fields:
+     "atr_at_entry": round(atr_val, 6)
+   from both the signal dict and the db_open_position() call.
+
+   The db_open_position() call currently looks like:
+     db_open_position({
+         "asset": asset,
+         "strategy_name": STRATEGY_NAME,
+         "direction": "BUY",
+         "entry_price": current_close,
+         "atr_at_entry": round(atr_val, 6),   ← REMOVE THIS LINE
+     })
+
+   After removal it should be:
+     db_open_position({
+         "asset": asset,
+         "strategy_name": STRATEGY_NAME,
+         "direction": "BUY",
+         "entry_price": current_close,
+     })
+
+B) In database.py — fix the open_position() guard:
+
+   FIND this block (it currently hard-rejects NULL atr_at_entry):
+     atr_value = position.get("atr_at_entry")
+     if not atr_value or atr_value <= 0:
+         logger.error(
+             f"[DB] STATE LOCK VIOLATION: open_position() called without valid atr_at_entry ..."
+         )
+         return None
+
+   REPLACE WITH:
+     atr_value = position.get("atr_at_entry")
+     # atr_at_entry is optional — trend_non_forex uses dynamic ATR, other strategies store it
+     # Only reject if explicitly provided but invalid (not if simply absent)
+     if atr_value is not None and atr_value <= 0:
+         logger.error(
+             f"[DB] open_position() called with invalid atr_at_entry={atr_value} "
+             f"for {position.get('asset')}/{position.get('strategy_name')} — rejected"
+         )
+         return None
+
+   Also update the OpenPosition instantiation below it to handle None:
+     obj = OpenPosition(
+         asset=position["asset"],
+         strategy_name=position["strategy_name"],
+         direction=position["direction"],
+         entry_price=position["entry_price"],
+         atr_at_entry=atr_value,  # will be None for trend_non_forex — that is correct
+         highest_price_since_entry=position["entry_price"] if position["direction"] == "BUY" else None,
+         lowest_price_since_entry=position["entry_price"] if position["direction"] == "SELL" else None,
+     )
+
+C) In models.py — make atr_at_entry nullable on OpenPosition:
+
+   FIND:
+     atr_at_entry = Column(Float, nullable=False)
+   REPLACE WITH:
+     atr_at_entry = Column(Float, nullable=True)
+
+   Also add a migration in database.py _migrate_schema() to handle existing rows:
+     try:
+         conn.execute(text("SELECT atr_at_entry FROM open_positions LIMIT 1"))
+     except Exception:
+         pass  # column already nullable — SQLite does not enforce NOT NULL on existing rows
+         # No ALTER needed for SQLite — nullable change only affects new inserts
+
+D) In trend_non_forex.py — update check_exits() to CALCULATE ATR dynamically:
+
+   The existing check_exits() fetches candles and currently reads atr_at_entry from pos dict.
+   Replace all usage of pos["atr_at_entry"] in check_exits() for this strategy:
+
+   FIND at the start of the per-position loop:
+     atr_at_entry = pos["atr_at_entry"]
+     if atr_at_entry is None:
+         logger.warning(f"[TREND-NONFX-EXIT] Position #{pos_id} | No atr_at_entry - skipping")
+         continue
+
+   REPLACE WITH:
+     # ATR is calculated dynamically from current candle data (QC algo behavior)
+     # We fetch the candles here to compute live ATR
+     try:
+         candles_for_atr = self.cache.get_candles(asset, TIMEFRAME, 300)
+     except Exception as e:
+         logger.error(f"[TREND-NONFX-EXIT] Position #{pos_id} | Exception fetching candles for ATR: {e}")
+         continue
+
+     if len(candles_for_atr) < ATR_PERIOD + 1:
+         logger.warning(f"[TREND-NONFX-EXIT] Position #{pos_id} | Insufficient candles for ATR: {len(candles_for_atr)}")
+         continue
+
+     closes_for_atr = [c["close"] for c in candles_for_atr]
+     highs_for_atr  = [c["high"]  for c in candles_for_atr]
+     lows_for_atr   = [c["low"]   for c in candles_for_atr]
+     atr_values_exit = IndicatorEngine.atr(highs_for_atr, lows_for_atr, closes_for_atr, ATR_PERIOD)
+     live_atr = atr_values_exit[-1] if atr_values_exit and atr_values_exit[-1] is not None else None
+
+     if live_atr is None:
+         logger.warning(f"[TREND-NONFX-EXIT] Position #{pos_id} | Live ATR returned None — skipping")
+         continue
+
+     logger.info(f"[TREND-NONFX-EXIT] Position #{pos_id} | Live ATR({ATR_PERIOD})={live_atr:.6f} (dynamic, not stored)")
+
+   Then use `live_atr` everywhere `atr_at_entry` was used in the exit calculation below.
+
+=============================================================
+TASK 3 — TRAILING STOP FIX (REPLACES highest_price_since_entry model)
+=============================================================
+
+The QC algo trailing stop works like this:
+  Every bar:
+    new_stop = current_price - (ATR × 3)          # for LONG
+    stop_loss = max(existing_stop_loss, new_stop)  # ratchet up, never down
+
+This means the stop is driven by LIVE ATR × 3 behind the CURRENT price,
+not by historical peak. The stop only moves up, never down.
+
+A) In check_exits() for LONG positions, REPLACE the trailing stop calculation:
+
+   REMOVE:
+     stored_highest = pos.get("highest_price_since_entry") or entry_price
+     highest_close = max(stored_highest, current_close)
+     update_position_tracking(pos_id, highest_price=highest_close)
+     trailing_stop = highest_close - (atr_at_entry * TRAILING_STOP_ATR_MULT)
+
+   REPLACE WITH:
+     # QC algo: stop = current_price - (live_ATR × 3), ratcheted up with max()
+     new_stop = current_close - (live_atr * TRAILING_STOP_ATR_MULT)
+
+     # Retrieve the stored stop_loss from the open signal (persisted in signals table)
+     active_sigs_for_stop = get_active_signals(strategy_name=STRATEGY_NAME, asset=asset)
+     stored_stop = None
+     if active_sigs_for_stop:
+         stored_stop = active_sigs_for_stop[0].get("stop_loss")
+
+     # Ratchet: trailing stop only moves in favour of the trade
+     if stored_stop is not None:
+         trailing_stop = max(stored_stop, new_stop)   # LONG: higher stop is better
+     else:
+         trailing_stop = new_stop
+
+     # Persist updated stop_loss back to the signals table if it moved
+     if stored_stop is None or trailing_stop > stored_stop:
+         for sig in active_sigs_for_stop:
+             update_signal_stop_loss(sig["id"], trailing_stop)
+         logger.info(
+             f"[TREND-NONFX-EXIT] Position #{pos_id} | "
+             f"Trailing stop updated: {stored_stop} → {trailing_stop:.5f} "
+             f"(price={current_close:.5f} - {TRAILING_STOP_ATR_MULT}×ATR={live_atr:.6f})"
+         )
+     else:
+         logger.info(
+             f"[TREND-NONFX-EXIT] Position #{pos_id} | "
+             f"Trailing stop held at {trailing_stop:.5f} "
+             f"(new_stop={new_stop:.5f} would have moved stop down — not allowed)"
+         )
+
+B) For SHORT positions (SHORT_ELIGIBLE_SYMBOLS), mirror the logic:
+   new_stop = current_close + (live_atr * TRAILING_STOP_ATR_MULT)
+   trailing_stop = min(stored_stop, new_stop)   # SHORT: lower stop is better
+   Persist if trailing_stop < stored_stop.
+
+C) Add a new database function update_signal_stop_loss() in database.py:
+
+   def update_signal_stop_loss(signal_id: int, new_stop_loss: float):
+       """Update the stop_loss on an open signal. Used by dynamic trailing stop strategies."""
+       with _get_session() as session:
+           try:
+               sig = session.query(Signal).filter_by(id=signal_id, status="OPEN").first()
+               if sig:
+                   sig.stop_loss = new_stop_loss
+                   session.commit()
+                   logger.debug(f"[DB] Updated stop_loss for signal #{signal_id}: {new_stop_loss}")
+           except Exception as e:
+               session.rollback()
+               logger.error(f"[DB] update_signal_stop_loss failed for #{signal_id}: {e}")
+
+   Import this function at the top of trend_non_forex.py from trading_engine.database.
+
+D) REMOVE all calls to update_position_tracking() in trend_non_forex.py.
+   The highest_price_since_entry column is no longer used by this strategy.
+   Do NOT remove the function from database.py — other strategies still use it.
+
+=============================================================
+TASK 4 — EXIT CONDITION FIX
+=============================================================
+
+A) LONG exit — fix comparison operator:
+   FIND:   if current_close < trailing_stop:
+   REPLACE: if current_close <= trailing_stop:
+
+B) SHORT exit:
+   FIND:   if current_close > trailing_stop:
+   REPLACE: if current_close >= trailing_stop:
+
+C) Update exit log messages to reflect dynamic ATR:
+   FIND any log lines that say "ATR_at_entry" in trend_non_forex.py check_exits()
+   REPLACE "ATR_at_entry" with "ATR_live" in those log lines only.
+
+=============================================================
+TASK 5 — ADD SHORT ENTRY (carry over from previous prompt, now with correct logic)
+=============================================================
+
+This is the same SHORT entry from the previous prompt but using dynamic ATR.
+The stop_loss on entry is set ONCE at entry price, then ratcheted by check_exits().
+
+A) Define SHORT_ELIGIBLE_SYMBOLS at top of trend_non_forex.py:
+   SHORT_ELIGIBLE_SYMBOLS = ["USO", "UNG", "UGA", "DBB", "SLX"]
+
+B) Compute lowest_50d in evaluate() alongside highest_50d:
+   prior_closes = closes[-(LOOKBACK_DAYS + 1):-1]
+   highest_50d  = max(prior_closes)
+   lowest_50d   = min(prior_closes)   # ADD THIS
+
+C) SHORT entry block (after the existing LONG block):
+
+   if asset in SHORT_ELIGIBLE_SYMBOLS:
+       sma50_below_sma100 = sma50_val < sma100_val
+       close_below_lowest = current_close <= lowest_50d   # <= not 
+
+       logger.info(
+           f"[TREND-NONFX] {asset} | SHORT check: "
+           f"close <= lowest_close={close_below_lowest} "
+           f"AND SMA50 < SMA100={sma50_below_sma100}"
+       )
+
+       if close_below_lowest and sma50_below_sma100:
+           if has_open_signal(STRATEGY_NAME, asset) or has_open_position(STRATEGY_NAME, asset):
+               logger.info(f"[TREND-NONFX] {asset} | IDEMPOTENCY BLOCK: short entry skipped")
+               return SignalResult()
+
+           if signal_exists(STRATEGY_NAME, asset, signal_timestamp):
+               return SignalResult()
+
+           # Initial stop set at entry — check_exits() will ratchet it each evaluation
+           initial_stop = current_close + (atr_val * TRAILING_STOP_ATR_MULT)
+
+           logger.info(f"[TREND-NONFX] {asset} | ALL SHORT CONDITIONS MET")
+           logger.info(
+               f"[TREND-NONFX] {asset} | GENERATING SIGNAL: SELL @ {current_close:.5f} | "
+               f"initial_stop={initial_stop:.5f} (entry + {TRAILING_STOP_ATR_MULT}×live_ATR={atr_val:.6f})"
+           )
+
+           signal = {
+               "strategy_name": STRATEGY_NAME,
+               "asset": asset,
+               "direction": "SELL",
+               "action": "ENTRY",
+               "entry_price": current_close,
+               "stop_loss": initial_stop,
+               "take_profit": None,
+               "signal_timestamp": signal_timestamp,
+               # atr_at_entry intentionally omitted — dynamic ATR strategy
+           }
+           signal_id = insert_signal(signal)
+           if signal_id:
+               db_open_position({
+                   "asset": asset,
+                   "strategy_name": STRATEGY_NAME,
+                   "direction": "SELL",
+                   "entry_price": current_close,
+                   # atr_at_entry omitted — None is now allowed after TASK 2 fix
+               })
+               signal["id"] = signal_id
+               signal["status"] = "OPEN"
+               return SignalResult(
+                   action=Action.ENTRY,
+                   direction=Direction.SHORT,
+                   price=current_close,
+                   stop_loss=initial_stop,
+                   atr_at_entry=None,   # dynamic strategy
+                   metadata={"signal": signal},
+               )
+
+=============================================================
+TASK 6 — POSITION SIZING (1% RISK MODEL)
+=============================================================
+
+Same as previous prompt — no conflicts here.
+Add at top of trend_non_forex.py:
+  RISK_PCT_PER_TRADE = 0.01
+
+Add helper:
+  def _calculate_quantity(portfolio_value: float, atr: float,
+                          atr_mult: float = TRAILING_STOP_ATR_MULT) -> Optional[float]:
+      stop_distance = atr_mult * atr
+      if stop_distance <= 0 or portfolio_value <= 0:
+          return None
+      return round((portfolio_value * RISK_PCT_PER_TRADE) / stop_distance, 4)
+
+Include suggested_quantity in signal dict metadata (not in the DB Signal row).
+Retrieve portfolio_value from get_setting("portfolio_value") — None if not set.
+
+Add the admin settings panel input and /api/settings/portfolio-value endpoint
+exactly as described in the previous prompt — those parts had no conflicts.
+
+=============================================================
+TASK 7 — ADMIN DASHBOARD UPDATES
+=============================================================
+
+Same as previous prompt for the 50d Low column and SHORT Ready badge.
+No conflicts — carry those changes over unchanged.
+
+Additionally: in the admin panel's Active Trade display for trend_non_forex,
+REMOVE the "Fixed ATR" / "ATR at entry" label and replace with "Live ATR (dynamic)".
+The value shown should be the ATR calculated from the latest candles at display time,
+not a stored value from the DB.
+
+In _build_trend_following_html(), for the active trades stat card:
+  FIND:   <div class="stat-label">Fixed ATR</div>
+  REPLACE: <div class="stat-label">Live ATR (dynamic)</div>
+  VALUE: fetch fresh from IndicatorEngine.atr() at display time using cached candles.
+
+=============================================================
+TASK 8 — LOGGING STANDARDS
+=============================================================
+
+All log lines in trend_non_forex.py must use:
+  Entry:  [TREND-NONFX]
+  Exit:   [TREND-NONFX-EXIT]
+
+Replace any reference to "ATR_at_entry (FIXED)" or "ATR_at_entry (fixed from DB)"
+with "ATR_live (dynamic)" in trend_non_forex.py log output only.
+
+=============================================================
+TASK 9 — VERIFICATION CHECKLIST
+=============================================================
+
+1. ENTRY >= fix:
+   Asset with current_close EXACTLY EQUAL to highest_50d → signal generated (was blocked before).
+
+2. Dynamic ATR:
+   Open a position for USO.
+   Call check_exits() twice with different candle data (different ATR values).
+   Verify the stop_loss in the signals table changes both times.
+   Verify atr_at_entry in open_positions is NULL for this position.
+
+3. Trailing stop ratchet:
+   Day 1: price=100, ATR=2, stop set to 100-(3×2)=94. stored_stop=94.
+   Day 2: price=105, ATR=2, new_stop=105-6=99. stored_stop updates to 99.
+   Day 3: price=103, ATR=2, new_stop=103-6=97. stored_stop stays at 99 (max wins).
+   Day 4: price=98.5, ATR=2, new_stop=92.5. stored_stop=99. Exit triggered (98.5 <= 99).
+
+4. SHORT exit uses >=:
+   SHORT position with stop_loss=45.00, current_close=45.00 → EXIT triggered.
+   (With old < operator this would NOT have triggered.)
+
+5. LONG exit uses <=:
+   LONG position with stop_loss=94.00, current_close=94.00 → EXIT triggered.
+   (With old < operator this would NOT have triggered.)
+
+6. No atr_at_entry stored:
+   After a trend_non_forex BUY signal: open_positions.atr_at_entry = NULL.
+   After a sp500_momentum BUY signal: open_positions.atr_at_entry = valid float (unchanged).
+
+7. Other strategies unaffected:
+   sp500_momentum, trend_forex, multi_timeframe, highest_lowest — all still use
+   atr_at_entry as before. Verify their open_position() calls still work.
+
+=============================================================
+CONSTRAINTS
+=============================================================
+
+- TRAILING_STOP_ATR_MULT stays at 3.0 — matches QC algo exactly.
+- LOOKBACK_DAYS stays at 50 — matches QC algo 50-day window.
+- ATR_PERIOD stays at 100 — matches QC algo.
+- Closing-rule gate (4:01 PM ET) is PRESERVED. QC checks every bar intraday
+  but our system uses closing price only. This is an intentional architectural
+  difference and is NOT a bug.
+- Do NOT change BaseStrategy, SignalResult, Action, or Direction.
+- Do NOT change any other strategy file.
+- Do NOT remove update_position_tracking() from database.py — sp500 and mtf still use it.
+- Do NOT remove atr_at_entry column from models.py — other strategies write to it.
+  Only make it nullable=True (was nullable=False).
+- All DB operations use _get_session() / SessionFactory pattern.
+- All new scheduled jobs use ET_ZONE = pytz.timezone("America/New_York").
