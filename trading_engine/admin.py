@@ -1313,6 +1313,8 @@ def _get_trend_following_data() -> dict:
 
 
 def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_count: int) -> str:
+    from trading_engine.strategies.trend_non_forex import SHORT_ELIGIBLE_SYMBOLS as _SHORT_ELIGIBLE_SYMBOLS
+
     def _fmt(val, decimals=5):
         return f"{val:.{decimals}f}" if val is not None else "N/A"
 
