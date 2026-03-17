@@ -397,6 +397,8 @@ CATEGORY_MAP = {
     "BTC/USD": "crypto", "ETH/USD": "crypto",
     "XAU/USD": "commodities", "XAG/USD": "commodities", "OSX": "commodities",
     "SPX": "indices", "NDX": "indices", "RUT": "indices",
+    "USO": "commodities", "UNG": "commodities", "UGA": "commodities",
+    "DBB": "commodities", "SLX": "commodities",
 }
 
 STRATEGY_LABELS = {

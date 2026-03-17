@@ -349,6 +349,20 @@ def _build_settings_html() -> str:
             <p style="margin-top:8px;">Saving a key here overrides the environment variable and takes effect immediately for all market data requests.</p>
         </div>
     </div>
+
+    <div class="settings-section" style="margin-top:20px;">
+        <h3>Portfolio Value (for position sizing)</h3>
+        <p class="settings-desc">Used to calculate suggested position sizes using the 1% risk model.
+        Formula: quantity = (portfolio_value &times; 1%) / (3 &times; ATR). Leave blank to disable sizing.</p>
+        <div style="display:flex;gap:8px;align-items:center;">
+            <input type="number" id="portfolio-value-input" placeholder="e.g. 100000"
+                value="{get_setting('portfolio_value') or ''}"
+                style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;
+                padding:10px 14px;border-radius:6px;font-size:0.9rem;width:240px;">
+            <button class="btn btn-primary" onclick="savePortfolioValue()">Save</button>
+        </div>
+        <div id="portfolio-value-result" style="margin-top:8px;"></div>
+    </div>
     """
 
 
@@ -1183,6 +1197,8 @@ def _get_trend_following_data() -> dict:
     ]
     all_symbols = forex_symbols + non_forex_symbols
 
+    from trading_engine.strategies.trend_non_forex import SHORT_ELIGIBLE_SYMBOLS as _SHORT_ELIGIBLE_SYMBOLS
+
     def _compute_symbol_data(symbol):
         sym_info = {
             "symbol": symbol,
@@ -1191,11 +1207,14 @@ def _get_trend_following_data() -> dict:
             "sma100": None,
             "atr100": None,
             "highest_50d": None,
+            "lowest_50d": None,
             "sma_status": "N/A",
             "candle_count": 0,
             "cond_price_above_50d_high": False,
+            "cond_price_below_50d_low": False,
             "cond_sma50_above_sma100": False,
             "long_ready": False,
+            "short_met": False,
         }
 
         candles = get_candles(symbol, "D1", 300)
@@ -1218,6 +1237,7 @@ def _get_trend_following_data() -> dict:
             if len(closes) > 50:
                 prior_closes = closes[-51:-1]
                 sym_info["highest_50d"] = max(prior_closes)
+                sym_info["lowest_50d"] = min(prior_closes)
 
             if sym_info["sma50"] is not None and sym_info["sma100"] is not None:
                 sym_info["cond_sma50_above_sma100"] = sym_info["sma50"] > sym_info["sma100"]
@@ -1231,7 +1251,16 @@ def _get_trend_following_data() -> dict:
             if sym_info["highest_50d"] is not None and sym_info["current_close"] is not None:
                 sym_info["cond_price_above_50d_high"] = sym_info["current_close"] >= sym_info["highest_50d"]
 
+            if sym_info["lowest_50d"] is not None and sym_info["current_close"] is not None:
+                sym_info["cond_price_below_50d_low"] = sym_info["current_close"] <= sym_info["lowest_50d"]
+
             sym_info["long_ready"] = sym_info["cond_price_above_50d_high"] and sym_info["cond_sma50_above_sma100"]
+
+            sym_info["short_met"] = (
+                symbol in _SHORT_ELIGIBLE_SYMBOLS
+                and sym_info["cond_price_below_50d_low"]
+                and not sym_info["cond_sma50_above_sma100"]
+            )
 
         return sym_info
 
@@ -1298,11 +1327,19 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
             else:
                 sma_color = "#6ee7b7" if sym["sma_status"] == "Bullish" else ("#fca5a5" if sym["sma_status"] == "Bearish" else "#94a3b8")
 
+                low_50d_row = f'<div>50d Low: {_fmt(sym["lowest_50d"])}</div>' if sym.get("lowest_50d") is not None else ""
+                short_cond_rows = ""
+                if sym.get("symbol") in _SHORT_ELIGIBLE_SYMBOLS:
+                    short_cond_rows = f"""
+                    <div>Price &le; 50d Low: {_cond(sym["cond_price_below_50d_low"])}</div>
+                    <div><strong>SHORT Ready:</strong> {_cond(sym["short_met"])}</div>"""
+
                 data_status = f"""
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.8rem;">
                     <div>Close: {_fmt(sym["current_close"])}</div>
                     <div>50d High: {_fmt(sym["highest_50d"])}</div>
                     <div>SMA(50): {_fmt(sym["sma50"])}</div>
+                    {low_50d_row}
                     <div>SMA(100): {_fmt(sym["sma100"])}</div>
                     <div>ATR(100): {_fmt(sym["atr100"], 6)}</div>
                     <div>Trend: <span style="color:{sma_color};">{sym["sma_status"]}</span></div>
@@ -1311,11 +1348,14 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
                     <div>Price &ge; 50d High: {_cond(sym["cond_price_above_50d_high"])}</div>
                     <div>SMA50 &gt; SMA100: {_cond(sym["cond_sma50_above_sma100"])}</div>
                     <div><strong>LONG Ready:</strong> {_cond(sym["long_ready"])}</div>
+                    {short_cond_rows}
                 </div>"""
 
             badges = ""
             if sym.get("long_ready"):
                 badges += ' <span class="badge status-active">LONG</span>'
+            if sym.get("short_met"):
+                badges += ' <span class="badge status-closed">SHORT</span>'
 
             html += f"""
             <div class="stat-card" style="min-width:250px;">
@@ -2831,6 +2871,24 @@ async function saveApiKey() {
     } catch (e) {
         document.getElementById('save-result').innerHTML = '<div class="result-error">Error: ' + e.message + '</div>';
     }
+}
+
+async function savePortfolioValue() {
+    const val = document.getElementById('portfolio-value-input').value.trim();
+    if (!val || isNaN(parseFloat(val))) {
+        document.getElementById('portfolio-value-result').innerHTML =
+            '<div class="result-error">Enter a valid number.</div>';
+        return;
+    }
+    const res = await fetch(BASE + '/admin/api/settings/portfolio-value', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({value: val})
+    });
+    const data = await res.json();
+    document.getElementById('portfolio-value-result').innerHTML = data.success
+        ? '<div class="result-success">Portfolio value saved.</div>'
+        : '<div class="result-error">Failed to save.</div>';
 }
 
 async function testConnection() {
@@ -5278,6 +5336,20 @@ def save_api_key(request: Request, body: dict = Body(...)):
         return JSONResponse(content={"success": False, "error": "API key cannot be empty"})
     set_setting("fcsapi_key", api_key)
     return JSONResponse(content={"success": True, "message": "API key saved successfully"})
+
+
+@router.post("/api/settings/portfolio-value")
+def save_portfolio_value(request: Request, body: dict = Body(...)):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    val = body.get("value", "").strip() if isinstance(body.get("value"), str) else str(body.get("value", ""))
+    try:
+        float(val)
+    except (ValueError, TypeError):
+        return JSONResponse(content={"success": False, "error": "Invalid number"})
+    set_setting("portfolio_value", val)
+    return JSONResponse(content={"success": True})
 
 
 @router.post("/api/settings/test-connection")
