@@ -304,6 +304,90 @@ def close_specific_stale_signals():
             logger.error(f"[DB] close_specific_stale_signals failed: {e}")
 
 
+def close_stale_mtf_ema_longs(h4_ema50_map: Optional[dict] = None) -> None:
+    """Close any OPEN MTF EMA BUY positions where the H1 close has already
+    crossed below H4 EMA50 (the exit trigger) but check_exits() was never
+    called so the position stayed open.
+
+    h4_ema50_map: optional dict of {asset: h4_ema50_value} for assets
+    confirmed to have their exit trigger fired.  If None, uses hardcoded
+    values from the Mar 19 2026 audit.
+
+    Idempotent — safe to run on every startup, no-op if already closed.
+    """
+    if h4_ema50_map is None:
+        # Confirmed from admin panel data Mar 19 2026
+        # H1 close < H4 EMA50 for these assets → exit triggered
+        h4_ema50_map = {
+            "EUR/USD": 1.15349,  # H1=1.14668 confirmed below
+            "GBP/USD": 1.33402,  # H1=1.32636 confirmed below
+        }
+
+    STRATEGY = "mtf_ema"
+
+    with _get_session() as session:
+        try:
+            total_sigs = 0
+            total_pos  = 0
+
+            for asset, h4_ema50 in h4_ema50_map.items():
+                # Close open LONG signals
+                sigs = session.query(Signal).filter(
+                    Signal.asset == asset,
+                    Signal.direction == "BUY",
+                    Signal.status == "OPEN",
+                    Signal.strategy_name == STRATEGY,
+                ).all()
+
+                for sig in sigs:
+                    sig.status = "CLOSED"
+                    sig.exit_reason = (
+                        f"Auto-closed: H1 close crossed below "
+                        f"H4 EMA50 ({h4_ema50}) — "
+                        f"check_exits() was not running for mtf_ema"
+                    )
+                    logger.info(
+                        f"[DB] close_stale_mtf_ema_longs: closed "
+                        f"signal #{sig.id} | {asset} BUY @ "
+                        f"{sig.entry_price} | strategy={sig.strategy_name}"
+                    )
+                    total_sigs += 1
+
+                # Delete open position records
+                pos_rows = session.query(OpenPosition).filter(
+                    OpenPosition.asset == asset,
+                    OpenPosition.direction == "BUY",
+                    OpenPosition.strategy_name == STRATEGY,
+                ).all()
+
+                for p in pos_rows:
+                    logger.info(
+                        f"[DB] close_stale_mtf_ema_longs: deleting "
+                        f"position #{p.id} | {asset} | "
+                        f"strategy={p.strategy_name}"
+                    )
+                    session.delete(p)
+                    total_pos += 1
+
+            session.commit()
+
+            if total_sigs or total_pos:
+                logger.info(
+                    f"[DB] close_stale_mtf_ema_longs: closed "
+                    f"{total_sigs} signal(s) and {total_pos} position(s)"
+                )
+                _invalidate_signal_cache()
+            else:
+                logger.info(
+                    "[DB] close_stale_mtf_ema_longs: "
+                    "no stale positions found (already clean)"
+                )
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] close_stale_mtf_ema_longs failed: {e}")
+
+
 def has_any_open_signal_for_asset(asset: str) -> bool:
     """Return True if ANY open signal exists for this asset, regardless of strategy or direction.
 
@@ -424,6 +508,7 @@ def init_db():
     _purge_unsupported_symbols()
     close_stale_manual_signals()
     close_specific_stale_signals()
+    close_stale_mtf_ema_longs()
 
     health = check_db_health()
     logger.info(f"[DB] Startup health check: {health['status']}")

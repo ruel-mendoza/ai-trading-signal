@@ -1,0 +1,260 @@
+You are fixing the stale MTF EMA BUY positions that are blocking
+SHORT signals for EUR/USD and GBP/USD (and potentially other assets).
+
+This REPLACES and SUPERSEDES the close_eurusd_stale_long() function
+from the previous prompt. Remove that function and use this instead.
+
+Read all existing code before making changes.
+
+=============================================================
+CONTEXT — THE BUG
+=============================================================
+
+MultiTimeframeEMAStrategy has no standalone check_exits() method.
+The exit logic (H1 close vs H4 EMA50) only runs inside evaluate()
+when open_position_data is passed in. The scheduler job
+_scheduled_mtf_ema_evaluate() never calls check_exits() after
+the loop, so positions whose exit triggers have fired remain open.
+
+Confirmed affected assets (Mar 19 audit):
+  EUR/USD — BUY open Mar 11 | H1=1.14668 < H4_EMA50=1.15349 → EXIT FIRED
+  GBP/USD — BUY open Mar 11 | H1=1.32636 < H4_EMA50=1.33402 → EXIT FIRED
+
+Both assets now show SHORT conditions met but are blocked because
+the stale BUY positions prevent new signal insertion.
+
+=============================================================
+TASK 1 — Replace close_eurusd_stale_long() with general fix
+=============================================================
+
+In database.py, REMOVE close_eurusd_stale_long() entirely.
+
+REPLACE with this broader function:
+
+def close_stale_mtf_ema_longs(h4_ema50_map: Optional[dict] = None):
+    """
+    Close any OPEN MTF EMA BUY positions where the H1 close has
+    already crossed below H4 EMA50 (the exit trigger) but
+    check_exits() was never called so the position stayed open.
+
+    h4_ema50_map: optional dict of {asset: h4_ema50_value} for
+    assets confirmed to have their exit trigger fired.
+    If None, uses the hardcoded values from the Mar 19 audit.
+
+    Safe to run multiple times — no-op if already closed.
+    """
+    if h4_ema50_map is None:
+        # Confirmed from admin panel data Mar 19 2026
+        # H1 close < H4 EMA50 for these assets = exit triggered
+        h4_ema50_map = {
+            "EUR/USD": 1.15349,   # H1=1.14668 confirmed below
+            "GBP/USD": 1.33402,   # H1=1.32636 confirmed below
+        }
+
+    STRATEGY = "mtf_ema"
+
+    with _get_session() as session:
+        try:
+            total_sigs = 0
+            total_pos  = 0
+
+            for asset, h4_ema50 in h4_ema50_map.items():
+                # Close open LONG signals
+                sigs = session.query(Signal).filter(
+                    Signal.asset == asset,
+                    Signal.direction == "BUY",
+                    Signal.status == "OPEN",
+                    Signal.strategy_name == STRATEGY,
+                ).all()
+
+                for sig in sigs:
+                    sig.status = "CLOSED"
+                    sig.exit_reason = (
+                        f"Auto-closed: H1 close crossed below "
+                        f"H4 EMA50 ({h4_ema50}) — "
+                        f"check_exits() was not running for mtf_ema"
+                    )
+                    logger.info(
+                        f"[DB] close_stale_mtf_ema_longs: closed "
+                        f"signal #{sig.id} | {asset} BUY @ "
+                        f"{sig.entry_price} | strategy={sig.strategy_name}"
+                    )
+                    total_sigs += 1
+
+                # Delete open position records
+                pos_rows = session.query(OpenPosition).filter(
+                    OpenPosition.asset == asset,
+                    OpenPosition.direction == "BUY",
+                    OpenPosition.strategy_name == STRATEGY,
+                ).all()
+
+                for p in pos_rows:
+                    logger.info(
+                        f"[DB] close_stale_mtf_ema_longs: deleting "
+                        f"position #{p.id} | {asset} | "
+                        f"strategy={p.strategy_name}"
+                    )
+                    session.delete(p)
+                    total_pos += 1
+
+            session.commit()
+
+            if total_sigs or total_pos:
+                logger.info(
+                    f"[DB] close_stale_mtf_ema_longs: closed "
+                    f"{total_sigs} signal(s) and {total_pos} position(s)"
+                )
+                _invalidate_signal_cache()
+            else:
+                logger.info(
+                    "[DB] close_stale_mtf_ema_longs: "
+                    "no stale positions found (already clean)"
+                )
+
+        except Exception as e:
+            session.rollback()
+            logger.error(
+                f"[DB] close_stale_mtf_ema_longs failed: {e}"
+            )
+
+In init_db(), REPLACE:
+    close_eurusd_stale_long()
+WITH:
+    close_stale_mtf_ema_longs()
+
+=============================================================
+TASK 2 — Add check_exits() to MultiTimeframeEMAStrategy
+=============================================================
+
+This is unchanged from the previous prompt. Confirm it is in place.
+
+The method must:
+1. Call get_all_open_positions(strategy_name="mtf_ema")
+2. For each position fetch latest H1 candle and H4 EMA50
+3. Exit LONG if H1 close < H4 EMA50
+4. Exit SHORT if H1 close > H4 EMA50
+5. Call _persist_exit() and append to closed list
+6. Return list of closed positions
+
+If not yet implemented, add it now as specified in previous prompt.
+
+=============================================================
+TASK 3 — Call check_exits() from scheduler
+=============================================================
+
+This is unchanged from the previous prompt. Confirm it is in place.
+
+In main.py _scheduled_mtf_ema_evaluate(), after the asset loop,
+add explicit call to strategy_engine.mtf_ema_strategy.check_exits().
+
+If not yet added, add it now as specified in previous prompt.
+
+=============================================================
+TASK 4 — Add admin endpoint to query ALL stale MTF positions
+=============================================================
+
+Update the debug endpoint to show ALL assets with open MTF EMA
+positions, not just one asset at a time:
+
+@router.get("/api/debug/mtf-open-positions")
+def debug_mtf_open_positions(request: Request):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import get_all_open_positions
+    from trading_engine.database import get_active_signals
+
+    positions = get_all_open_positions(strategy_name="mtf_ema")
+    signals   = get_active_signals(strategy_name="mtf_ema")
+
+    sig_map = {s["asset"]: s for s in signals}
+
+    result = []
+    for pos in positions:
+        sig = sig_map.get(pos["asset"], {})
+        result.append({
+            "asset":           pos["asset"],
+            "direction":       pos["direction"],
+            "entry_price":     pos["entry_price"],
+            "opened_at":       str(pos.get("opened_at", "")),
+            "signal_id":       sig.get("id"),
+            "signal_stop":     sig.get("stop_loss"),
+            "signal_created":  str(sig.get("created_at", "")),
+        })
+
+    return JSONResponse(content={
+        "count": len(result),
+        "positions": result,
+    })
+
+=============================================================
+TASK 5 — Make close_stale_mtf_ema_longs() callable from admin
+=============================================================
+
+Add an admin endpoint to run the cleanup on demand without
+requiring a server restart:
+
+@router.post("/api/admin/close-stale-mtf-longs")
+def admin_close_stale_mtf_longs(request: Request):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import close_stale_mtf_ema_longs
+    try:
+        close_stale_mtf_ema_longs()
+        return JSONResponse(content={
+            "success": True,
+            "message": "Stale MTF EMA LONG positions closed. "
+                       "SHORT signals will fire on next :01 ET tick."
+        })
+    except Exception as e:
+        return JSONResponse(
+            content={"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+=============================================================
+VERIFICATION
+=============================================================
+
+1. Call GET /admin/api/debug/mtf-open-positions
+   Confirm EUR/USD and GBP/USD show as BUY positions.
+
+2. Call POST /admin/api/admin/close-stale-mtf-longs
+   Response: {"success": true}
+
+3. Call GET /admin/api/debug/mtf-open-positions again
+   EUR/USD and GBP/USD should be GONE from the list.
+
+4. Call GET /admin/api/debug/open-signals/EUR%2FUSD
+   open_signals should be empty or show only the new SHORT
+   after the next scheduler tick.
+
+5. Wait for next :01 ET tick (MTF EMA scheduler).
+   Logs show:
+   "[MTF-EMA] EUR/USD | ALL SHORT CONDITIONS MET"
+   "[MTF-EMA] EUR/USD | SHORT signal stored id=..."
+   "[MTF-EMA] GBP/USD | ALL SHORT CONDITIONS MET"
+   "[MTF-EMA] GBP/USD | SHORT signal stored id=..."
+
+6. Active signals panel shows:
+   EUR/USD — SELL (MTF EMA) replacing the stale BUY
+   GBP/USD — SELL (MTF EMA) replacing the stale BUY
+
+7. On subsequent runs, check_exits() fires automatically
+   and closes positions when H1 crosses H4 EMA50.
+   No more stale positions accumulate.
+
+=============================================================
+CONSTRAINTS
+=============================================================
+
+- Do NOT delete signal records — only change status to CLOSED
+- Do NOT touch strategy evaluation logic in multi_timeframe.py
+  beyond adding check_exits() (already specified)
+- close_stale_mtf_ema_longs() must be idempotent — safe to
+  run on every startup, no-op if positions already closed
+- All DB operations use _get_session() / SessionFactory
+- Import OpenPosition at top of close_stale_mtf_ema_longs()
+  (already imported in database.py models section)
+- Python type hints on all new functions

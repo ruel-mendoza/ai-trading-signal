@@ -6162,6 +6162,63 @@ def api_check_exits_trend_non_forex(request: Request):
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
+@router.get("/api/debug/mtf-open-positions")
+def debug_mtf_open_positions(request: Request):
+    """Read-only diagnostic: show all open MTF EMA positions with their matching signal."""
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import get_all_open_positions, get_active_signals
+
+    positions = get_all_open_positions(strategy_name="mtf_ema")
+    signals   = get_active_signals(strategy_name="mtf_ema")
+
+    sig_map = {s["asset"]: s for s in signals}
+
+    result = []
+    for pos in positions:
+        sig = sig_map.get(pos["asset"], {})
+        result.append({
+            "asset":          pos["asset"],
+            "direction":      pos["direction"],
+            "entry_price":    pos["entry_price"],
+            "opened_at":      str(pos.get("opened_at", "")),
+            "signal_id":      sig.get("id"),
+            "signal_stop":    sig.get("stop_loss"),
+            "signal_created": str(sig.get("created_at", "")),
+        })
+
+    return JSONResponse(content={
+        "count":     len(result),
+        "positions": result,
+    })
+
+
+@router.post("/api/admin/close-stale-mtf-longs")
+def admin_close_stale_mtf_longs(request: Request):
+    """Run close_stale_mtf_ema_longs() on demand — closes stuck BUY positions
+    where H1 crossed below H4 EMA50 but check_exits() never fired."""
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import close_stale_mtf_ema_longs
+    try:
+        close_stale_mtf_ema_longs()
+        return JSONResponse(content={
+            "success": True,
+            "message": (
+                "Stale MTF EMA LONG positions closed. "
+                "SHORT signals will fire on next :01 ET tick."
+            ),
+        })
+    except Exception as e:
+        logger.error(f"[ADMIN] close_stale_mtf_longs failed: {e}", exc_info=True)
+        return JSONResponse(
+            content={"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
 @router.get("/api/debug/open-signals/{asset}")
 def debug_open_signals(request: Request, asset: str):
     """Read-only diagnostic: show all OPEN signals and positions for a single asset."""
