@@ -469,6 +469,31 @@ def _scheduled_mtf_ema_evaluate():
         else:
             logger.info(f"[SCHEDULER] mtf_ema | {asset} | No action")
 
+    # ── Standalone exit check (runs even if individual evaluate() was skipped) ──
+    try:
+        mtf_exits = strategy_engine.mtf_ema_strategy.check_exits()
+        if mtf_exits:
+            logger.info(
+                f"[SCHEDULER] mtf_ema | "
+                f"{len(mtf_exits)} exit(s) triggered by check_exits()"
+            )
+            for ex in mtf_exits:
+                logger.info(
+                    f"[SCHEDULER] mtf_ema | EXIT: "
+                    f"{ex.get('asset')} {ex.get('direction')} "
+                    f"@ {ex.get('exit_price')} | "
+                    f"reason={ex.get('exit_reason')}"
+                )
+        else:
+            logger.info("[SCHEDULER] mtf_ema | check_exits(): no exits triggered")
+    except Exception as e:
+        error_count += 1
+        error_details.append(f"check_exits: {e}")
+        logger.error(
+            f"[SCHEDULER] mtf_ema | check_exits() exception: {e}",
+            exc_info=True,
+        )
+
     status = "FAILED" if error_count == assets_eval else ("PARTIAL" if error_count > 0 else "SUCCESS")
     finish_job_log(log_id, status, assets_eval, signals_gen, error_count,
                    "; ".join(error_details) if error_details else None)

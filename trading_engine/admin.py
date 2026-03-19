@@ -2348,6 +2348,18 @@ def _get_signal_analysis_data() -> dict:
         row["all_bear"] = bear_count == 3
         mtf_rows.append(row)
 
+    # Signal/position integrity check
+    pos_assets = set(
+        (p["asset"], p.get("strategy_name")) for p in all_positions
+    )
+    open_sigs = [s for s in all_signals if s.get("status") == "OPEN"]
+    sig_assets = set(
+        (s["asset"], s.get("strategy_name")) for s in open_sigs
+    )
+    orphaned_sigs = len(sig_assets - pos_assets)
+    orphaned_pos  = len(pos_assets - sig_assets)
+    integrity_ok  = (orphaned_sigs == 0 and orphaned_pos == 0)
+
     return {
         "et_time": et_now.strftime(f"%Y-%m-%d %H:%M:%S {'EDT' if ny_dst else 'EST'}"),
         "et_hour": et_hour,
@@ -2357,6 +2369,9 @@ def _get_signal_analysis_data() -> dict:
         "total_signals": len(all_signals),
         "open_positions": len(all_positions),
         "all_signals": all_signals,
+        "orphaned_signals": orphaned_sigs,
+        "orphaned_positions": orphaned_pos,
+        "integrity_ok": integrity_ok,
         "trend_nf": trend_nf_rows,
         "trend_fx": trend_fx_rows,
         "hlc": hlc_row,
@@ -2396,6 +2411,17 @@ def _build_signal_analysis_html(data: dict) -> str:
             <div class="stat-label">Duplicate Active Assets</div>
             <div class="stat-value" style="color:{dup_color};" data-testid="text-duplicate-assets">{duplicate_asset_count}</div>
             <div class="stat-label" style="margin-top:4px;">{dup_label}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Signal Integrity</div>
+            <div class="stat-value" style="font-size:1.2rem;color:{'#22c55e' if data.get('integrity_ok', True) else '#ef4444'};"
+                 data-testid="text-signal-integrity">
+                {'OK' if data.get('integrity_ok', True) else 'ISSUES'}
+            </div>
+            <div class="stat-label" style="margin-top:4px;">
+                Orphan sigs: {data.get('orphaned_signals', 0)} |
+                Orphan pos: {data.get('orphaned_positions', 0)}
+            </div>
         </div>
     </div>
     """
@@ -3593,6 +3619,37 @@ async function terminateBackground() {
     btn.textContent = 'Terminate All Background Tasks';
 }
 
+async function runOrphanCleanup() {
+    var btn = document.getElementById('btn-orphan-cleanup');
+    var resultEl = document.getElementById('orphan-cleanup-result');
+    btn.disabled = true;
+    btn.textContent = 'Running...';
+    resultEl.innerHTML = '';
+    try {
+        var res = await fetch(BASE + '/admin/api/admin/cleanup-orphans', { method: 'POST' });
+        var data = await res.json();
+        if (data.success) {
+            var color = (data.closed_signals > 0 || data.deleted_positions > 0) ? '#f59e0b' : '#22c55e';
+            resultEl.innerHTML =
+                '<div style="padding:12px;background:rgba(30,41,59,0.7);border:1px solid ' + color + '44;border-radius:8px;">' +
+                '<div style="color:' + color + ';font-weight:600;margin-bottom:6px;">Cleanup complete</div>' +
+                '<div style="color:#e2e8f0;font-size:13px;">Closed signals: ' + data.closed_signals +
+                ' | Deleted positions: ' + data.deleted_positions + '</div>' +
+                (data.details && data.details.length > 0
+                    ? '<div style="margin-top:8px;font-size:12px;color:#94a3b8;">' +
+                      data.details.slice(0, 10).join('<br>') + '</div>'
+                    : '') +
+                '</div>';
+        } else {
+            resultEl.innerHTML = '<span style="color:#ef4444;">Cleanup failed</span>';
+        }
+    } catch (e) {
+        resultEl.innerHTML = '<span style="color:#ef4444;">Error: ' + e.message + '</span>';
+    }
+    btn.disabled = false;
+    btn.textContent = 'Run Signal Integrity Cleanup';
+}
+
 async function runQuotaCheck() {
     var btn = document.getElementById('btn-quota-check');
     var resultEl = document.getElementById('quota-check-result');
@@ -4757,6 +4814,24 @@ def admin_dashboard(
                         <button id="btn-terminate-bg" class="btn" onclick="terminateBackground()" data-testid="button-terminate-background" style="background:#ef4444;border-color:#ef4444;color:#fff;font-size:13px;padding:8px 16px;">Terminate All Background Tasks</button>
                         <div id="terminate-result" style="margin-top:8px;font-size:12px;" data-testid="text-terminate-result"></div>
                     </div>
+                </div>
+
+                <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:12px;">Signal Integrity Cleanup</div>
+                <div class="settings-section" style="padding:20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;margin-bottom:24px;"
+                     data-testid="widget-orphan-cleanup">
+                    <p style="color:#94a3b8;font-size:13px;margin-bottom:12px;">
+                        Finds and fixes orphaned signals (open signal with no position),
+                        orphaned positions (position with no open signal), and duplicate
+                        open signals for the same asset. Safe to run at any time.
+                    </p>
+                    <button class="btn btn-primary" onclick="runOrphanCleanup()"
+                            id="btn-orphan-cleanup"
+                            data-testid="button-orphan-cleanup">
+                        Run Signal Integrity Cleanup
+                    </button>
+                    <div id="orphan-cleanup-result"
+                         style="margin-top:12px;"
+                         data-testid="text-orphan-cleanup-result"></div>
                 </div>
 
                 <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:12px;">Quota Health Check</div>
@@ -6129,3 +6204,164 @@ def api_force_close_position(request: Request, body: dict = Body(...)):
         "exit_reason": exit_reason,
         "signals_closed": closed_sigs,
     })
+
+
+@router.get("/api/debug/open-signals/{asset}")
+def debug_open_signals(request: Request, asset: str):
+    """Diagnostic: show all OPEN signals and positions for a single asset."""
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.models import Signal, OpenPosition
+    from trading_engine.database import SessionFactory
+
+    session = SessionFactory()
+    try:
+        sigs = session.query(Signal).filter(
+            Signal.asset == asset,
+            Signal.status == "OPEN",
+        ).order_by(Signal.id.desc()).all()
+
+        pos = session.query(OpenPosition).filter(
+            OpenPosition.asset == asset,
+        ).all()
+    finally:
+        session.close()
+
+    return JSONResponse(content={
+        "asset": asset,
+        "open_signals": [
+            {
+                "id": s.id,
+                "strategy_name": s.strategy_name,
+                "direction": s.direction,
+                "entry_price": s.entry_price,
+                "stop_loss": s.stop_loss,
+                "signal_timestamp": s.signal_timestamp,
+                "created_at": str(s.created_at),
+            }
+            for s in sigs
+        ],
+        "open_positions": [
+            {
+                "id": p.id,
+                "strategy_name": p.strategy_name,
+                "direction": p.direction,
+                "entry_price": p.entry_price,
+                "atr_at_entry": p.atr_at_entry,
+                "opened_at": str(p.opened_at),
+            }
+            for p in pos
+        ],
+        "signal_count": len(sigs),
+        "position_count": len(pos),
+        "has_mismatch": len(sigs) != len(pos),
+        "cross_strategy": len(set(s.strategy_name for s in sigs)) > 1,
+    })
+
+
+@router.get("/api/debug/all-open-signals")
+def debug_all_open_signals(request: Request):
+    """Diagnostic: show signal/position integrity for ALL assets."""
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.models import Signal, OpenPosition
+    from trading_engine.database import SessionFactory
+    from collections import defaultdict
+
+    session = SessionFactory()
+    try:
+        all_sigs = session.query(Signal).filter(
+            Signal.status == "OPEN"
+        ).order_by(Signal.asset, Signal.id.desc()).all()
+
+        all_pos = session.query(OpenPosition).order_by(
+            OpenPosition.asset
+        ).all()
+    finally:
+        session.close()
+
+    sigs_by_asset = defaultdict(list)
+    for s in all_sigs:
+        sigs_by_asset[s.asset].append({
+            "id": s.id,
+            "strategy_name": s.strategy_name,
+            "direction": s.direction,
+            "entry_price": s.entry_price,
+            "created_at": str(s.created_at),
+        })
+
+    pos_by_asset = defaultdict(list)
+    for p in all_pos:
+        pos_by_asset[p.asset].append({
+            "id": p.id,
+            "strategy_name": p.strategy_name,
+            "direction": p.direction,
+            "entry_price": p.entry_price,
+        })
+
+    all_assets = sorted(
+        set(list(sigs_by_asset.keys()) + list(pos_by_asset.keys()))
+    )
+
+    problems = []
+    clean = []
+
+    for asset in all_assets:
+        sigs = sigs_by_asset[asset]
+        pos  = pos_by_asset[asset]
+
+        issues = []
+        if len(sigs) > 1:
+            issues.append(f"multiple_open_signals ({len(sigs)})")
+        if len(pos) > 1:
+            issues.append(f"multiple_open_positions ({len(pos)})")
+        if len(sigs) > 0 and len(pos) == 0:
+            issues.append("signal_without_position")
+        if len(pos) > 0 and len(sigs) == 0:
+            issues.append("position_without_signal")
+        strategies_in_sigs = set(s["strategy_name"] for s in sigs)
+        if len(strategies_in_sigs) > 1:
+            issues.append(f"cross_strategy_signals: {strategies_in_sigs}")
+        if sigs and pos:
+            sig_dirs = set(s["direction"] for s in sigs)
+            pos_dirs = set(p["direction"] for p in pos)
+            if sig_dirs != pos_dirs:
+                issues.append(
+                    f"direction_mismatch: sigs={sig_dirs} pos={pos_dirs}"
+                )
+
+        entry = {
+            "asset": asset,
+            "signals": sigs,
+            "positions": pos,
+            "issues": issues,
+        }
+        if issues:
+            problems.append(entry)
+        else:
+            clean.append(asset)
+
+    return JSONResponse(content={
+        "total_assets_with_open_state": len(all_assets),
+        "assets_with_problems": len(problems),
+        "clean_assets": clean,
+        "problems": problems,
+        "summary": {
+            "total_open_signals": len(all_sigs),
+            "total_open_positions": len(all_pos),
+        },
+    })
+
+
+@router.post("/api/admin/cleanup-orphans")
+def api_cleanup_orphans(request: Request):
+    """On-demand signal/position integrity cleanup."""
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import close_orphaned_signals_and_positions
+    result = close_orphaned_signals_and_positions()
+    logger.info(f"[ADMIN] Manual orphan cleanup triggered: {result}")
+    return JSONResponse(content={"success": True, **result})
