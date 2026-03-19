@@ -1,0 +1,307 @@
+# strategy_engine.py check_exit_conditions() — current state
+sp500_exits           = self.sp500_strategy.check_exits()
+hlc_exits             = self.highest_lowest_strategy.check_exits()
+trend_forex_exits     = self.trend_forex_strategy.check_exits()
+trend_non_forex_exits = self.trend_non_forex_strategy.check_exits()
+# mtf_ema_strategy.check_exits() ← never called, method does not exist
+```
+
+---
+
+**Why it was designed this way originally.** The MTF EMA strategy was built with the assumption that `evaluate()` would run every hour for every asset and the exit check embedded inside it would be sufficient. For a strategy with 35 assets running hourly that seems reasonable. But the assumption breaks in two real scenarios: first, when `evaluate()` returns early due to data issues; second, after the `has_any_open_signal_for_asset()` cross-strategy dedup guard was added — now `evaluate()` may return before even reaching the open position check if another strategy's signal is blocking it.
+
+Here is the complete Replit prompt that fixes all three places cleanly:
+
+---
+```
+You are fixing the root cause of MTF EMA check_exits() never running.
+There are three places to fix. Read all existing code first.
+
+=============================================================
+THE THREE GAPS — fix all three
+=============================================================
+
+GAP 1: multi_timeframe.py has no check_exits() method
+GAP 2: main.py _scheduled_mtf_ema_evaluate() never calls check_exits()
+GAP 3: strategy_engine.py check_exit_conditions() omits mtf_ema
+
+=============================================================
+FIX 1 — Add check_exits() to MultiTimeframeEMAStrategy
+=============================================================
+
+In multi_timeframe.py, add this method to the
+MultiTimeframeEMAStrategy class, placed AFTER evaluate():
+
+def check_exits(self) -> list[dict]:
+    """
+    Standalone exit checker for MTF EMA open positions.
+    Called by the scheduler after the per-asset evaluation loop
+    and by strategy_engine.check_exit_conditions().
+
+    Exit rule (same as _check_h1_ema50_exit):
+      LONG exit:  H1 close < H4 EMA50
+      SHORT exit: H1 close > H4 EMA50
+
+    This method is the missing equivalent of check_exits() on
+    all other strategies. It ensures exits fire even when
+    evaluate() returns early due to data gaps or errors.
+    """
+    from trading_engine.database import (
+        get_all_open_positions,
+        get_active_signals,
+        close_signal,
+        close_position,
+    )
+
+    closed = []
+    positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
+
+    logger.info(
+        f"[MTF-EMA-EXIT] ====== Standalone check_exits | "
+        f"{len(positions)} open position(s) ======"
+    )
+
+    if not positions:
+        return closed
+
+    for pos in positions:
+        asset     = pos["asset"]
+        pos_id    = pos["id"]
+        direction = pos["direction"]
+
+        logger.info(
+            f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} {direction} | "
+            f"entry={pos['entry_price']}"
+        )
+
+        # Fetch H1 candles for current price
+        try:
+            h1_candles = self.cache.get_candles(asset, TIMEFRAME_H1, 20)
+        except Exception as e:
+            logger.error(
+                f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                f"Exception fetching H1 candles: {e}"
+            )
+            continue
+
+        if not h1_candles or len(h1_candles) < 2:
+            logger.warning(
+                f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                f"Insufficient H1 candles: {len(h1_candles) if h1_candles else 0}"
+            )
+            continue
+
+        # Fetch H4 candles for EMA50
+        try:
+            h4_candles = self.cache.get_candles(asset, TIMEFRAME_H4, 300)
+        except Exception as e:
+            logger.error(
+                f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                f"Exception fetching H4 candles: {e}"
+            )
+            continue
+
+        if len(h4_candles) < EMA_50 + 1:
+            logger.warning(
+                f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                f"Insufficient H4 candles for EMA50: {len(h4_candles)}"
+            )
+            continue
+
+        h4_closes = [float(c["close"]) for c in h4_candles]
+        h4_ema50_vals = IndicatorEngine.ema(h4_closes, EMA_50)
+        h4_ema50 = (
+            h4_ema50_vals[-1]
+            if h4_ema50_vals and h4_ema50_vals[-1] is not None
+            else None
+        )
+
+        if h4_ema50 is None:
+            logger.warning(
+                f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                f"H4 EMA50 returned None — skipping"
+            )
+            continue
+
+        h1_close = float(h1_candles[-1]["close"])
+
+        logger.info(
+            f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | {direction} | "
+            f"H1_close={h1_close:.5f} | H4_EMA50={h4_ema50:.5f}"
+        )
+
+        exit_triggered = False
+        exit_type      = ""
+
+        if direction == "BUY" and h1_close < h4_ema50:
+            breach = h4_ema50 - h1_close
+            exit_type = (
+                f"H1/H4-EMA50 exit: H1 close {h1_close:.5f} < "
+                f"H4 EMA50 {h4_ema50:.5f} (breach={breach:.5f})"
+            )
+            exit_triggered = True
+            logger.info(
+                f"[MTF-EMA-EXIT] Position #{pos_id} | EXIT LONG | "
+                f"H1 {h1_close:.5f} < H4_EMA50 {h4_ema50:.5f}"
+            )
+
+        elif direction == "SELL" and h1_close > h4_ema50:
+            breach = h1_close - h4_ema50
+            exit_type = (
+                f"H1/H4-EMA50 exit: H1 close {h1_close:.5f} > "
+                f"H4 EMA50 {h4_ema50:.5f} (breach={breach:.5f})"
+            )
+            exit_triggered = True
+            logger.info(
+                f"[MTF-EMA-EXIT] Position #{pos_id} | EXIT SHORT | "
+                f"H1 {h1_close:.5f} > H4_EMA50 {h4_ema50:.5f}"
+            )
+        else:
+            logger.info(
+                f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                f"Holding {direction} — exit not triggered"
+            )
+
+        if exit_triggered:
+            active_sigs = get_active_signals(
+                strategy_name=STRATEGY_NAME, asset=asset
+            )
+            for sig in active_sigs:
+                close_signal(sig["id"], exit_type)
+                logger.info(
+                    f"[MTF-EMA-EXIT] Closed signal #{sig['id']} "
+                    f"for {asset}"
+                )
+            close_position(STRATEGY_NAME, asset)
+            closed.append({
+                **pos,
+                "exit_price":  h1_close,
+                "exit_reason": "h1_ema50_cross",
+            })
+
+    logger.info(
+        f"[MTF-EMA-EXIT] ====== check_exits complete | "
+        f"{len(closed)} position(s) closed ======"
+    )
+    return closed
+
+=============================================================
+FIX 2 — Call check_exits() from the MTF EMA scheduler job
+=============================================================
+
+In main.py _scheduled_mtf_ema_evaluate(),
+FIND this line (near the end of the function, after the asset loop):
+
+    status = "FAILED" if error_count == assets_eval else \
+             ("PARTIAL" if error_count > 0 else "SUCCESS")
+
+ADD these lines IMMEDIATELY BEFORE that status line:
+
+    # Explicit exit check — runs independent of per-asset evaluate()
+    # This is the same pattern used by trend_forex and trend_non_forex.
+    # Without this call, positions whose exit trigger fired during a
+    # tick where evaluate() returned early would never be closed.
+    try:
+        mtf_exits = strategy_engine.mtf_ema_strategy.check_exits()
+        if mtf_exits:
+            logger.info(
+                f"[SCHEDULER] mtf_ema | "
+                f"{len(mtf_exits)} exit(s) triggered by check_exits()"
+            )
+            for ex in mtf_exits:
+                logger.info(
+                    f"[SCHEDULER] mtf_ema | EXIT: "
+                    f"{ex.get('asset')} {ex.get('direction')} "
+                    f"@ {ex.get('exit_price')} | "
+                    f"reason={ex.get('exit_reason')}"
+                )
+        else:
+            logger.info(
+                "[SCHEDULER] mtf_ema | check_exits(): no exits triggered"
+            )
+    except Exception as e:
+        error_count += 1
+        error_details.append(f"check_exits: {e}")
+        logger.error(
+            f"[SCHEDULER] mtf_ema | check_exits() exception: {e}",
+            exc_info=True,
+        )
+
+=============================================================
+FIX 3 — Add mtf_ema to strategy_engine.py check_exit_conditions()
+=============================================================
+
+In strategy_engine.py check_exit_conditions(),
+FIND the return statement at the end:
+
+    trend_non_forex_exits = self.trend_non_forex_strategy.check_exits()
+    closed_signals.extend(trend_non_forex_exits)
+
+    return closed_signals
+
+ADD before return:
+
+    # MTF EMA exit check — was missing because check_exits() did not
+    # exist on MultiTimeframeEMAStrategy until this fix.
+    try:
+        mtf_exits = self.mtf_ema_strategy.check_exits()
+        closed_signals.extend(mtf_exits)
+        if mtf_exits:
+            logger.info(
+                f"[STRATEGY-ENGINE] mtf_ema check_exits: "
+                f"{len(mtf_exits)} position(s) closed"
+            )
+    except Exception as e:
+        logger.error(
+            f"[STRATEGY-ENGINE] mtf_ema check_exits failed: {e}",
+            exc_info=True,
+        )
+
+    return closed_signals
+
+=============================================================
+VERIFICATION — confirm all three gaps are sealed
+=============================================================
+
+1. multi_timeframe.py:
+   - class MultiTimeframeEMAStrategy has check_exits() method
+   - method loops over get_all_open_positions(strategy_name="mtf_ema")
+   - exits LONG when H1 < H4 EMA50, SHORT when H1 > H4 EMA50
+   - calls close_signal() and close_position()
+
+2. main.py:
+   - _scheduled_mtf_ema_evaluate() calls
+     strategy_engine.mtf_ema_strategy.check_exits()
+     AFTER the per-asset for loop, BEFORE status calculation
+   - log line: "[SCHEDULER] mtf_ema | check_exits(): ..."
+
+3. strategy_engine.py:
+   - check_exit_conditions() includes
+     self.mtf_ema_strategy.check_exits()
+   - it is listed alongside sp500, hlc, trend_forex, trend_non_forex
+
+4. Integration test:
+   - Open a test MTF EMA BUY position for any asset
+   - Set H1 candle close to a value below H4 EMA50
+   - Call strategy_engine.check_exit_conditions()
+   - Position should be CLOSED and logged
+
+5. After deployment:
+   - EUR/USD and GBP/USD BUY positions close
+     (via close_stale_mtf_ema_longs() in init_db)
+   - Next :01 ET tick fires SHORT signals for both
+   - Subsequent hourly ticks call check_exits()
+     ensuring no future stale positions accumulate
+
+=============================================================
+CONSTRAINTS
+=============================================================
+
+- Use TIMEFRAME_H1 and TIMEFRAME_H4 constants from multi_timeframe.py
+  (already defined: TIMEFRAME_H1 = "1H", TIMEFRAME_H4 = "4H")
+- Use EMA_50 constant (already defined: EMA_50 = 50)
+- Use STRATEGY_NAME constant (already defined: STRATEGY_NAME = "mtf_ema")
+- Do NOT change _check_h1_ema50_exit() or _check_exit_conditions()
+  The new check_exits() replicates the same logic independently
+- Do NOT change any other strategy file
+- Python type hints required: def check_exits(self) -> list[dict]
