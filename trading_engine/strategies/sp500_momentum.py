@@ -15,7 +15,6 @@ from trading_engine.database import (
     insert_signal,
     close_signal,
     open_position as db_open_position,
-    get_open_position,
     get_all_open_positions,
     close_position,
     get_active_signals,
