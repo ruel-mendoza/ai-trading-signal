@@ -1,0 +1,151 @@
+Fix the MTF EMA asset cards in admin.py to compute and display 
+Cond 5 (H1 EMA20 crossover) instead of showing "N/A (live)".
+Only change _get_mtf_ema_data() and _build_mtf_ema_html() in admin.py.
+Do not change any other file or any other function.
+
+═══════════════════════════════════════════════════════════
+CHANGE 1 — _get_mtf_ema_data(): compute Cond 5 per symbol
+═══════════════════════════════════════════════════════════
+
+Inside _get_mtf_ema_data(), in the per-symbol loop where sym_info
+is built, find the block that computes cond1 through cond2 for the
+long/short ready checks. After that block, add Cond 5 computation.
+
+Step A: Add these fields to the sym_info dict initialisation
+(where the other cond fields like cond1_d1_filter_long are set):
+
+  "cond5_h1_prev_close": None,
+  "cond5_h1_curr_close": None,
+  "cond5_h1_open": None,
+  "cond5_h1_ema20": None,
+  "cond5_long_cross": False,
+  "cond5_short_cross": False,
+  "cond5_bullish_candle": False,
+  "cond5_bearish_candle": False,
+  "cond5_long_met": False,
+  "cond5_short_met": False,
+
+Step B: Inside the block that runs only when all three timeframes
+have sufficient data (the existing if block that computes d1_ema200,
+h4_ema50, etc.), add the following AFTER the existing cond2
+(historical dip / long_ready / short_ready) computation:
+
+  # ── Cond 5: H1 EMA20 crossover ──
+  if len(h1_candles) >= 22:  # need at least EMA20 period + 2 bars
+      h1_closes_full = [c["close"] for c in h1_candles]
+      h1_opens_full  = [c["open"]  for c in h1_candles]
+      h1_ema20_vals  = IndicatorEngine.ema(h1_closes_full, 20)
+
+      if h1_ema20_vals and h1_ema20_vals[-1] is not None:
+          h1_ema20_now  = float(h1_ema20_vals[-1])
+          h1_curr_close = float(h1_closes_full[-1])
+          h1_prev_close = float(h1_closes_full[-2])
+          h1_curr_open  = float(h1_opens_full[-1])
+
+          bullish_candle = h1_curr_close > h1_curr_open
+          bearish_candle = h1_curr_close < h1_curr_open
+
+          long_cross  = (h1_prev_close < h1_ema20_now and
+                         h1_curr_close > h1_ema20_now and
+                         bullish_candle)
+          short_cross = (h1_prev_close > h1_ema20_now and
+                         h1_curr_close < h1_ema20_now and
+                         bearish_candle)
+
+          sym_info["cond5_h1_prev_close"]  = round(h1_prev_close, 5)
+          sym_info["cond5_h1_curr_close"]  = round(h1_curr_close, 5)
+          sym_info["cond5_h1_open"]        = round(h1_curr_open,  5)
+          sym_info["cond5_h1_ema20"]       = round(h1_ema20_now,  5)
+          sym_info["cond5_bullish_candle"] = bullish_candle
+          sym_info["cond5_bearish_candle"] = bearish_candle
+          sym_info["cond5_long_cross"]     = long_cross
+          sym_info["cond5_short_cross"]    = short_cross
+          sym_info["cond5_long_met"]       = long_cross
+          sym_info["cond5_short_met"]      = short_cross
+
+Step C: Update the long_ready and short_ready final values to
+include cond5. Find the lines that set sym_info["long_ready"] and
+sym_info["short_ready"] and update them:
+
+  FIND (inside the cond1_long branch):
+    sym_info["long_ready"] = cond1_long and sym_info["cond2_historical_dip"]
+
+  REPLACE WITH:
+    sym_info["long_ready"] = (cond1_long and
+                               sym_info["cond2_historical_dip"] and
+                               sym_info["cond5_long_met"])
+
+  FIND (inside the cond1_short branch):
+    sym_info["short_ready"] = cond1_short and sym_info["cond2_historical_dip"]
+
+  REPLACE WITH:
+    sym_info["short_ready"] = (cond1_short and
+                                sym_info["cond2_historical_dip"] and
+                                sym_info["cond5_short_met"])
+
+Note: cond2_historical_dip in the admin panel refers to the old
+historical dip condition. Since multi_timeframe.py now uses H1 EMA20
+crossover as the actual Cond 5, the admin panel's long_ready /
+short_ready should require cond5 to be met as well so the card
+accurately reflects whether a signal would actually fire.
+
+═══════════════════════════════════════════════════════════
+CHANGE 2 — _build_mtf_ema_html(): display Cond 5 in the card
+═══════════════════════════════════════════════════════════
+
+Inside _build_mtf_ema_html(), find the data_status block that
+builds the per-symbol card HTML. Currently it shows C1 and C2
+conditions. Find the line block that renders the condition rows:
+
+  FIND this block (inside the else branch where data is available):
+    <div><strong>C1 — D1 Trend Gate:</strong> ...
+    <div><strong>C2 — Historical {"Rally"...
+
+  After the C2 line (the closing </div> of that row), ADD:
+
+    <div style="margin-top:4px;padding-top:4px;
+                border-top:1px solid #334155;font-size:0.78rem;">
+        <strong>C5 — H1 EMA20 Crossover:</strong>
+        prev={sym["cond5_h1_prev_close"] if sym["cond5_h1_prev_close"] 
+              is not None else "N/A"} |
+        curr={sym["cond5_h1_curr_close"] if sym["cond5_h1_curr_close"] 
+              is not None else "N/A"} |
+        ema20={sym["cond5_h1_ema20"] if sym["cond5_h1_ema20"] 
+               is not None else "N/A"} |
+        bullish={sym["cond5_bullish_candle"]} |
+        cross={"LONG" if sym["cond5_long_cross"] else 
+               "SHORT" if sym["cond5_short_cross"] else "NONE"} →
+        {_cond(sym["cond5_long_met"] or sym["cond5_short_met"])}
+    </div>
+
+  Write this as a Python f-string in the same style as the
+  existing card HTML lines. Use the _cond() helper that already
+  exists in _build_mtf_ema_html() for YES/NO rendering.
+
+═══════════════════════════════════════════════════════════
+DO NOT CHANGE
+═══════════════════════════════════════════════════════════
+- Any other function in admin.py
+- multi_timeframe.py
+- Any other file
+- The _cond() helper function
+- The existing C1 and C2 display rows
+- The signal_badge logic (LONG READY / SHORT READY badges)
+- The grouped_data structure or loop
+- Any other sym_info field already computed
+
+═══════════════════════════════════════════════════════════
+VERIFICATION CHECKLIST (confirm internally before saving)
+═══════════════════════════════════════════════════════════
+[ ] sym_info dict has all 10 new cond5_ fields initialised to
+    None/False in the default state
+[ ] H1 EMA20 is computed from h1_candles inside the sufficient
+    data block using IndicatorEngine.ema with period 20
+[ ] long_cross uses prev < ema20 AND curr > ema20 AND bullish
+[ ] short_cross uses prev > ema20 AND curr < ema20 AND bearish
+[ ] long_ready includes cond5_long_met
+[ ] short_ready includes cond5_short_met
+[ ] C5 row renders in the card HTML with actual values
+[ ] C5 row uses _cond() for the final pass/fail indicator
+[ ] No "N/A (live)" text remains anywhere in the MTF card HTML
+[ ] File is syntactically valid Python

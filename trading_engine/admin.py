@@ -664,6 +664,16 @@ def _get_mtf_ema_data() -> dict:
                 "cond3_h4_prev_slope": None,
                 "cond4_proximity": False,
                 "cond4_proximity_distance": None,
+                "cond5_h1_prev_close": None,
+                "cond5_h1_curr_close": None,
+                "cond5_h1_open": None,
+                "cond5_h1_ema20": None,
+                "cond5_long_cross": False,
+                "cond5_short_cross": False,
+                "cond5_bullish_candle": False,
+                "cond5_bearish_candle": False,
+                "cond5_long_met": False,
+                "cond5_short_met": False,
                 "long_ready": False, "short_ready": False,
             }
 
@@ -751,12 +761,49 @@ def _get_mtf_ema_data() -> dict:
                 sym_info["cond4_proximity"] = cond4
                 sym_info["cond4_proximity_distance"] = proximity_dist
 
-                # Cond 5: H1 EMA20 crossover — cannot evaluate statically (needs live prev bar)
-                # long_ready / short_ready based on C1–C4 only (C5 is live-only)
+                # Cond 5: H1 EMA20 crossover
+                if len(h1_candles) >= 22:
+                    h1_closes_full = [c["close"] for c in h1_candles]
+                    h1_opens_full  = [c["open"]  for c in h1_candles]
+                    h1_ema20_vals  = IndicatorEngine.ema(h1_closes_full, 20)
+
+                    if h1_ema20_vals and h1_ema20_vals[-1] is not None:
+                        h1_ema20_now  = float(h1_ema20_vals[-1])
+                        h1_curr_close = float(h1_closes_full[-1])
+                        h1_prev_close = float(h1_closes_full[-2])
+                        h1_curr_open  = float(h1_opens_full[-1])
+
+                        bullish_candle = h1_curr_close > h1_curr_open
+                        bearish_candle = h1_curr_close < h1_curr_open
+
+                        long_cross  = (h1_prev_close < h1_ema20_now and
+                                       h1_curr_close > h1_ema20_now and
+                                       bullish_candle)
+                        short_cross = (h1_prev_close > h1_ema20_now and
+                                       h1_curr_close < h1_ema20_now and
+                                       bearish_candle)
+
+                        sym_info["cond5_h1_prev_close"]  = round(h1_prev_close, 5)
+                        sym_info["cond5_h1_curr_close"]  = round(h1_curr_close, 5)
+                        sym_info["cond5_h1_open"]        = round(h1_curr_open,  5)
+                        sym_info["cond5_h1_ema20"]       = round(h1_ema20_now,  5)
+                        sym_info["cond5_bullish_candle"] = bullish_candle
+                        sym_info["cond5_bearish_candle"] = bearish_candle
+                        sym_info["cond5_long_cross"]     = long_cross
+                        sym_info["cond5_short_cross"]    = short_cross
+                        sym_info["cond5_long_met"]       = long_cross
+                        sym_info["cond5_short_met"]      = short_cross
+
                 if cond1_long:
-                    sym_info["long_ready"] = cond1_long and sym_info["cond2_d1_slope"] and cond3 and cond4
+                    sym_info["long_ready"] = (cond1_long and
+                                              sym_info["cond2_d1_slope"] and
+                                              cond3 and cond4 and
+                                              sym_info["cond5_long_met"])
                 elif cond1_short:
-                    sym_info["short_ready"] = cond1_short and sym_info["cond2_d1_slope"] and cond3 and cond4
+                    sym_info["short_ready"] = (cond1_short and
+                                               sym_info["cond2_d1_slope"] and
+                                               cond3 and cond4 and
+                                               sym_info["cond5_short_met"])
 
             grouped_data[group_name].append(sym_info)
 
@@ -869,8 +916,15 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
                     <div><strong>C2 — D1 EMA200 Slope {"Rising" if sym["cond1_d1_filter_long"] else "Falling"}:</strong> {_cond(sym["cond2_d1_slope"])}</div>
                     <div><strong>C3 — H4 EMA200 Slope Accelerating:</strong> {slope_display} &rarr; {_cond(sym["cond3_h4_slope"])}</div>
                     <div><strong>C4 — H4 EMA50 Proximity:</strong> distance={prox_display} vs ATR={_fmt(sym["h4_atr100"], dp + 1)} &rarr; {_cond(sym["cond4_proximity"])}</div>
-                    <div><strong>C5 — H1 EMA20 Crossover:</strong> <span style="color:#94a3b8;font-style:italic;">N/A (requires live bar)</span></div>
-                    <div style="margin-top:4px;padding-top:4px;border-top:1px solid #334155;"><strong>Signal Ready (C1–C4):</strong> {_cond(sym["long_ready"] or sym["short_ready"])}</div>
+                    <div><strong>C5 — H1 EMA20 Crossover:</strong>
+                        prev={sym["cond5_h1_prev_close"] if sym["cond5_h1_prev_close"] is not None else "N/A"} |
+                        curr={sym["cond5_h1_curr_close"] if sym["cond5_h1_curr_close"] is not None else "N/A"} |
+                        ema20={sym["cond5_h1_ema20"] if sym["cond5_h1_ema20"] is not None else "N/A"} |
+                        bullish={sym["cond5_bullish_candle"]} |
+                        cross={"LONG" if sym["cond5_long_cross"] else "SHORT" if sym["cond5_short_cross"] else "NONE"} &rarr;
+                        {_cond(sym["cond5_long_met"] or sym["cond5_short_met"])}
+                    </div>
+                    <div style="margin-top:4px;padding-top:4px;border-top:1px solid #334155;"><strong>Signal Ready (C1–C5):</strong> {_cond(sym["long_ready"] or sym["short_ready"])}</div>
                 </div>"""
 
             signal_badge = ""
