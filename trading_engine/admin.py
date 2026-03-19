@@ -1295,6 +1295,10 @@ def _get_trend_following_data() -> dict:
             "cond_sma50_above_sma100": False,
             "long_ready": False,
             "short_met": False,
+            "pct_from_high": None,
+            "pct_from_low": None,
+            "proximity_long": "N/A",
+            "proximity_short": "N/A",
         }
 
         candles = get_candles(symbol, "D1", 300)
@@ -1333,6 +1337,32 @@ def _get_trend_following_data() -> dict:
 
             if sym_info["lowest_50d"] is not None and sym_info["current_close"] is not None:
                 sym_info["cond_price_below_50d_low"] = sym_info["current_close"] <= sym_info["lowest_50d"]
+
+            # Proximity to trigger levels
+            if sym_info["current_close"] is not None and sym_info["highest_50d"] is not None:
+                pct_from_high = ((sym_info["current_close"] - sym_info["highest_50d"])
+                                 / sym_info["highest_50d"]) * 100
+                sym_info["pct_from_high"] = round(pct_from_high, 2)
+
+                if pct_from_high >= 0:
+                    sym_info["proximity_long"] = "triggered"
+                elif pct_from_high >= -2.0:
+                    sym_info["proximity_long"] = "approaching"
+                else:
+                    sym_info["proximity_long"] = "neutral"
+
+            if sym_info["lowest_50d"] is not None and sym_info["current_close"] is not None:
+                pct_from_low = ((sym_info["current_close"] - sym_info["lowest_50d"])
+                                / sym_info["lowest_50d"]) * 100
+                sym_info["pct_from_low"] = round(pct_from_low, 2)
+
+                if symbol in _SHORT_ELIGIBLE_SYMBOLS:
+                    if pct_from_low <= 0:
+                        sym_info["proximity_short"] = "triggered"
+                    elif pct_from_low <= 2.0:
+                        sym_info["proximity_short"] = "approaching"
+                    else:
+                        sym_info["proximity_short"] = "neutral"
 
             sym_info["long_ready"] = sym_info["cond_price_above_50d_high"] and sym_info["cond_sma50_above_sma100"]
 
@@ -1454,6 +1484,50 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
                     {short_cond_rows}
                 </div>
                 <div style="margin-top:4px;padding-top:4px;border-top:1px solid #334155;font-size:0.8rem;"><strong>Signal Ready:</strong> {_cond(signal_ready)}</div>"""
+
+                prox_long  = sym.get("proximity_long",  "N/A")
+                prox_short = sym.get("proximity_short", "N/A")
+                pct_high   = sym.get("pct_from_high")
+                pct_low    = sym.get("pct_from_low")
+
+                long_color = (
+                    "#22c55e" if prox_long == "triggered" else
+                    "#f59e0b" if prox_long == "approaching" else
+                    "#94a3b8"
+                )
+                short_color = (
+                    "#ef4444" if prox_short == "triggered" else
+                    "#f59e0b" if prox_short == "approaching" else
+                    "#94a3b8" if prox_short == "neutral" else
+                    "#64748b"
+                )
+
+                pct_high_str = f"{pct_high:+.2f}%" if pct_high is not None else "N/A"
+                pct_low_str  = f"{pct_low:+.2f}%"  if pct_low  is not None else "N/A"
+
+                short_row = ""
+                if prox_short != "N/A":
+                    short_row = (
+                        f'<div style="display:flex;justify-content:space-between;'
+                        f'font-size:0.75rem;margin-top:3px;">'
+                        f'<span style="color:#64748b;">50d Low proximity (SHORT)</span>'
+                        f'<span style="color:{short_color};font-weight:600;">'
+                        f'{prox_short.upper()} ({pct_low_str})</span></div>'
+                    )
+
+                proximity_html = (
+                    f'<div style="margin-top:8px;padding-top:6px;'
+                    f'border-top:1px solid #334155;font-size:0.78rem;">'
+                    f'<div style="display:flex;justify-content:space-between;'
+                    f'font-size:0.75rem;">'
+                    f'<span style="color:#64748b;">50d High proximity (LONG)</span>'
+                    f'<span style="color:{long_color};font-weight:600;">'
+                    f'{prox_long.upper()} ({pct_high_str})</span></div>'
+                    f'{short_row}'
+                    f'</div>'
+                )
+
+                data_status += proximity_html
 
             badges = ""
             if sym.get("long_ready"):

@@ -1,0 +1,164 @@
+Update _get_trend_following_data() and _build_trend_following_html()
+in admin.py to add proximity-to-trigger display on Trend Non-Forex
+asset cards. Do not change any other function or file.
+
+The goal is to show how far each asset's current price is from its
+50-day breakout trigger level (highest close for LONG, lowest close
+for SHORT-eligible assets), giving a visual "approaching / triggered"
+indicator similar to the MTF EMA proximity cards.
+
+═══════════════════════════════════════════════════════════
+CHANGE 1 — _get_trend_following_data(): add proximity fields
+═══════════════════════════════════════════════════════════
+
+In the _compute_symbol_data() inner function, add these fields
+to the sym_info dict initialisation block (where other fields
+like current_close, sma50, etc. are initialised to None/False):
+
+  "pct_from_high": None,      # % distance from 50d highest close
+  "pct_from_low": None,       # % distance from 50d lowest close (short-eligible only)
+  "proximity_long": "N/A",    # "triggered" | "approaching" | "neutral"
+  "proximity_short": "N/A",   # "triggered" | "approaching" | "neutral" | "N/A"
+
+Then inside the block that runs when len(candles) >= 101, after
+the existing computation of highest_50d and lowest_50d, add:
+
+  # Proximity to trigger levels
+  if sym_info["current_close"] is not None and sym_info["highest_50d"] is not None:
+      pct_from_high = ((sym_info["current_close"] - sym_info["highest_50d"])
+                       / sym_info["highest_50d"]) * 100
+      sym_info["pct_from_high"] = round(pct_from_high, 2)
+
+      if pct_from_high >= 0:
+          sym_info["proximity_long"] = "triggered"
+      elif pct_from_high >= -2.0:
+          sym_info["proximity_long"] = "approaching"
+      else:
+          sym_info["proximity_long"] = "neutral"
+
+  if sym_info["lowest_50d"] is not None and sym_info["current_close"] is not None:
+      pct_from_low = ((sym_info["current_close"] - sym_info["lowest_50d"])
+                      / sym_info["lowest_50d"]) * 100
+      sym_info["pct_from_low"] = round(pct_from_low, 2)
+
+      # Only set short proximity for short-eligible symbols
+      from trading_engine.strategies.trend_non_forex import SHORT_ELIGIBLE_SYMBOLS as _SE
+      if symbol in _SE:
+          if pct_from_low <= 0:
+              sym_info["proximity_short"] = "triggered"
+          elif pct_from_low <= 2.0:
+              sym_info["proximity_short"] = "approaching"
+          else:
+              sym_info["proximity_short"] = "neutral"
+
+═══════════════════════════════════════════════════════════
+CHANGE 2 — _build_trend_following_html(): render proximity bar
+═══════════════════════════════════════════════════════════
+
+Inside _build_trend_following_html(), find the _build_symbol_cards()
+inner function. Inside it, find the data_status f-string block that
+builds the card HTML for each symbol when sym["candle_count"] >= 101.
+
+After the existing condition rows div (the block ending with
+<strong>LONG Ready:</strong> and SHORT Ready rows), add a new
+proximity section div:
+
+  # Build proximity bar for LONG trigger
+  prox_long  = sym.get("proximity_long",  "N/A")
+  prox_short = sym.get("proximity_short", "N/A")
+  pct_high   = sym.get("pct_from_high")
+  pct_low    = sym.get("pct_from_low")
+
+  long_color = (
+      "#22c55e" if prox_long == "triggered" else
+      "#f59e0b" if prox_long == "approaching" else
+      "#94a3b8"
+  )
+  short_color = (
+      "#ef4444" if prox_short == "triggered" else
+      "#f59e0b" if prox_short == "approaching" else
+      "#94a3b8" if prox_short == "neutral" else
+      "#64748b"
+  )
+
+  pct_high_str = f"{pct_high:+.2f}%" if pct_high is not None else "N/A"
+  pct_low_str  = f"{pct_low:+.2f}%"  if pct_low  is not None else "N/A"
+
+  short_row = ""
+  if prox_short != "N/A":
+      short_row = (
+          f'<div style="display:flex;justify-content:space-between;'
+          f'font-size:0.75rem;margin-top:3px;">'
+          f'<span style="color:#64748b;">50d Low proximity (SHORT)</span>'
+          f'<span style="color:{short_color};font-weight:600;">'
+          f'{prox_short.upper()} ({pct_low_str})</span></div>'
+      )
+
+  proximity_html = (
+      f'<div style="margin-top:8px;padding-top:6px;'
+      f'border-top:1px solid #334155;font-size:0.78rem;">'
+      f'<div style="display:flex;justify-content:space-between;'
+      f'font-size:0.75rem;">'
+      f'<span style="color:#64748b;">50d High proximity (LONG)</span>'
+      f'<span style="color:{long_color};font-weight:600;">'
+      f'{prox_long.upper()} ({pct_high_str})</span></div>'
+      f'{short_row}'
+      f'</div>'
+  )
+
+  Append proximity_html to data_status so it appears at the bottom
+  of each card's condition block. Specifically, change:
+
+    data_status = f"""...(existing multi-line f-string)..."""
+
+  to build data_status as before, then append:
+
+    data_status += proximity_html
+
+═══════════════════════════════════════════════════════════
+PROXIMITY THRESHOLD DEFINITIONS
+═══════════════════════════════════════════════════════════
+LONG proximity levels (pct_from_high = (price - high50d) / high50d × 100):
+  triggered  : pct_from_high >= 0     (price is AT or ABOVE 50d high — signal active)
+  approaching: -2.0 <= pct < 0        (within 2% below the trigger)
+  neutral    : pct < -2.0             (more than 2% below trigger)
+
+SHORT proximity levels (pct_from_low = (price - low50d) / low50d × 100):
+  triggered  : pct_from_low <= 0      (price is AT or BELOW 50d low — signal active)
+  approaching: 0 < pct <= 2.0         (within 2% above the trigger)
+  neutral    : pct > 2.0              (more than 2% above trigger)
+
+Colors:
+  triggered  : #22c55e (green) for LONG | #ef4444 (red) for SHORT
+  approaching: #f59e0b (amber) for both
+  neutral    : #94a3b8 (muted) for both
+
+═══════════════════════════════════════════════════════════
+DO NOT CHANGE
+═══════════════════════════════════════════════════════════
+- Any other function in admin.py
+- trend_non_forex.py or any strategy file
+- The existing LONG Ready / SHORT Ready condition rows
+- The _gather_trades() function
+- The forex symbol cards (only non_forex_data gets the new fields)
+- The signal history table
+- The strategy rules section at the bottom
+
+═══════════════════════════════════════════════════════════
+VERIFICATION CHECKLIST (confirm internally before saving)
+═══════════════════════════════════════════════════════════
+[ ] sym_info has pct_from_high, pct_from_low, proximity_long,
+    proximity_short fields initialised in default state
+[ ] pct_from_high computed as (close - high50d) / high50d × 100
+[ ] pct_from_low computed as (close - low50d) / low50d × 100
+[ ] proximity_long is "triggered" when price >= high50d
+[ ] proximity_long is "approaching" when within 2% below high50d
+[ ] proximity_short only set for SHORT_ELIGIBLE_SYMBOLS
+[ ] proximity_short is "triggered" when price <= low50d
+[ ] proximity_short stays "N/A" for non-short-eligible symbols
+[ ] Card HTML shows proximity row below existing condition rows
+[ ] TRIGGERED renders in green (LONG) or red (SHORT)
+[ ] APPROACHING renders in amber for both
+[ ] Short proximity row only renders when prox_short != "N/A"
+[ ] Forex symbol cards are not affected
+[ ] File is syntactically valid Python
