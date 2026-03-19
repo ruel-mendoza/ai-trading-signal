@@ -1369,6 +1369,7 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
                     <div>Price &le; 50d Low: {_cond(sym["cond_price_below_50d_low"])}</div>
                     <div><strong>SHORT Ready:</strong> {_cond(sym["short_met"])}</div>"""
 
+                signal_ready = sym["long_ready"] or sym.get("short_met", False)
                 data_status = f"""
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.8rem;">
                     <div>Close: {_fmt(sym["current_close"])}</div>
@@ -1384,13 +1385,14 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
                     <div>SMA50 &gt; SMA100: {_cond(sym["cond_sma50_above_sma100"])}</div>
                     <div><strong>LONG Ready:</strong> {_cond(sym["long_ready"])}</div>
                     {short_cond_rows}
-                </div>"""
+                </div>
+                <div style="margin-top:4px;padding-top:4px;border-top:1px solid #334155;font-size:0.8rem;"><strong>Signal Ready:</strong> {_cond(signal_ready)}</div>"""
 
             badges = ""
             if sym.get("long_ready"):
-                badges += ' <span class="badge status-active">LONG</span>'
+                badges += ' <span class="badge buy" style="font-size:0.7rem;">LONG READY</span>'
             if sym.get("short_met"):
-                badges += ' <span class="badge status-closed">SHORT</span>'
+                badges += ' <span class="badge sell" style="font-size:0.7rem;">SHORT READY</span>'
 
             html += f"""
             <div class="stat-card" style="min-width:250px;">
