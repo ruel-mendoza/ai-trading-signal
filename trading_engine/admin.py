@@ -473,19 +473,10 @@ def _get_spx_momentum_data() -> dict:
     active_signal = None
     if active:
         sig = active[0]
-        atr_at_entry = sig.get("atr_at_entry")
-        pos = get_open_position("sp500_momentum", "SPX")
-        stored_highest = (pos.get("highest_price_since_entry") if pos else None) or sig["entry_price"]
-        highest_close = max(stored_highest, current_close) if current_close else stored_highest
-        trailing_stop = None
-        if atr_at_entry is not None:
-            trailing_stop = highest_close - (atr_at_entry * 2.0)
         active_signal = {
             "id": sig["id"],
             "entry_price": sig["entry_price"],
-            "atr_at_entry": atr_at_entry,
-            "highest_close": highest_close,
-            "trailing_stop": trailing_stop,
+            "atr_at_entry": sig.get("atr_at_entry"),
             "direction": sig["direction"],
             "created_at": sig.get("created_at"),
             "current_close": current_close,
@@ -528,15 +519,14 @@ def _build_spx_momentum_html(spx_data: dict, spx_signal_rows: str, spx_signal_co
     if sig:
         entry = sig["entry_price"]
         atr_entry = sig["atr_at_entry"]
-        trail = sig["trailing_stop"]
-        highest = sig["highest_close"]
         cur = sig.get("current_close")
+        live_rsi = spx_data.get("current_rsi")
 
         entry_display = f"{entry:.2f}"
         atr_entry_display = f"{atr_entry:.6f}" if atr_entry is not None else "N/A"
-        trail_display = f"{trail:.2f}" if trail is not None else "N/A"
-        highest_display = f"{highest:.2f}"
         cur_display = f"{cur:.2f}" if cur is not None else "N/A"
+        rsi_display = f"{live_rsi:.4f}" if live_rsi is not None else "N/A"
+        rsi_color = "#fca5a5" if live_rsi is not None and live_rsi < 70 else "#6ee7b7"
         pnl = ""
         if cur is not None and entry:
             diff = cur - entry
@@ -553,20 +543,18 @@ def _build_spx_momentum_html(spx_data: dict, spx_signal_rows: str, spx_signal_co
                     <div class="stat-value" style="font-size:1.3rem;">{entry_display}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">Fixed ATR (at entry)</div>
-                    <div class="stat-value" style="font-size:1.3rem;">{atr_entry_display}</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Trailing Stop Level</div>
-                    <div class="stat-value" style="font-size:1.3rem;color:#fbbf24;">{trail_display}</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Highest Close</div>
-                    <div class="stat-value" style="font-size:1.3rem;">{highest_display}</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Current Close</div>
+                    <div class="stat-label">Current Close (30m)</div>
                     <div class="stat-value" style="font-size:1.3rem;">{cur_display}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Live RSI(20)</div>
+                    <div class="stat-value" style="font-size:1.3rem;color:{rsi_color};">{rsi_display}</div>
+                    <div class="stat-label" style="margin-top:4px;">Exit when &lt; 70</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Ref ATR(100) at Entry</div>
+                    <div class="stat-value" style="font-size:1.1rem;color:#94a3b8;">{atr_entry_display}</div>
+                    <div class="stat-label" style="margin-top:4px;">Reference only — not used for exit</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">P&L</div>
@@ -627,13 +615,13 @@ def _build_spx_momentum_html(spx_data: dict, spx_signal_rows: str, spx_signal_co
         </div>
     </div>
     <div class="timezone-note" style="margin-top:16px;">
-        <strong>Strategy Rules:</strong>
+        <strong>Strategy Rules (QuantConnect Validated):</strong>
         <ul>
-            <li><strong>Entry:</strong> LONG when prev RSI(20) &lt; 70 AND current RSI(20) &ge; 70 (during ARCA session)</li>
-            <li><strong>Exit (RSI):</strong> Close when prev RSI(20) &ge; 70 AND current RSI(20) &lt; 70</li>
-            <li><strong>Exit (Trailing Stop):</strong> Close when price &lt; highest_close - (ATR_at_entry &times; 2)</li>
-            <li><strong>ATR:</strong> Fixed at entry value for the duration of the trade</li>
-            <li><strong>Session:</strong> Only evaluates during ARCA hours (9:30 AM - 3:30 PM ET, last valid candle)</li>
+            <li><strong>Entry:</strong> LONG when RSI(20) &gt; 70 <em>and</em> D1 latest close &gt; D1 SMA(200), during ARCA session (09:30&ndash;15:30 ET)</li>
+            <li><strong>SMA Filter:</strong> Uses the most-recent <em>daily</em> candle close vs. SMA(200) &mdash; intraday 30m price is used for RSI only</li>
+            <li><strong>Exit:</strong> Close LONG when RSI(20) &lt; 70 (simple threshold, no crossover required)</li>
+            <li><strong>ATR(100):</strong> Stored as a reference value at entry; <em>not used</em> for exit decisions</li>
+            <li><strong>Session:</strong> Evaluates every 30 minutes during ARCA hours; skips candles outside 09:30&ndash;15:30 ET</li>
         </ul>
     </div>
     """
@@ -2771,8 +2759,8 @@ def _build_signal_analysis_html(data: dict) -> str:
     </div>
 
     <div class="settings-section" style="margin-bottom:20px;">
-        <h3>SP500 Momentum <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">SPX | Scheduler: every 30m | LONG only | RSI(20) &gt; 70 entry</span></h3>
-        <p style="color:#94a3b8;font-size:13px;margin:4px 0 8px;">Entry: RSI(20) crosses above 70 on 30m candles during ARCA session (09:30&ndash;15:30 ET)</p>
+        <h3>SP500 Momentum <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">SPX | Scheduler: every 30m | LONG only | RSI(20) &gt; 70 + D1 SMA200 filter</span></h3>
+        <p style="color:#94a3b8;font-size:13px;margin:4px 0 8px;">Entry: RSI(20) &gt; 70 AND D1 close &gt; D1 SMA(200) during ARCA session (09:30&ndash;15:30 ET) | Exit: RSI(20) &lt; 70</p>
         {spx_detail_html}
     </div>
 
