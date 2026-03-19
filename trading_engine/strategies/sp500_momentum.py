@@ -161,14 +161,10 @@ class SP500MomentumStrategy(BaseStrategy):
         atr_values = IndicatorEngine.atr(highs, lows, closes, ATR_PERIOD)
 
         current_rsi = rsi_values[-1]
-        prev_rsi = rsi_values[-2] if len(rsi_values) >= 2 else None
         atr_val = atr_values[-1]
 
         logger.info(f"[SP500-MOM] {asset} | price={current_close:.2f}")
-        if prev_rsi is not None:
-            logger.info(f"[SP500-MOM] {asset} | RSI({RSI_PERIOD}): current={current_rsi:.4f}, prev={prev_rsi:.4f}")
-        else:
-            logger.info(f"[SP500-MOM] {asset} | RSI({RSI_PERIOD}): current={current_rsi}, prev=None")
+        logger.info(f"[SP500-MOM] {asset} | RSI({RSI_PERIOD}): current={current_rsi:.4f}")
         if atr_val is not None:
             logger.info(f"[SP500-MOM] {asset} | ATR({ATR_PERIOD}): {atr_val:.5f}")
         else:
@@ -319,12 +315,7 @@ class SP500MomentumStrategy(BaseStrategy):
             asset = pos["asset"]
             pos_id = pos["id"]
             entry_price = pos["entry_price"]
-            atr_at_entry = pos["atr_at_entry"]
             logger.info(f"[SP500-MOM-EXIT] Position #{pos_id} | {asset} | entry={entry_price:.2f}")
-
-            if atr_at_entry is None:
-                logger.warning(f"[SP500-MOM-EXIT] Position #{pos_id} | No atr_at_entry - skipping")
-                continue
 
             advance_quote = self._get_advance_price(asset)
 

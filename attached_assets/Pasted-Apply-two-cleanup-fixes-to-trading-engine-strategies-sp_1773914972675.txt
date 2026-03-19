@@ -1,0 +1,69 @@
+Apply two cleanup fixes to trading_engine/strategies/sp500_momentum.py.
+No other changes — do not touch any logic, constants, method signatures,
+imports, or any other file.
+
+─────────────────────────────────────────────
+FIX 1 — Remove dead atr_at_entry guard in check_exits()
+─────────────────────────────────────────────
+
+In check_exits(), inside the for-loop over positions, make these
+two removals in order:
+
+Step A: Remove the atr_at_entry variable assignment.
+
+  REMOVE this exact line:
+    atr_at_entry = pos["atr_at_entry"]
+
+Step B: Remove the atr_at_entry None guard block immediately after it.
+
+  REMOVE these exact lines:
+    if atr_at_entry is None:
+        logger.warning(f"[SP500-MOM-EXIT] Position #{pos_id} | No atr_at_entry - skipping")
+        continue
+
+After removal the top of the loop body should read:
+    asset = pos["asset"]
+    pos_id = pos["id"]
+    entry_price = pos["entry_price"]
+    logger.info(f"[SP500-MOM-EXIT] Position #{pos_id} | {asset} | entry={entry_price:.2f}")
+
+  followed directly by the advance_quote and candle fetch.
+
+─────────────────────────────────────────────
+FIX 2 — Remove dead prev_rsi log branch in evaluate()
+─────────────────────────────────────────────
+
+prev_rsi is computed but only used in a diagnostic log block that
+adds noise without affecting any decision. The entry condition now
+uses only current_rsi, and check_exits() does not use prev_rsi at all.
+
+Step A: Remove the prev_rsi assignment.
+
+  REMOVE this exact line:
+    prev_rsi = rsi_values[-2] if len(rsi_values) >= 2 else None
+
+Step B: Replace the conditional prev_rsi log block with a single
+        clean log line that only shows current_rsi.
+
+  REMOVE these exact lines:
+    if prev_rsi is not None:
+        logger.info(f"[SP500-MOM] {asset} | RSI({RSI_PERIOD}): current={current_rsi:.4f}, prev={prev_rsi:.4f}")
+    else:
+        logger.info(f"[SP500-MOM] {asset} | RSI({RSI_PERIOD}): current={current_rsi}, prev=None")
+
+  REPLACE with:
+    logger.info(f"[SP500-MOM] {asset} | RSI({RSI_PERIOD}): current={current_rsi:.4f}")
+
+─────────────────────────────────────────────
+VERIFICATION CHECKLIST (confirm internally before saving)
+─────────────────────────────────────────────
+[ ] atr_at_entry = pos["atr_at_entry"] is gone from check_exits()
+[ ] The atr_at_entry is None guard block is gone from check_exits()
+[ ] check_exits() loop still has asset, pos_id, entry_price assignments
+[ ] entry_price log line immediately follows the three assignments
+[ ] prev_rsi = rsi_values[-2] ... line is gone from evaluate()
+[ ] The if/else prev_rsi log block is gone from evaluate()
+[ ] Single RSI log line present: logger.info(f"... RSI({RSI_PERIOD}): current={current_rsi:.4f}")
+[ ] current_rsi assignment line is untouched: current_rsi = rsi_values[-1]
+[ ] No other lines were changed in either method
+[ ] File is syntactically valid Python
