@@ -1,0 +1,270 @@
+Update trading_engine/strategies/sp500_momentum.py to align entry and exit 
+logic with the QuantConnect reference algorithm below. Keep all existing 
+infrastructure: CacheLayer, database calls, SignalResult, idempotency guards, 
+ARCA session gate, logging patterns, check_exits() structure, and 
+_get_advance_price(). Only change the signal conditions themselves.
+
+QC REFERENCE ALGORITHM LOGIC:
+  Entry:  rsi(20) > 70  AND  current_price > D1 SMA200  AND  not already long
+  Exit:   rsi(20) < 70  (simple threshold, no crossover required)
+  No ATR, no trailing stop, no crossover detection
+
+═══════════════════════════════════════════════════════════
+CHANGE 1 — ADD D1 SMA200 FILTER
+═══════════════════════════════════════════════════════════
+
+Add SMA200 constant at the top of the file with the other constants:
+  SMA_PERIOD = 200
+
+In evaluate(), after computing rsi_values and before any entry/exit logic,
+add the D1 SMA200 computation:
+
+  # Fetch D1 candles for SMA200 filter
+  try:
+      d1_candles = self.cache.get_candles(asset, "D1", 250)
+  except Exception as e:
+      logger.error(f"[SP500-MOM] {asset} | Exception fetching D1 candles for SMA200: {e}")
+      return SignalResult()
+
+  if len(d1_candles) < SMA_PERIOD:
+      logger.warning(
+          f"[SP500-MOM] {asset} | Insufficient D1 candles for SMA200: "
+          f"{len(d1_candles)} (need {SMA_PERIOD})"
+      )
+      return SignalResult()
+
+  d1_closes = [float(c["close"]) for c in d1_candles]
+  sma200_vals = IndicatorEngine.sma(d1_closes, SMA_PERIOD)
+  sma200_val = sma200_vals[-1] if sma200_vals and sma200_vals[-1] is not None else None
+
+  if sma200_val is None:
+      logger.warning(f"[SP500-MOM] {asset} | D1 SMA200 returned None — skipping")
+      return SignalResult()
+
+  above_sma200 = current_close > sma200_val
+  logger.info(
+      f"[SP500-MOM] {asset} | D1 SMA200={sma200_val:.2f} | "
+      f"price={current_close:.2f} | above_sma200={above_sma200}"
+  )
+
+═══════════════════════════════════════════════════════════
+CHANGE 2 — REPLACE ENTRY CONDITION (crossover → simple threshold)
+═══════════════════════════════════════════════════════════
+
+Remove these four variables and the log lines that reference them:
+  cond_prev_below = prev_rsi < RSI_THRESHOLD
+  cond_curr_above = current_rsi >= RSI_THRESHOLD
+  rsi_crosses_above = cond_prev_below and cond_curr_above
+
+  logger.info(f"[SP500-MOM] {asset} | Condition 1 - Prev RSI ({prev_rsi:.4f}) < {RSI_THRESHOLD}: {cond_prev_below}")
+  logger.info(f"[SP500-MOM] {asset} | Condition 2 - Current RSI ({current_rsi:.4f}) >= {RSI_THRESHOLD}: {cond_curr_above}")
+  logger.info(f"[SP500-MOM] {asset} | RSI cross above {RSI_THRESHOLD}: {rsi_crosses_above}")
+
+  if not rsi_crosses_above:
+      logger.info(f"[SP500-MOM] {asset} | Entry conditions not met - no action")
+      return SignalResult()
+
+Replace with:
+  rsi_above_threshold = current_rsi > RSI_THRESHOLD
+  entry_conditions_met = rsi_above_threshold and above_sma200
+
+  logger.info(
+      f"[SP500-MOM] {asset} | Entry check: "
+      f"RSI({RSI_PERIOD})={current_rsi:.4f} > {RSI_THRESHOLD}: {rsi_above_threshold} | "
+      f"price > D1 SMA200: {above_sma200} | "
+      f"all_met={entry_conditions_met}"
+  )
+
+  if not entry_conditions_met:
+      logger.info(f"[SP500-MOM] {asset} | Entry conditions not met — no action")
+      return SignalResult()
+
+Also remove prev_rsi from the None-check since it is no longer needed for entry:
+
+  Change:
+    if any(v is None for v in [current_rsi, prev_rsi, atr_val]):
+        none_indicators = []
+        if current_rsi is None: none_indicators.append("RSI_current")
+        if prev_rsi is None: none_indicators.append("RSI_prev")
+        if atr_val is None: none_indicators.append(f"ATR{ATR_PERIOD}")
+        logger.warning(f"[SP500-MOM] {asset} | Indicators returned None: {none_indicators}")
+        return SignalResult()
+
+  To:
+    if current_rsi is None or atr_val is None:
+        none_indicators = []
+        if current_rsi is None: none_indicators.append("RSI_current")
+        if atr_val is None: none_indicators.append(f"ATR{ATR_PERIOD}")
+        logger.warning(f"[SP500-MOM] {asset} | Indicators returned None: {none_indicators}")
+        return SignalResult()
+
+Keep prev_rsi computation and its variable — it is still used in check_exits()
+for the RSI crossover exit check. Do not remove prev_rsi from the rsi_values 
+computation block.
+
+═══════════════════════════════════════════════════════════
+CHANGE 3 — REPLACE EXIT CONDITION IN check_exits()
+         (crossover → simple threshold, remove trailing stop)
+═══════════════════════════════════════════════════════════
+
+In check_exits(), for each position, currently two exit triggers exist:
+  - trailing_stop_hit  (close < highest - 2×ATR)
+  - rsi_cross_down     (prev_rsi >= 70 AND curr_rsi < 70)
+
+Replace both with a single simple threshold exit:
+  rsi_below_threshold = current_rsi is not None and current_rsi < RSI_THRESHOLD
+
+Remove these lines entirely from check_exits():
+  trailing_stop_level = highest_close - (atr_at_entry * TRAILING_STOP_ATR_MULT)
+  trailing_stop_hit = current_close < trailing_stop_level
+
+  rsi_cross_down = False
+  if current_rsi is not None and prev_rsi is not None:
+      rsi_cross_down = prev_rsi >= RSI_THRESHOLD and current_rsi < RSI_THRESHOLD
+
+  logger.info(
+      f"[SP500-MOM-EXIT] Position #{pos_id} | "
+      f"trailing_stop_hit={trailing_stop_hit} ..."
+  )
+
+  if trailing_stop_hit and rsi_cross_down: ...
+  elif trailing_stop_hit: ...
+  elif rsi_cross_down: ...
+
+Replace the entire exit decision block with:
+
+  rsi_below_threshold = current_rsi is not None and current_rsi < RSI_THRESHOLD
+
+  logger.info(
+      f"[SP500-MOM-EXIT] Position #{pos_id} | "
+      f"close={current_close:.2f} | RSI({RSI_PERIOD})={current_rsi:.4f} | "
+      f"exit_trigger(RSI < {RSI_THRESHOLD})={rsi_below_threshold}"
+  )
+
+  if rsi_below_threshold:
+      exit_reason = (
+          f"RSI below {RSI_THRESHOLD} | "
+          f"RSI={current_rsi:.4f} | close={current_close:.2f}"
+      )
+      logger.info(f"[SP500-MOM-EXIT] Position #{pos_id} | EXIT: RSI < {RSI_THRESHOLD}")
+      active_sigs = get_active_signals(strategy_name=STRATEGY_NAME, asset=asset)
+      for sig in active_sigs:
+          close_signal(sig["id"], exit_reason)
+      close_position(STRATEGY_NAME, asset)
+      closed_signals.append({
+          **pos,
+          "exit_price": current_close,
+          "exit_reason": "rsi_below_threshold",
+      })
+  else:
+      logger.info(
+          f"[SP500-MOM-EXIT] Position #{pos_id} | "
+          f"Holding — RSI {current_rsi:.4f} still >= {RSI_THRESHOLD}"
+      )
+
+═══════════════════════════════════════════════════════════
+CHANGE 4 — REMOVE TRAILING STOP FROM evaluate() ACTIVE POSITION BLOCK
+═══════════════════════════════════════════════════════════
+
+In evaluate(), inside the block that handles open_position_data (existing LONG),
+remove all trailing stop display logic:
+
+  Remove:
+    pos_atr = open_position_data.get("atr_at_entry")
+    stored_highest = open_position_data.get("highest_price_since_entry") ...
+    if current_close > stored_highest:
+        update_position_tracking(pos_id, highest_price=current_close)
+        logger.info(f"... Peak updated ...")
+    else:
+        logger.info(f"... Peak unchanged ...")
+    if pos_atr is not None:
+        new_highest = max(stored_highest, current_close)
+        trailing_stop = new_highest - (TRAILING_STOP_ATR_MULT * pos_atr)
+        logger.info(f"... ATR_at_entry={pos_atr:.6f} (FIXED) | trailing_stop={trailing_stop:.2f}")
+
+  Replace with a simple holding log:
+    logger.info(
+        f"[SP500-MOM] {asset} | ACTIVE LONG #{pos_id} | "
+        f"entry={open_position_data['entry_price']:.2f} | "
+        f"current={current_close:.2f} | "
+        f"RSI({RSI_PERIOD})={current_rsi:.4f} | "
+        f"exit_when_RSI_below={RSI_THRESHOLD}"
+    )
+
+═══════════════════════════════════════════════════════════
+CHANGE 5 — REMOVE TRAILING STOP FROM check_exits() PEAK TRACKING
+═══════════════════════════════════════════════════════════
+
+In check_exits(), remove these peak-tracking lines entirely:
+  stored_highest = pos.get("highest_price_since_entry") or entry_price
+  highest_close = max(stored_highest, current_close)
+  if highest_close > stored_highest:
+      update_position_tracking(pos_id, highest_price=highest_close)
+      logger.info(f"... Peak updated ...")
+
+Also remove update_position_tracking from the imports at the top of the file
+if it is no longer used anywhere else in this file:
+  from trading_engine.database import (
+      ...
+      update_position_tracking,   ← REMOVE THIS LINE
+      ...
+  )
+
+═══════════════════════════════════════════════════════════
+CHANGE 6 — UPDATE SIGNAL GENERATION LOG AND ENTRY SIGNAL STOP LOSS
+═══════════════════════════════════════════════════════════
+
+QC algo has no stop loss. However your DB schema requires stop_loss to be 
+set. Keep the ATR-based stop_loss in the signal dict for DB storage only — 
+it is not used for exit decisions post this change (exit is RSI-only).
+
+Update the log line for signal generation from:
+  f"... GENERATING SIGNAL: BUY @ {current_close:.2f} | "
+  f"initial_trailing_stop={stop_loss:.2f} (entry - {TRAILING_STOP_ATR_MULT}x ATR)"
+
+To:
+  f"... GENERATING SIGNAL: BUY @ {current_close:.2f} | "
+  f"RSI({RSI_PERIOD})={current_rsi:.4f} > {RSI_THRESHOLD} | "
+  f"above_D1_SMA200=True | "
+  f"ref_stop={stop_loss:.2f} (ATR-based, not used for exit — RSI exit only)"
+
+Update the log line for ATR from:
+  f"[SP500-MOM] {asset} | ATR({ATR_PERIOD}) at entry = {atr_val:.6f} "
+  f"(FIXED for trade lifetime)"
+
+To:
+  f"[SP500-MOM] {asset} | ATR({ATR_PERIOD})={atr_val:.6f} "
+  f"(reference only — exit is RSI-based, not ATR trailing stop)"
+
+═══════════════════════════════════════════════════════════
+CHANGE 7 — REMOVE TRAILING_STOP_ATR_MULT CONSTANT
+═══════════════════════════════════════════════════════════
+
+Remove this constant from the top of the file since trailing stop is gone:
+  TRAILING_STOP_ATR_MULT = 2.0
+
+ATR is still computed and stored (for reference stop_loss in DB). 
+ATR_PERIOD = 100 stays. atr_val is still used for stop_loss in the signal 
+dict only. The constant TRAILING_STOP_ATR_MULT is no longer needed anywhere.
+
+If removing it causes any reference error elsewhere in the file, replace 
+that reference with the literal value 2.0 and add an inline comment 
+# legacy reference.
+
+═══════════════════════════════════════════════════════════
+DO NOT CHANGE
+═══════════════════════════════════════════════════════════
+- STRATEGY_NAME, SYMBOL, TIMEFRAME constants
+- RSI_PERIOD = 20, RSI_THRESHOLD = 70, ATR_PERIOD = 100
+- MIN_BARS_REQUIRED (keep as is, it guards the RSI computation)
+- ARCA session gate (_is_within_arca_session) — keep exactly as-is
+- _get_advance_price() — keep exactly as-is
+- All idempotency guards: has_any_open_signal_for_asset, has_open_signal,
+  signal_exists — keep in exact current order
+- close_opposite_signal_if_exists call before insert_signal
+- insert_signal, db_open_position, close_signal, close_position calls
+- All logging prefixes [SP500-MOM] and [SP500-MOM-EXIT]
+- The signal dict structure (keep stop_loss field, keep atr_at_entry field)
+- check_exits() overall loop structure (positions → candles → rsi → decision)
+- prev_rsi computation (still needed in check_exits for logging context)
+- _get_advance_price() calls in both evaluate() and check_exits()
