@@ -193,15 +193,18 @@ class SP500MomentumStrategy(BaseStrategy):
         d1_closes = [float(c["close"]) for c in d1_candles]
         sma200_vals = IndicatorEngine.sma(d1_closes, SMA_PERIOD)
         sma200_val = sma200_vals[-1] if sma200_vals and sma200_vals[-1] is not None else None
+        d1_latest_close = d1_closes[-1]
 
         if sma200_val is None:
             logger.warning(f"[SP500-MOM] {asset} | D1 SMA200 returned None — skipping")
             return SignalResult()
 
-        above_sma200 = current_close > sma200_val
+        above_sma200 = d1_latest_close > sma200_val
         logger.info(
             f"[SP500-MOM] {asset} | D1 SMA200={sma200_val:.2f} | "
-            f"price={current_close:.2f} | above_sma200={above_sma200}"
+            f"d1_latest_close={d1_latest_close:.2f} | "
+            f"above_sma200={above_sma200} | "
+            f"(intraday_30m={current_close:.2f} used for RSI only)"
         )
 
         if open_position_data and open_position_data.get("direction") == "BUY":
@@ -263,7 +266,7 @@ class SP500MomentumStrategy(BaseStrategy):
         logger.info(
             f"[SP500-MOM] {asset} | GENERATING SIGNAL: BUY @ {current_close:.2f} | "
             f"RSI({RSI_PERIOD})={current_rsi:.4f} > {RSI_THRESHOLD} | "
-            f"above_D1_SMA200=True | "
+            f"above_D1_SMA200=True (d1_close={d1_latest_close:.2f}) | "
             f"ref_stop={stop_loss:.2f} (ATR-based, not used for exit — RSI exit only)"
         )
 

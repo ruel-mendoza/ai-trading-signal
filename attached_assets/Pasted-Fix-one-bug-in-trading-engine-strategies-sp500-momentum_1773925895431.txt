@@ -1,0 +1,74 @@
+Fix one bug in trading_engine/strategies/sp500_momentum.py.
+No other changes — do not touch any other logic, constants,
+method signatures, or any other file.
+
+─────────────────────────────────────────────
+BUG — SMA200 filter compares 30m intraday price instead of
+      latest D1 close against the D1 SMA200
+─────────────────────────────────────────────
+
+Rule: "Only allow LONG entry if latest daily close is above SMA 200"
+Problem: above_sma200 currently uses current_close (30m advance
+price) instead of the latest value from d1_closes (D1 candle close).
+
+─────────────────────────────────────────────
+STEP 1 — Add d1_latest_close variable
+─────────────────────────────────────────────
+
+Find this exact line in evaluate():
+  sma200_val = sma200_vals[-1] if sma200_vals and sma200_vals[-1] is not None else None
+
+Immediately after it, add:
+  d1_latest_close = d1_closes[-1]
+
+─────────────────────────────────────────────
+STEP 2 — Fix above_sma200 to use d1_latest_close
+─────────────────────────────────────────────
+
+FIND this exact line:
+  above_sma200 = current_close > sma200_val
+
+REPLACE WITH:
+  above_sma200 = d1_latest_close > sma200_val
+
+─────────────────────────────────────────────
+STEP 3 — Fix the SMA200 log line
+─────────────────────────────────────────────
+
+FIND:
+  logger.info(
+      f"[SP500-MOM] {asset} | D1 SMA200={sma200_val:.2f} | "
+      f"price={current_close:.2f} | above_sma200={above_sma200}"
+  )
+
+REPLACE WITH:
+  logger.info(
+      f"[SP500-MOM] {asset} | D1 SMA200={sma200_val:.2f} | "
+      f"d1_latest_close={d1_latest_close:.2f} | "
+      f"above_sma200={above_sma200} | "
+      f"(intraday_30m={current_close:.2f} used for RSI only)"
+  )
+
+─────────────────────────────────────────────
+STEP 4 — Fix the entry signal log line
+─────────────────────────────────────────────
+
+FIND this exact string inside the GENERATING SIGNAL log:
+  f"above_D1_SMA200=True | "
+
+REPLACE WITH:
+  f"above_D1_SMA200=True (d1_close={d1_latest_close:.2f}) | "
+
+─────────────────────────────────────────────
+VERIFICATION CHECKLIST (confirm internally before saving)
+─────────────────────────────────────────────
+[ ] d1_latest_close = d1_closes[-1] is assigned immediately
+    after sma200_val is assigned
+[ ] above_sma200 uses d1_latest_close > sma200_val
+[ ] current_close is NOT used in the above_sma200 comparison
+[ ] current_close still used for: RSI input, entry_price in
+    signal dict, stop_loss computation, advance quote display
+[ ] SMA200 log shows d1_latest_close and intraday_30m separately
+[ ] Entry signal log shows d1_close value in above_D1_SMA200
+[ ] No other lines were changed
+[ ] File is syntactically valid Python
