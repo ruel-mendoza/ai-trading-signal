@@ -38,6 +38,8 @@ ALL_ASSETS = []
 for group in TARGET_ASSETS.values():
     ALL_ASSETS.extend(group)
 
+FOREX_ASSETS = {"EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"}
+
 TIMEFRAME_D1 = "D1"
 TIMEFRAME_H4 = "4H"
 TIMEFRAME_H1 = "1H"
@@ -55,7 +57,6 @@ MIN_H1_BARS = 20
 SL_ATR_MULT = 0.5
 TP_ATR_MULT = 3.0
 STRUCTURAL_LOOKBACK_H1 = 24
-STRUCTURAL_PIP_BUFFER = 0.0002
 
 
 @dataclass
@@ -145,6 +146,15 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
     @property
     def name(self) -> str:
         return STRATEGY_NAME
+
+    def _get_pip_buffer(self, asset: str) -> float:
+        """2-pip buffer matching QC algo.
+        forex: 0.0001 pip × 2 = 0.0002
+        indices / crypto / commodities: 0.01 × 2 = 0.02
+        """
+        if asset in FOREX_ASSETS:
+            return 0.0002
+        return 0.02
 
     def _fetch_timeframe(self, asset: str, timeframe: str, limit: int = 300) -> Optional[TimeframeData]:
         try:
@@ -434,7 +444,7 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             )
             return False
 
-        # Cond 3: H4 EMA200 Slope Decelerating (accelerating downward)
+        # Cond 3: H4 EMA200 Slope Accelerating Downward
         recent_slope, previous_slope = self._compute_h4_ema200_slope(ind)
         if recent_slope is None or previous_slope is None:
             logger.warning(f"[MTF-EMA] {asset} | SHORT Cond 3 — H4 EMA200 slope: insufficient data (need 9 values)")
@@ -446,7 +456,7 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             return False
         cond3 = recent_slope < 0 and recent_slope < previous_slope
         logger.info(
-            f"[MTF-EMA] {asset} | SHORT Cond 3 — H4 EMA200 slope accelerating: "
+            f"[MTF-EMA] {asset} | SHORT Cond 3 — H4 EMA200 slope accelerating downward: "
             f"recent={recent_slope:.5f} < prev={previous_slope:.5f}: {cond3}"
         )
         if not cond3:
@@ -511,10 +521,11 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             return None
 
         lowest = min(lows_below_ema)
-        structural_sl = lowest - STRUCTURAL_PIP_BUFFER
+        pip_buffer = self._get_pip_buffer(asset)
+        structural_sl = lowest - pip_buffer
         logger.info(
             f"[MTF-EMA] {asset} | LONG structural stop: "
-            f"lowest H1 low below H4 EMA50 = {lowest:.5f} - {STRUCTURAL_PIP_BUFFER} pip buffer = {structural_sl:.5f} | "
+            f"lowest H1 low below H4 EMA50 = {lowest:.5f} - {pip_buffer} pip buffer = {structural_sl:.5f} | "
             f"distance from entry = {entry_price - structural_sl:.5f}"
         )
         return structural_sl
@@ -533,10 +544,11 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             return None
 
         highest = max(highs_above_ema)
-        structural_sl = highest + STRUCTURAL_PIP_BUFFER
+        pip_buffer = self._get_pip_buffer(asset)
+        structural_sl = highest + pip_buffer
         logger.info(
             f"[MTF-EMA] {asset} | SHORT structural stop: "
-            f"highest H1 high above H4 EMA50 = {highest:.5f} + {STRUCTURAL_PIP_BUFFER} pip buffer = {structural_sl:.5f} | "
+            f"highest H1 high above H4 EMA50 = {highest:.5f} + {pip_buffer} pip buffer = {structural_sl:.5f} | "
             f"distance from entry = {structural_sl - entry_price:.5f}"
         )
         return structural_sl
@@ -918,7 +930,7 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
 
             # Fetch H1 candles for current price and EMA20
             try:
-                h1_candles = self.cache.get_candles(asset, TIMEFRAME_H1, 50)
+                h1_candles = self.cache.get_candles(asset, TIMEFRAME_H1, 300)
             except Exception as e:
                 logger.error(
                     f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
@@ -926,7 +938,7 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
                 )
                 continue
 
-            if not h1_candles or len(h1_candles) < EMA_20:
+            if not h1_candles or len(h1_candles) < EMA_20 + 1:
                 logger.warning(
                     f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
                     f"Insufficient H1 candles for EMA20: {len(h1_candles) if h1_candles else 0}"
