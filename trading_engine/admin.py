@@ -641,7 +641,7 @@ def _build_spx_momentum_html(spx_data: dict, spx_signal_rows: str, spx_signal_co
 
 def _get_mtf_ema_data() -> dict:
     from zoneinfo import ZoneInfo
-    from trading_engine.strategies.multi_timeframe import TARGET_ASSETS, HISTORICAL_DIP_H4_BARS
+    from trading_engine.strategies.multi_timeframe import TARGET_ASSETS
     et_zone = ZoneInfo("America/New_York")
     et_now = datetime.now(et_zone)
     ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
@@ -658,9 +658,12 @@ def _get_mtf_ema_data() -> dict:
                 "h1_close": None, "h1_count": 0,
                 "cond1_d1_filter_long": False,
                 "cond1_d1_filter_short": False,
-                "cond2_dip_found": False, "cond2_within_atr": False, "cond2_recovered": False,
-                "cond2_historical_dip": False, "cond2_max_breach": None,
-                "cond2_dip_timestamp": None,
+                "cond2_d1_slope": False,
+                "cond3_h4_slope": False,
+                "cond3_h4_recent_slope": None,
+                "cond3_h4_prev_slope": None,
+                "cond4_proximity": False,
+                "cond4_proximity_distance": None,
                 "long_ready": False, "short_ready": False,
             }
 
@@ -671,7 +674,7 @@ def _get_mtf_ema_data() -> dict:
             sym_info["h4_count"] = len(h4_candles)
             sym_info["h1_count"] = len(h1_candles)
 
-            if len(d1_candles) >= 200 and len(h4_candles) >= 200 and len(h1_candles) >= 20:
+            if len(d1_candles) >= 200 and len(h4_candles) >= 210 and len(h1_candles) >= 20:
                 d1_closes = [c["close"] for c in d1_candles]
                 h4_closes = [c["close"] for c in h4_candles]
                 h4_highs = [c["high"] for c in h4_candles]
@@ -699,56 +702,61 @@ def _get_mtf_ema_data() -> dict:
                 sym_info["cond1_d1_filter_long"] = cond1_long
                 sym_info["cond1_d1_filter_short"] = cond1_short
 
-                n = HISTORICAL_DIP_H4_BARS
-                h4_closes_recent = h4_closes[-(n + 1):-1] if len(h4_closes) > n else h4_closes[:-1]
-                h4_timestamps = [c.get("timestamp", "") for c in h4_candles]
-                h4_ts_recent = h4_timestamps[-(n + 1):-1] if len(h4_timestamps) > n else h4_timestamps[:-1]
+                # Cond 2: D1 EMA200 slope
+                d1_ema200_prev = d1_ema200[-2] if len(d1_ema200) >= 2 else None
+                d1_slope_rising = (d1_ema200[-1] is not None and d1_ema200_prev is not None
+                                   and d1_ema200[-1] > d1_ema200_prev)
+                d1_slope_falling = (d1_ema200[-1] is not None and d1_ema200_prev is not None
+                                    and d1_ema200[-1] < d1_ema200_prev)
+                if cond1_long:
+                    sym_info["cond2_d1_slope"] = d1_slope_rising
+                elif cond1_short:
+                    sym_info["cond2_d1_slope"] = d1_slope_falling
+
+                # Cond 3: H4 EMA200 slope acceleration
+                h4_recent_slope = None
+                h4_prev_slope = None
+                cond3 = False
+                if len(h4_ema200) >= 9:
+                    try:
+                        rs = float(h4_ema200[-1]) - float(h4_ema200[-8])
+                        ps = float(h4_ema200[-2]) - float(h4_ema200[-9])
+                        h4_recent_slope = rs
+                        h4_prev_slope = ps
+                        if cond1_long:
+                            cond3 = rs > 0 and rs > ps
+                        elif cond1_short:
+                            cond3 = rs < 0 and rs < ps
+                    except (TypeError, ValueError):
+                        pass
+                sym_info["cond3_h4_slope"] = cond3
+                sym_info["cond3_h4_recent_slope"] = h4_recent_slope
+                sym_info["cond3_h4_prev_slope"] = h4_prev_slope
+
+                # Cond 4: H4 EMA50 proximity
                 ema50_val = sym_info["h4_ema50"]
                 atr_val = sym_info["h4_atr100"]
-                h4_close_val = sym_info["h4_close"]
+                h1_close_val = h1_closes[-1]
+                cond4 = False
+                proximity_dist = None
+                if ema50_val is not None and atr_val is not None:
+                    if cond1_long:
+                        dist = ema50_val - h1_close_val
+                        proximity_dist = dist
+                        cond4 = h1_close_val < ema50_val and dist <= atr_val
+                    elif cond1_short:
+                        dist = h1_close_val - ema50_val
+                        proximity_dist = dist
+                        cond4 = h1_close_val > ema50_val and dist <= atr_val
+                sym_info["cond4_proximity"] = cond4
+                sym_info["cond4_proximity_distance"] = proximity_dist
 
-                if cond1_long and ema50_val is not None:
-                    max_breach = 0.0
-                    deepest_idx = None
-                    dip_found = False
-                    for i, c in enumerate(h4_closes_recent):
-                        if c < ema50_val:
-                            breach = ema50_val - c
-                            if breach > max_breach:
-                                max_breach = breach
-                                deepest_idx = i
-                            dip_found = True
-                    within_atr = (atr_val is not None and max_breach <= atr_val) if dip_found else False
-                    recovered = h4_close_val is not None and h4_close_val > ema50_val
-                    sym_info["cond2_dip_found"] = dip_found
-                    sym_info["cond2_within_atr"] = within_atr
-                    sym_info["cond2_recovered"] = recovered
-                    sym_info["cond2_max_breach"] = max_breach if dip_found else None
-                    sym_info["cond2_historical_dip"] = dip_found and within_atr and recovered
-                    if deepest_idx is not None and deepest_idx < len(h4_ts_recent):
-                        sym_info["cond2_dip_timestamp"] = str(h4_ts_recent[deepest_idx])
-                    sym_info["long_ready"] = cond1_long and sym_info["cond2_historical_dip"]
-                elif cond1_short and ema50_val is not None:
-                    max_breach = 0.0
-                    deepest_idx = None
-                    rally_found = False
-                    for i, c in enumerate(h4_closes_recent):
-                        if c > ema50_val:
-                            breach = c - ema50_val
-                            if breach > max_breach:
-                                max_breach = breach
-                                deepest_idx = i
-                            rally_found = True
-                    within_atr = (atr_val is not None and max_breach <= atr_val) if rally_found else False
-                    recovered = h4_close_val is not None and h4_close_val < ema50_val
-                    sym_info["cond2_dip_found"] = rally_found
-                    sym_info["cond2_within_atr"] = within_atr
-                    sym_info["cond2_recovered"] = recovered
-                    sym_info["cond2_max_breach"] = max_breach if rally_found else None
-                    sym_info["cond2_historical_dip"] = rally_found and within_atr and recovered
-                    if deepest_idx is not None and deepest_idx < len(h4_ts_recent):
-                        sym_info["cond2_dip_timestamp"] = str(h4_ts_recent[deepest_idx])
-                    sym_info["short_ready"] = cond1_short and sym_info["cond2_historical_dip"]
+                # Cond 5: H1 EMA20 crossover — cannot evaluate statically (needs live prev bar)
+                # long_ready / short_ready based on C1–C4 only (C5 is live-only)
+                if cond1_long:
+                    sym_info["long_ready"] = cond1_long and sym_info["cond2_d1_slope"] and cond3 and cond4
+                elif cond1_short:
+                    sym_info["short_ready"] = cond1_short and sym_info["cond2_d1_slope"] and cond3 and cond4
 
             grouped_data[group_name].append(sym_info)
 
@@ -829,12 +837,9 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
         for sym in group_syms:
             dp = _dp(sym["symbol"])
             data_status = ""
-            if sym["d1_count"] < 200 or sym["h4_count"] < 200 or sym["h1_count"] < 20:
-                data_status = f'<div style="color:#fbbf24;font-size:0.8rem;margin-top:6px;">D1: {sym["d1_count"]}/200, H4: {sym["h4_count"]}/200, H1: {sym["h1_count"]}/20</div>'
+            if sym["d1_count"] < 200 or sym["h4_count"] < 210 or sym["h1_count"] < 20:
+                data_status = f'<div style="color:#fbbf24;font-size:0.8rem;margin-top:6px;">D1: {sym["d1_count"]}/200, H4: {sym["h4_count"]}/210, H1: {sym["h1_count"]}/20</div>'
             else:
-                breach_display = f'{sym["cond2_max_breach"]:.{dp}f}' if sym["cond2_max_breach"] is not None else "—"
-                dip_ts = sym.get("cond2_dip_timestamp") or "—"
-
                 trend_dir = "NEUTRAL"
                 trend_color = "#94a3b8"
                 if sym["cond1_d1_filter_long"]:
@@ -843,6 +848,12 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
                 elif sym["cond1_d1_filter_short"]:
                     trend_dir = "BEARISH"
                     trend_color = "#fca5a5"
+
+                rs = sym.get("cond3_h4_recent_slope")
+                ps = sym.get("cond3_h4_prev_slope")
+                slope_display = f"recent={rs:.5f} {'>' if sym['cond1_d1_filter_long'] else '<'} prev={ps:.5f}" if rs is not None and ps is not None else "—"
+                prox_dist = sym.get("cond4_proximity_distance")
+                prox_display = f"{prox_dist:.{dp}f}" if prox_dist is not None else "—"
 
                 data_status = f"""
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.8rem;">
@@ -855,9 +866,11 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
                 </div>
                 <div style="display:grid;grid-template-columns:1fr;gap:4px;margin-top:8px;font-size:0.8rem;border-top:1px solid #334155;padding-top:8px;">
                     <div><strong>C1 — D1 Trend Gate:</strong> EMA50 vs EMA200: <span style="color:{trend_color};font-weight:600;">{trend_dir}</span></div>
-                    <div><strong>C2 — Historical {"Rally" if sym["cond1_d1_filter_short"] else "Dip"}:</strong> {"Rally" if sym["cond1_d1_filter_short"] else "Dip"}: {_cond(sym["cond2_dip_found"])} | &le;1 ATR: {_cond(sym["cond2_within_atr"])} (breach: {breach_display}) | Recovered: {_cond(sym["cond2_recovered"])} &rarr; {_cond(sym["cond2_historical_dip"])}</div>
-                    <div style="font-size:0.75rem;color:#64748b;padding-left:4px;">Dip timestamp: {dip_ts}</div>
-                    <div style="margin-top:4px;padding-top:4px;border-top:1px solid #334155;"><strong>Signal Ready:</strong> {_cond(sym["long_ready"] or sym["short_ready"])}</div>
+                    <div><strong>C2 — D1 EMA200 Slope {"Rising" if sym["cond1_d1_filter_long"] else "Falling"}:</strong> {_cond(sym["cond2_d1_slope"])}</div>
+                    <div><strong>C3 — H4 EMA200 Slope Accelerating:</strong> {slope_display} &rarr; {_cond(sym["cond3_h4_slope"])}</div>
+                    <div><strong>C4 — H4 EMA50 Proximity:</strong> distance={prox_display} vs ATR={_fmt(sym["h4_atr100"], dp + 1)} &rarr; {_cond(sym["cond4_proximity"])}</div>
+                    <div><strong>C5 — H1 EMA20 Crossover:</strong> <span style="color:#94a3b8;font-style:italic;">N/A (requires live bar)</span></div>
+                    <div style="margin-top:4px;padding-top:4px;border-top:1px solid #334155;"><strong>Signal Ready (C1–C4):</strong> {_cond(sym["long_ready"] or sym["short_ready"])}</div>
                 </div>"""
 
             signal_badge = ""

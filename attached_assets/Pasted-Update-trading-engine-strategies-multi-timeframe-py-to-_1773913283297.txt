@@ -1,0 +1,94 @@
+Update trading_engine/strategies/multi_timeframe.py to align entry and exit logic 
+with the QuantConnect reference algorithm provided below. Keep all existing 
+infrastructure (CacheLayer, database calls, SignalResult, idempotency guards, 
+logging patterns, check_exits method structure). Only change the signal logic itself.
+
+CHANGES REQUIRED:
+
+1. ADD D1 EMA200 SLOPE CONDITION (new entry requirement for both LONG and SHORT):
+   - Compute d1_ema200_prev = second-to-last value of the D1 EMA200 series
+   - LONG: require d1_ema200_current > d1_ema200_prev (D1 EMA200 is rising)
+   - SHORT: require d1_ema200_current < d1_ema200_prev (D1 EMA200 is falling)
+   - Log this as: "[MTF-EMA] {asset} | LONG Cond 2 — D1 EMA200 slope rising: {val:.5f} > {prev:.5f}: {bool}"
+   - Renumber existing conditions accordingly (current Cond 2 becomes Cond 3, etc.)
+
+2. ADD H4 EMA200 SLOPE ACCELERATION CONDITION (new entry requirement):
+   - From the H4 EMA200 series, compute:
+       recent_slope   = ema200[-1] - ema200[-8]   (slope of last 8 bars)
+       previous_slope = ema200[-2] - ema200[-9]   (slope of previous 8 bars)
+   - LONG:  require recent_slope > 0 AND recent_slope > previous_slope
+   - SHORT: require recent_slope < 0 AND recent_slope < previous_slope
+   - This requires MIN_H4_BARS to be at least 210 (200 for EMA warmup + 9 for slope window).
+     Update MIN_H4_BARS = 210.
+   - Store h4_ema200_series (full list) in MTFIndicators as h4_ema200_series: Optional[list] = None
+   - Log as: "[MTF-EMA] {asset} | LONG Cond 3 — H4 EMA200 slope accelerating: 
+     recent={recent_slope:.5f} > prev={previous_slope:.5f}: {bool}"
+
+3. REPLACE HISTORICAL DIP CONDITION with H1 EMA20 CROSSOVER CONDITION:
+   - Remove _check_historical_dip_long, _check_historical_dip_short, DipInfo dataclass,
+     HISTORICAL_DIP_H4_BARS constant, and h4_closes_recent/h4_lows_recent/h4_highs_recent/
+     h4_timestamps_recent fields from MTFIndicators.
+   - Remove h4_lows_recent and h4_highs_recent from TimeframeData (keep the rest).
+   - Add to MTFIndicators:
+       h1_close_prev: Optional[float] = None   (already exists — keep)
+       h1_open_current: Optional[float] = None (already exists — keep)
+   - New LONG entry condition (replaces historical dip):
+       cond_h1_cross = h1_close_prev < h1_ema20 AND h1_close_current > h1_ema20 
+                       AND h1_close_current > h1_open_current  (bullish candle)
+   - New SHORT entry condition (replaces historical dip):
+       cond_h1_cross = h1_close_prev > h1_ema20 AND h1_close_current < h1_ema20 
+                       AND h1_close_current < h1_open_current  (bearish candle)
+   - Also add: LONG entry requires price < h4_ema50 AND (h4_ema50 - price) <= h4_atr
+               SHORT entry requires price > h4_ema50 AND (price - h4_ema50) <= h4_atr
+     (price proximity to H4 EMA50 — this replaces the dip proximity check)
+   - Log as: "[MTF-EMA] {asset} | LONG Cond 4 — H4 EMA50 proximity: 
+     price={price:.5f} < ema50={h4_ema50:.5f}, distance={(h4_ema50-price):.5f} <= ATR={h4_atr:.5f}: {bool}"
+             "[MTF-EMA] {asset} | LONG Cond 5 — H1 EMA20 crossover: 
+     prev_close={h1_close_prev:.5f} < ema20={h1_ema20:.5f}, curr_close={h1_close_current:.5f} > ema20, bullish={bool}: {bool}"
+
+4. UPDATE EXIT CONDITION — change from H4 EMA50 to H1 EMA20:
+   - In _check_h1_ema50_exit, _check_exit_conditions, and check_exits:
+     * LONG exit: h1_close < h1_ema20  (was: h1_close < h4_ema50)
+     * SHORT exit: h1_close > h1_ema20 (was: h1_close > h4_ema50)
+   - Rename the method _check_h1_ema50_exit → _check_h1_ema20_exit
+   - Update all log messages from "H4 EMA50" to "H1 EMA20" in exit context
+   - In check_exits, fetch h1_ema20 from H1 candles (EMA_20 period) instead of h4_ema50
+   - Update exit log prefix from "[MTF-EMA-EXIT] ... H4_EMA50" to "[MTF-EMA-EXIT] ... H1_EMA20"
+
+5. UPDATE _check_long_conditions and _check_short_conditions signatures and scorecard:
+   - New LONG scorecard order: D1Filter | D1Slope | H4Slope | Proximity | H1Cross
+   - New SHORT scorecard order: D1Filter | D1Slope | H4Slope | Proximity | H1Cross
+   - Early-exit after each failing condition (same pattern as current D1 filter gate)
+   - Return (bool, None) — remove DipInfo from return type, replace with plain bool tuple
+
+6. UPDATE _compute_indicators to populate new fields:
+   - Compute h4_ema200_vals (full list) — already done, now also store as h4_ema200_series
+   - Ensure h1_close_prev and h1_open_current are populated (they already are)
+   - Remove h4_closes_recent, h4_lows_recent, h4_highs_recent, h4_timestamps_recent 
+     computation blocks
+
+7. UPDATE _persist_entry call sites — remove dip-related metadata fields:
+   - Remove: historical_dip_timestamp, historical_dip_max_breach, historical_dip_bar_index
+   - Add: h1_ema20_at_entry, h4_ema200_recent_slope, h4_ema200_previous_slope,
+          d1_ema200_slope_rising (bool), h1_cross_confirmed (bool)
+
+8. UPDATE constants at top of file:
+   - MIN_H4_BARS = 210  (was 200)
+   - Remove: HISTORICAL_DIP_H4_BARS = 12
+   - Keep: SL_ATR_MULT, TP_ATR_MULT, STRUCTURAL_LOOKBACK_H1, STRUCTURAL_PIP_BUFFER, EMA_20, EMA_50, EMA_200, ATR_PERIOD
+
+9. UPDATE admin.py _get_mtf_ema_data() and _build_mtf_ema_html() to reflect new conditions:
+   - In _get_mtf_ema_data: replace cond2_historical_dip logic with:
+       cond2_d1_slope: bool  (d1_ema50 > d1_ema200_prev)
+       cond3_h4_slope: bool  (h4 recent_slope > prev_slope for LONG)
+       cond4_proximity: bool (price < h4_ema50 and distance <= atr)
+       cond5_h1_cross: cannot compute statically (requires live prev bar) — show as "N/A (live)"
+   - Update sym_info dict keys accordingly
+   - In _build_mtf_ema_html: update condition display rows to match new names
+   - Change "H4 EMA50" exit references to "H1 EMA20" in the strategy rules section
+
+Do not change: strategy name, TARGET_ASSETS, ALL_ASSETS, CacheLayer usage, database 
+import pattern, SignalResult return types, idempotency guard order 
+(has_open_position → has_any_open_signal_for_asset → has_open_signal → signal_exists), 
+_persist_entry/_persist_exit structure, check_exits overall loop structure, or 
+logging prefix format [MTF-EMA].
