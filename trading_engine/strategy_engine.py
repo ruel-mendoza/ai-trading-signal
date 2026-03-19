@@ -553,4 +553,19 @@ class StrategyEngine:
         trend_non_forex_exits = self.trend_non_forex_strategy.check_exits()
         closed_signals.extend(trend_non_forex_exits)
 
+        # MTF EMA was missing from this list — add standalone H1/EMA50 exit check
+        try:
+            mtf_exits = self.mtf_ema_strategy.check_exits()
+            closed_signals.extend(mtf_exits)
+            if mtf_exits:
+                logger.info(
+                    f"[STRATEGY-ENGINE] mtf_ema check_exits: "
+                    f"{len(mtf_exits)} closed"
+                )
+        except Exception as e:
+            logger.error(
+                f"[STRATEGY-ENGINE] mtf_ema check_exits failed: {e}",
+                exc_info=True,
+            )
+
         return closed_signals

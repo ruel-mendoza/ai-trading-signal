@@ -2362,6 +2362,20 @@ def _get_signal_analysis_data() -> dict:
         "hlc": hlc_row,
         "spx": spx_row,
         "mtf": mtf_rows,
+        "multi_sig_assets": sum(
+            1 for cnt in (
+                __import__("collections").Counter(
+                    s["asset"] for s in all_signals if s.get("status") == "OPEN"
+                ).values()
+            ) if cnt > 1
+        ),
+        "integrity_ok": all(
+            cnt == 1 for cnt in (
+                __import__("collections").Counter(
+                    s["asset"] for s in all_signals if s.get("status") == "OPEN"
+                ).values()
+            )
+        ) if all_signals else True,
     }
 
 
@@ -2396,6 +2410,13 @@ def _build_signal_analysis_html(data: dict) -> str:
             <div class="stat-label">Duplicate Active Assets</div>
             <div class="stat-value" style="color:{dup_color};" data-testid="text-duplicate-assets">{duplicate_asset_count}</div>
             <div class="stat-label" style="margin-top:4px;">{dup_label}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Signal Integrity</div>
+            <div class="stat-value" style="color:{'#22c55e' if data.get('integrity_ok', True) else '#ef4444'};" data-testid="text-signal-integrity">
+                {'OK' if data.get('integrity_ok', True) else 'CHECK'}
+            </div>
+            <div class="stat-label" style="margin-top:4px;">Multi-signal assets: {data.get('multi_sig_assets', 0)}</div>
         </div>
     </div>
     """
@@ -3977,6 +3998,52 @@ async function ucmsTest(id) {
         ucmsShowMsg('Network error during test', true);
     }
 }
+
+async function loadSignalIntegrity() {
+    var btn = document.getElementById('btn-signal-integrity');
+    var el  = document.getElementById('signal-integrity-result');
+    btn.disabled = true;
+    btn.textContent = 'Running...';
+    el.innerHTML = '';
+    try {
+        var res  = await fetch(BASE + '/admin/api/debug/all-open-signals');
+        var data = await res.json();
+        var problems = data.problems || [];
+
+        if (problems.length === 0) {
+            el.innerHTML =
+                '<div style="color:#22c55e;font-size:13px;">' +
+                'All ' + data.total_assets + ' assets clean — ' +
+                'no signal/position issues found.</div>';
+        } else {
+            var rows = problems.map(function(p) {
+                var sigs = p.signals.map(function(s) {
+                    return s.strategy_name + ' ' + s.direction + ' #' + s.id;
+                }).join(', ');
+                return '<tr>' +
+                    '<td style="font-weight:500;">' + p.asset + '</td>' +
+                    '<td style="color:#f59e0b;font-size:12px;">' + p.issues.join(', ') + '</td>' +
+                    '<td style="font-size:12px;color:#94a3b8;">' + sigs + '</td>' +
+                    '</tr>';
+            }).join('');
+
+            el.innerHTML =
+                '<div style="color:#f59e0b;font-size:13px;margin-bottom:8px;">' +
+                problems.length + ' asset(s) with issues — ' +
+                'use force-close to resolve individual positions</div>' +
+                '<table class="data-table" style="font-size:12px;">' +
+                '<thead><tr><th>Asset</th><th>Issue</th><th>Signals</th></tr></thead>' +
+                '<tbody>' + rows + '</tbody>' +
+                '</table>' +
+                '<div style="margin-top:8px;font-size:12px;color:#64748b;">' +
+                'To close a specific position: POST /admin/api/force-close-position</div>';
+        }
+    } catch (e) {
+        el.innerHTML = '<span style="color:#ef4444;">Error: ' + e.message + '</span>';
+    }
+    btn.disabled = false;
+    btn.textContent = 'Run Diagnostic';
+}
 """
 
 
@@ -4786,6 +4853,25 @@ def admin_dashboard(
                         <span id="storage-used-label" data-testid="text-storage-used">-- MB used</span>
                         <span id="storage-max-label" data-testid="text-storage-max">-- MB max</span>
                     </div>
+                </div>
+
+                <div class="settings-section" style="margin-top:20px;"
+                     data-testid="widget-signal-integrity">
+                    <h3>Signal Integrity</h3>
+                    <p style="color:#94a3b8;font-size:13px;margin-bottom:12px;">
+                        Shows assets where open signals and positions may be out of sync.
+                        Use the force-close endpoint to manually resolve specific positions
+                        after reviewing the diagnostic.
+                    </p>
+                    <button class="btn btn-secondary"
+                            onclick="loadSignalIntegrity()"
+                            id="btn-signal-integrity"
+                            data-testid="button-signal-integrity">
+                        Run Diagnostic
+                    </button>
+                    <div id="signal-integrity-result"
+                         style="margin-top:12px;"
+                         data-testid="text-signal-integrity-result"></div>
                 </div>
 
                 <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:12px;">Live Status</div>
@@ -6074,6 +6160,147 @@ def api_check_exits_trend_non_forex(request: Request):
     except Exception as e:
         logger.error(f"[ADMIN] Manual trend_non_forex exit check failed: {e}", exc_info=True)
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@router.get("/api/debug/open-signals/{asset}")
+def debug_open_signals(request: Request, asset: str):
+    """Read-only diagnostic: show all OPEN signals and positions for a single asset."""
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.models import Signal, OpenPosition
+
+    asset_decoded = asset.replace("%2F", "/")
+
+    with _get_session() as session:
+        sigs = (
+            session.query(Signal)
+            .filter(Signal.asset == asset_decoded, Signal.status == "OPEN")
+            .order_by(Signal.id.desc())
+            .all()
+        )
+        pos = (
+            session.query(OpenPosition)
+            .filter(OpenPosition.asset == asset_decoded)
+            .all()
+        )
+
+    return JSONResponse(content={
+        "asset": asset_decoded,
+        "open_signals": [
+            {
+                "id": s.id,
+                "strategy_name": s.strategy_name,
+                "direction": s.direction,
+                "entry_price": s.entry_price,
+                "stop_loss": s.stop_loss,
+                "signal_timestamp": s.signal_timestamp,
+                "created_at": str(s.created_at),
+            }
+            for s in sigs
+        ],
+        "open_positions": [
+            {
+                "id": p.id,
+                "strategy_name": p.strategy_name,
+                "direction": p.direction,
+                "entry_price": p.entry_price,
+                "atr_at_entry": p.atr_at_entry,
+                "opened_at": str(p.opened_at),
+            }
+            for p in pos
+        ],
+        "signal_count": len(sigs),
+        "position_count": len(pos),
+        "cross_strategy": len(set(s.strategy_name for s in sigs)) > 1,
+        "multi_direction": len(set(s.direction for s in sigs)) > 1,
+    })
+
+
+@router.get("/api/debug/all-open-signals")
+def debug_all_open_signals(request: Request):
+    """Read-only diagnostic: show all OPEN signals and positions across all assets,
+    flagging assets with multiple signals, cross-strategy conflicts, or direction conflicts."""
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.models import Signal, OpenPosition
+    from collections import defaultdict
+
+    with _get_session() as session:
+        all_sigs = (
+            session.query(Signal)
+            .filter(Signal.status == "OPEN")
+            .order_by(Signal.asset, Signal.id.desc())
+            .all()
+        )
+        all_pos = (
+            session.query(OpenPosition)
+            .order_by(OpenPosition.asset)
+            .all()
+        )
+
+    sigs_by_asset: dict = defaultdict(list)
+    for s in all_sigs:
+        sigs_by_asset[s.asset].append({
+            "id": s.id,
+            "strategy_name": s.strategy_name,
+            "direction": s.direction,
+            "entry_price": s.entry_price,
+            "created_at": str(s.created_at),
+        })
+
+    pos_by_asset: dict = defaultdict(list)
+    for p in all_pos:
+        pos_by_asset[p.asset].append({
+            "id": p.id,
+            "strategy_name": p.strategy_name,
+            "direction": p.direction,
+            "entry_price": p.entry_price,
+        })
+
+    all_assets = sorted(
+        set(list(sigs_by_asset.keys()) + list(pos_by_asset.keys()))
+    )
+
+    problems = []
+    clean = []
+
+    for asset_name in all_assets:
+        s_list = sigs_by_asset[asset_name]
+        p_list = pos_by_asset[asset_name]
+        issues = []
+
+        if len(s_list) > 1:
+            issues.append(f"multiple_open_signals ({len(s_list)})")
+        if len(p_list) > 1:
+            issues.append(f"multiple_open_positions ({len(p_list)})")
+        if len(set(s["strategy_name"] for s in s_list)) > 1:
+            issues.append("cross_strategy_signals")
+        if len(set(s["direction"] for s in s_list)) > 1:
+            issues.append("conflicting_directions")
+
+        entry = {
+            "asset": asset_name,
+            "signals": s_list,
+            "positions": p_list,
+            "issues": issues,
+        }
+        if issues:
+            problems.append(entry)
+        else:
+            clean.append(asset_name)
+
+    return JSONResponse(content={
+        "total_assets": len(all_assets),
+        "assets_with_problems": len(problems),
+        "clean_assets": clean,
+        "problems": problems,
+        "totals": {
+            "open_signals": len(all_sigs),
+            "open_positions": len(all_pos),
+        },
+    })
 
 
 @router.post("/api/force-close-position")

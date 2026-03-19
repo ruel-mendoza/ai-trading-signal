@@ -11,6 +11,7 @@ from trading_engine.database import (
     signal_exists,
     has_open_signal,
     has_any_open_signal_for_asset,
+    close_opposite_signal_if_exists,
     insert_signal,
     close_signal,
     open_position as db_open_position,
@@ -264,6 +265,8 @@ class SP500MomentumStrategy(BaseStrategy):
             "atr_at_entry": round(atr_val, 6),
             "signal_timestamp": signal_timestamp,
         }
+        # Close opposite direction signal if this strategy has one open
+        close_opposite_signal_if_exists(STRATEGY_NAME, asset, "BUY")
         signal_id = insert_signal(signal)
         if signal_id:
             db_open_position({

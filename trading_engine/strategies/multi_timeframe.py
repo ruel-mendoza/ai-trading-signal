@@ -13,11 +13,13 @@ from trading_engine.database import (
     has_open_signal,
     has_open_position,
     has_any_open_signal_for_asset,
+    close_opposite_signal_if_exists,
     insert_signal,
     open_position as db_open_position,
     close_signal,
     close_position,
     get_active_signals,
+    get_all_open_positions,
     signal_exists,
 )
 
@@ -576,6 +578,8 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             "atr_at_entry": round(atr_at_entry, 6),
             "signal_timestamp": signal_timestamp,
         }
+        # Close opposite direction signal if this strategy has one open
+        close_opposite_signal_if_exists(STRATEGY_NAME, asset, direction)
         signal_id = insert_signal(signal)
         if signal_id:
             db_open_position({
@@ -843,3 +847,143 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             return entry_result
 
         return SignalResult()
+
+    def check_exits(self) -> list[dict]:
+        """Standalone exit checker called by the scheduler after the per-asset evaluation loop.
+
+        Ensures H1/EMA50 exits fire even if evaluate() was skipped for an asset.
+
+        Exit rules (same as _check_h1_ema50_exit):
+          LONG:  close when H1 close < H4 EMA50
+          SHORT: close when H1 close > H4 EMA50
+
+        IMPORTANT: only closes positions via the strategy's own exit logic.
+        Never closes a position just because conditions changed or because the signal is old.
+        """
+        closed: list[dict] = []
+        positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
+
+        if not positions:
+            logger.info(
+                "[MTF-EMA-EXIT] ====== check_exits | 0 open positions ======"
+            )
+            return closed
+
+        logger.info(
+            f"[MTF-EMA-EXIT] ====== check_exits | "
+            f"{len(positions)} open position(s) ======"
+        )
+
+        for pos in positions:
+            asset: str = pos["asset"]
+            pos_id: int = pos["id"]
+            direction: str = pos["direction"]
+
+            logger.info(
+                f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                f"{direction} | entry={pos['entry_price']}"
+            )
+
+            # Fetch H1 candles for current price
+            try:
+                h1_candles = self.cache.get_candles(asset, TIMEFRAME_H1, 5)
+            except Exception as e:
+                logger.error(
+                    f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                    f"Exception fetching H1 candles: {e}"
+                )
+                continue
+
+            if not h1_candles:
+                logger.warning(
+                    f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                    f"No H1 candles — skipping"
+                )
+                continue
+
+            # Fetch H4 candles for EMA50
+            try:
+                h4_candles = self.cache.get_candles(asset, TIMEFRAME_H4, 300)
+            except Exception as e:
+                logger.error(
+                    f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                    f"Exception fetching H4 candles: {e}"
+                )
+                continue
+
+            if len(h4_candles) < EMA_50:
+                logger.warning(
+                    f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                    f"Insufficient H4 candles: {len(h4_candles)}"
+                )
+                continue
+
+            h4_closes: list[float] = [float(c["close"]) for c in h4_candles]
+            h4_ema50_series = IndicatorEngine.ema(h4_closes, EMA_50)
+            h4_ema50: Optional[float] = (
+                h4_ema50_series[-1]
+                if h4_ema50_series and h4_ema50_series[-1] is not None
+                else None
+            )
+
+            if h4_ema50 is None:
+                logger.warning(
+                    f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                    f"H4 EMA50 returned None — skipping"
+                )
+                continue
+
+            h1_close = float(h1_candles[-1]["close"])
+
+            logger.info(
+                f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | {direction} | "
+                f"H1_close={h1_close:.5f} | H4_EMA50={h4_ema50:.5f} | "
+                f"LONG_exit(H1<EMA50)={h1_close < h4_ema50} | "
+                f"SHORT_exit(H1>EMA50)={h1_close > h4_ema50}"
+            )
+
+            exit_triggered = False
+            exit_reason = ""
+
+            if direction == "BUY" and h1_close < h4_ema50:
+                breach = h4_ema50 - h1_close
+                exit_reason = (
+                    f"H1/H4-EMA50 exit: H1 close {h1_close:.5f} < "
+                    f"H4 EMA50 {h4_ema50:.5f} (breach={breach:.5f})"
+                )
+                exit_triggered = True
+                logger.info(
+                    f"[MTF-EMA-EXIT] Position #{pos_id} | EXIT LONG | "
+                    f"H1 {h1_close:.5f} < H4 EMA50 {h4_ema50:.5f}"
+                )
+
+            elif direction == "SELL" and h1_close > h4_ema50:
+                breach = h1_close - h4_ema50
+                exit_reason = (
+                    f"H1/H4-EMA50 exit: H1 close {h1_close:.5f} > "
+                    f"H4 EMA50 {h4_ema50:.5f} (breach={breach:.5f})"
+                )
+                exit_triggered = True
+                logger.info(
+                    f"[MTF-EMA-EXIT] Position #{pos_id} | EXIT SHORT | "
+                    f"H1 {h1_close:.5f} > H4 EMA50 {h4_ema50:.5f}"
+                )
+
+            if exit_triggered:
+                self._persist_exit(asset, exit_reason)
+                closed.append({
+                    **pos,
+                    "exit_price": h1_close,
+                    "exit_reason": "h1_ema50_cross",
+                })
+            else:
+                logger.info(
+                    f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                    f"Holding {direction} — exit condition not met"
+                )
+
+        logger.info(
+            f"[MTF-EMA-EXIT] ====== check_exits complete | "
+            f"{len(closed)} closed ======"
+        )
+        return closed

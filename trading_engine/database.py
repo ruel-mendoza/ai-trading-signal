@@ -313,11 +313,102 @@ def has_any_open_signal_for_asset(asset: str) -> bool:
     """
     with _get_session() as session:
         row = (
-            session.query(Signal.id)
-            .filter(Signal.asset == asset, Signal.status == "OPEN")
+            session.query(
+                Signal.id,
+                Signal.strategy_name,
+                Signal.direction,
+            )
+            .filter(
+                Signal.asset == asset,
+                Signal.status == "OPEN",
+            )
             .first()
         )
-        return row is not None
+        if row:
+            logger.debug(
+                f"[DB] has_any_open_signal_for_asset({asset}): "
+                f"blocked by signal #{row[0]} | "
+                f"strategy={row[1]} | direction={row[2]}"
+            )
+            return True
+        return False
+
+
+def close_opposite_signal_if_exists(
+    strategy_name: str,
+    asset: str,
+    new_direction: str,
+) -> bool:
+    """If the strategy has an open signal for this asset in the OPPOSITE direction
+    to new_direction, close it and delete the open position so the new signal can
+    be inserted cleanly.
+
+    Called by each strategy's evaluate() BEFORE insert_signal() when a new entry
+    is about to fire.
+
+    Returns True if an opposite signal was found and closed, False if no opposite
+    signal existed (normal case).
+
+    IMPORTANT: only closes signals from THIS strategy. Never touches signals owned
+    by other strategies.
+    """
+    opposite = "SELL" if new_direction == "BUY" else "BUY"
+
+    with _get_session() as session:
+        try:
+            sig = (
+                session.query(Signal)
+                .filter(
+                    Signal.strategy_name == strategy_name,
+                    Signal.asset == asset,
+                    Signal.direction == opposite,
+                    Signal.status == "OPEN",
+                )
+                .order_by(Signal.id.desc())
+                .first()
+            )
+
+            if not sig:
+                return False
+
+            sig.status = "CLOSED"
+            sig.exit_reason = (
+                f"Closed by new {new_direction} signal for same asset "
+                f"(direction flip: {opposite} → {new_direction})"
+            )
+            logger.info(
+                f"[DB] close_opposite_signal_if_exists: closed signal #{sig.id} | "
+                f"asset={asset} | strategy={strategy_name} | "
+                f"old={opposite} → new={new_direction}"
+            )
+
+            # Also remove the open position so the new entry can create a fresh one
+            pos = (
+                session.query(OpenPosition)
+                .filter(
+                    OpenPosition.asset == asset,
+                    OpenPosition.strategy_name == strategy_name,
+                )
+                .first()
+            )
+            if pos:
+                logger.info(
+                    f"[DB] close_opposite_signal_if_exists: "
+                    f"deleted position #{pos.id} | "
+                    f"asset={asset} | strategy={strategy_name}"
+                )
+                session.delete(pos)
+
+            session.commit()
+            _invalidate_signal_cache()
+            return True
+
+        except Exception as e:
+            session.rollback()
+            logger.error(
+                f"[DB] close_opposite_signal_if_exists failed: {e}"
+            )
+            return False
 
 
 def init_db():
