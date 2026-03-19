@@ -435,76 +435,68 @@ def _scheduled_mtf_ema_evaluate():
     et = _get_et_context()
     log_id = create_job_log("mtf_ema_hourly", "mtf_ema")
     logger.info(
-        f"[SCHEDULER] ====== MTF EMA hourly evaluation | "
+        f"[SCHEDULER] ====== MTF EMA hourly evaluation (QC-aligned) | "
         f"{et['time_str']} {et['label']} | DST={'active' if et['dst'] else 'inactive'} ======"
     )
 
     assets_eval = 0
     signals_gen = 0
+    exits_triggered = 0
     error_count = 0
     error_details = []
 
+    # Pre-warm H4 and D1 cache for all MTF assets to avoid cold-start on first run
+    for _asset in MTF_EMA_ASSETS:
+        try:
+            cache.get_candles(_asset, "4H", 300)
+            cache.get_candles(_asset, "D1", 300)
+        except Exception as _e:
+            logger.warning(f"[SCHEDULER] mtf_ema | Cache pre-warm failed for {_asset}: {_e}")
+
     for asset in MTF_EMA_ASSETS:
         assets_eval += 1
-        def _eval(a):
+        open_pos = db_get_open_pos("mtf_ema", asset)
+
+        def _eval(a, _open_pos=open_pos):
             candles = cache.get_candles(a, PRIMARY_TIMEFRAME, 300)
             if not candles:
                 logger.warning(f"[SCHEDULER] mtf_ema | {a} | No candles available for {PRIMARY_TIMEFRAME}")
                 return None
             df = pd.DataFrame(candles)
-            open_pos = db_get_open_pos("mtf_ema", a)
-            return strategy_engine.mtf_ema_strategy.evaluate(a, PRIMARY_TIMEFRAME, df, open_pos)
+            return strategy_engine.mtf_ema_strategy.evaluate(a, PRIMARY_TIMEFRAME, df, _open_pos)
 
         result, err = _retry_asset_eval(_eval, asset)
         if err:
             error_count += 1
             error_details.append(f"{asset}: {err}")
-        elif result and (result.is_entry or result.is_exit):
-            if result.is_entry:
-                signals_gen += 1
-                signal = result.metadata.get("signal", {})
-                logger.info(f"[SCHEDULER] mtf_ema | {asset} | NEW SIGNAL: {signal.get('direction', '')} id={signal.get('id')}")
-            if result.is_exit:
-                logger.info(f"[SCHEDULER] mtf_ema | {asset} | EXIT triggered: {result.metadata.get('exit_reason', '')}")
+        elif result and result.is_entry:
+            signals_gen += 1
+            signal = result.metadata.get("signal", {})
+            logger.info(f"[SCHEDULER] mtf_ema | {asset} | NEW SIGNAL: {signal.get('direction', '')} id={signal.get('id')}")
+        elif result and result.is_exit:
+            exits_triggered += 1
+            logger.info(f"[SCHEDULER] mtf_ema | {asset} | EXIT triggered: {result.metadata.get('exit_reason', '')}")
         else:
-            logger.info(f"[SCHEDULER] mtf_ema | {asset} | No action")
+            if open_pos:
+                logger.info(f"[SCHEDULER] mtf_ema | {asset} | Holding {open_pos.get('direction', '')} — no exit triggered")
+            else:
+                logger.info(f"[SCHEDULER] mtf_ema | {asset} | No action")
 
-    # ── Standalone exit check ──
-    # Ensures H1/EMA50 exits fire even if evaluate() was skipped for any asset
-    try:
-        mtf_exits = strategy_engine.mtf_ema_strategy.check_exits()
-        if mtf_exits:
-            logger.info(
-                f"[SCHEDULER] mtf_ema | "
-                f"{len(mtf_exits)} exit(s) from check_exits()"
-            )
-            for ex in mtf_exits:
-                logger.info(
-                    f"[SCHEDULER] mtf_ema | EXIT: "
-                    f"{ex.get('asset')} {ex.get('direction')} "
-                    f"@ {ex.get('exit_price')} | "
-                    f"reason={ex.get('exit_reason')}"
-                )
-        else:
-            logger.info(
-                "[SCHEDULER] mtf_ema | check_exits(): no exits"
-            )
-    except Exception as e:
-        error_count += 1
-        error_details.append(f"check_exits: {e}")
-        logger.error(
-            f"[SCHEDULER] mtf_ema | check_exits() exception: {e}",
-            exc_info=True,
-        )
+    if assets_eval == 0:
+        status = "FAILED"
+    else:
+        status = "FAILED" if error_count == assets_eval else ("PARTIAL" if error_count > 0 else "SUCCESS")
 
-    status = "FAILED" if error_count == assets_eval else ("PARTIAL" if error_count > 0 else "SUCCESS")
-    finish_job_log(log_id, status, assets_eval, signals_gen, error_count,
-                   "; ".join(error_details) if error_details else None)
+    error_detail_str = "; ".join(error_details) if error_details else None
+    if exits_triggered > 0 and not error_detail_str:
+        error_detail_str = f"{exits_triggered} exit(s) triggered"
+
+    finish_job_log(log_id, status, assets_eval, signals_gen, error_count, error_detail_str)
     if status in ("FAILED", "PARTIAL"):
         notify_strategy_failure("mtf_ema", error_count, assets_eval, "; ".join(error_details))
     logger.info(
         f"[SCHEDULER] ====== MTF EMA complete | {status} | "
-        f"{assets_eval} assets, {signals_gen} signals, {error_count} errors ======"
+        f"{assets_eval} assets, {signals_gen} signals, {exits_triggered} exits, {error_count} errors ======"
     )
 
 
@@ -908,17 +900,17 @@ async def lifespan(app: FastAPI):
     )
     scheduler.add_job(
         _scheduled_mtf_ema_evaluate,
-        trigger=CronTrigger(minute=1, timezone=ET_ZONE),
+        trigger=CronTrigger(minute=0, timezone=ET_ZONE),
         id="mtf_ema_hourly",
-        name="MTF EMA Hourly Evaluation — 12 assets (every hour :01 ET)",
+        name="MTF EMA Hourly Evaluation — 12 assets (every hour :00 ET, QC-aligned)",
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
     scheduler.add_job(
         _run_metrics_worker,
-        trigger=CronTrigger(minute=0, timezone=ET_ZONE),
+        trigger=CronTrigger(minute=2, timezone=ET_ZONE),
         id="signal_metrics_worker",
-        name="Signal Metrics Worker (hourly :00 ET)",
+        name="Signal Metrics Worker (hourly :02 ET)",
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
@@ -973,9 +965,9 @@ async def lifespan(app: FastAPI):
     logger.info(
         f"[SCHEDULER] APScheduler started with {len(scheduler.get_jobs())} jobs | "
         f"trend_non_forex at 16:01, perf_context at 16:50, trend_forex at 17:01 | "
-        f"mtf_ema every hour (:01, 12 assets), sp500_momentum every 30m (:01/:31), "
+        f"mtf_ema every hour (:00, 12 assets, QC-aligned), sp500_momentum every 30m (:01/:31), "
         f"highest_lowest_fx at 09:00 & 10:00 | "
-        f"metrics hourly (:00) + full recap 17:15 | "
+        f"metrics hourly (:02) + full recap 17:15 | "
         f"misfire_grace={MISFIRE_GRACE_SECONDS}s | "
         f"watchdog interval={WATCHDOG_INTERVAL_SECONDS}s | "
         f"America/New_York ({et['label']}, DST={'active' if et['dst'] else 'inactive'})"
@@ -1005,7 +997,7 @@ API_TAGS_METADATA = [
     },
     {
         "name": "Strategies",
-        "description": "Strategy summary with open/closed signal counts for each registered trading strategy.",
+        "description": "Strategy summary with open/closed signal counts for each registered trading strategy. MTF EMA (multi-timeframe, hourly QC-aligned: D1+H4+H1 EMA slope + H1 EMA20 crossover entry, H1 EMA20 exit).",
     },
     {
         "name": "Scheduler",
@@ -1035,7 +1027,7 @@ app = FastAPI(
         "**Credit Limit:** The platform operates under a 500,000 FCSAPI credit cap. "
         "A kill switch automatically halts outbound data fetches at 495,000 credits to prevent overages.\n\n"
         "**Internal Use Only:** This API is designed for the DailyForex frontend and is not intended for public redistribution.\n\n"
-        "**Strategies:** MTF EMA (multi-timeframe), Trend Following (forex & non-forex), SP500 Momentum, Highest/Lowest Close FX.\n\n"
+        "**Strategies:** MTF EMA (multi-timeframe, QC-aligned), Trend Following (forex & non-forex), SP500 Momentum, Highest/Lowest Close FX.\n\n"
         "**Assets:** EUR/USD, GBP/USD, USD/JPY, AUD/USD, BTC/USD, ETH/USD, XAU/USD, XAG/USD, SPX, NDX, RUT, and more."
     ),
     openapi_tags=API_TAGS_METADATA,

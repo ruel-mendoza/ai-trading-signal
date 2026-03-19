@@ -1,0 +1,172 @@
+Update main.py to fix the MTF EMA scheduler to match the QuantConnect reference 
+algorithm's hourly unified check_signals pattern. Also fix the strategy evaluation 
+functions and entry/exit flow to match. Do not change any other strategy schedulers 
+(trend_forex, trend_non_forex, sp500_momentum, highest_lowest_fx stay exactly as-is).
+
+CHANGES REQUIRED:
+
+1. UNIFY MTF EMA ENTRY + EXIT INTO ONE HOURLY JOB:
+
+   Currently _scheduled_mtf_ema_evaluate() runs evaluate() per asset (which checks 
+   exits if position open, entries if not) and THEN calls check_exits() again as a 
+   standalone pass. This double-exit-check is redundant and can cause race conditions 
+   where a position is already closed when check_exits() runs.
+
+   New behavior — in _scheduled_mtf_ema_evaluate(), for each asset:
+     a. Fetch open_position for "mtf_ema" + asset
+     b. If open_position exists:
+          - Call strategy_engine.mtf_ema_strategy.evaluate(asset, "1H", df, open_pos)
+          - If result.is_exit: log exit, count it, continue to next asset
+          - If not exit: log "holding, no exit triggered", continue
+          - Do NOT also call check_exits() after — evaluate() already handles it
+     c. If no open_position:
+          - Call strategy_engine.mtf_ema_strategy.evaluate(asset, "1H", df, open_pos=None)
+          - If result.is_entry: log new signal, increment signals_gen
+          - If not entry: log "no signal"
+
+   Remove the standalone check_exits() block at the bottom of 
+   _scheduled_mtf_ema_evaluate() entirely:
+     # REMOVE THIS ENTIRE BLOCK:
+     try:
+         mtf_exits = strategy_engine.mtf_ema_strategy.check_exits()
+         ...
+     except Exception as e:
+         ...
+
+   Rationale: QC algo's check_signals() does exit-OR-entry per symbol per tick, 
+   never both. Your evaluate() already mirrors this — if open_position is set, it 
+   checks exits; if not, it checks entries. The extra check_exits() call is not in 
+   the QC algo and creates duplicate exit attempts.
+
+2. CHANGE MTF EMA SCHEDULER TRIGGER FROM :01 TO :00 EVERY HOUR:
+
+   Currently:
+     trigger=CronTrigger(minute=1, timezone=ET_ZONE)
+   
+   Change to:
+     trigger=CronTrigger(minute=0, timezone=ET_ZONE)
+   
+   Rationale: QC algo fires every(timedelta(hours=1)) on the hour. Your :01 offset 
+   was to avoid conflicts with the metrics worker at :00, but metrics should not 
+   block signal evaluation. Resolve the conflict by changing the metrics worker to 
+   :02 instead (see item 4).
+
+   Also update the scheduler startup log string from:
+     "mtf_ema every hour (:01, 12 assets)"
+   to:
+     "mtf_ema every hour (:00, 12 assets, QC-aligned)"
+
+   And update the APScheduler job name from:
+     "MTF EMA Hourly Evaluation — 12 assets (every hour :01 ET)"
+   to:
+     "MTF EMA Hourly Evaluation — 12 assets (every hour :00 ET, QC-aligned)"
+
+3. REMOVE MARKET HOURS GATING FROM _scheduled_mtf_ema_evaluate():
+
+   The QC algo runs every hour with no session filter — it checks signals 24/7 for 
+   crypto and forex, and the strategy conditions themselves (EMA crossovers, slope 
+   acceleration) naturally won't fire outside meaningful market hours for equities.
+
+   Currently there is no explicit session gate in _scheduled_mtf_ema_evaluate() 
+   (unlike sp500_momentum which gates on ARCA hours). Confirm this remains true — 
+   do NOT add any hour/session filter to _scheduled_mtf_ema_evaluate(). 
+   If any session check exists in the function body, remove it.
+
+4. SHIFT CONFLICTING JOBS TO AVOID :00 COLLISION:
+
+   The signal_metrics_worker currently runs at minute=0 (same as the new MTF EMA 
+   trigger). Shift it to minute=2 to avoid lock contention on the SQLite DB:
+
+   Change:
+     trigger=CronTrigger(minute=0, timezone=ET_ZONE)
+     id="signal_metrics_worker"
+   To:
+     trigger=CronTrigger(minute=2, timezone=ET_ZONE)
+     id="signal_metrics_worker"
+   
+   Update the job name from:
+     "Signal Metrics Worker (hourly :00 ET)"
+   To:
+     "Signal Metrics Worker (hourly :02 ET)"
+
+   Update the startup log string accordingly.
+
+5. FIX _scheduled_mtf_ema_evaluate() STATUS LOGIC:
+
+   Currently status is computed as:
+     status = "FAILED" if error_count == assets_eval else ("PARTIAL" if error_count > 0 else "SUCCESS")
+   
+   This is correct but the condition "FAILED if ALL assets errored" is misleading 
+   for a 12-asset loop where a single crash marks everything FAILED. Keep the logic 
+   but add a guard: if assets_eval == 0, status = "FAILED" (no assets processed).
+
+   Also fix the exit counting — currently result.is_exit triggers a log but is not 
+   counted in any metric. Add an exits_triggered counter:
+
+     exits_triggered = 0
+   
+   In the per-asset loop, after the evaluate() call:
+     elif result and result.is_exit:
+         exits_triggered += 1
+         logger.info(f"[SCHEDULER] mtf_ema | {asset} | EXIT triggered: {result.metadata.get('exit_reason', '')}")
+   
+   Add to the final log line:
+     f"{assets_eval} assets, {signals_gen} signals, {exits_triggered} exits, {error_count} errors"
+   
+   Add exits_triggered to finish_job_log call as part of error_detail string if > 0:
+     error_detail_str = "; ".join(error_details) if error_details else None
+     if exits_triggered > 0 and not error_detail_str:
+         error_detail_str = f"{exits_triggered} exit(s) triggered"
+
+6. FIX CANDLE LIMIT FOR MTF EMA ASSETS IN THE SCHEDULER:
+
+   Currently _scheduled_mtf_ema_evaluate() fetches:
+     candles = cache.get_candles(a, PRIMARY_TIMEFRAME, 300)
+   
+   PRIMARY_TIMEFRAME is "1H". The evaluate() method internally also fetches D1 and 
+   H4 candles via _fetch_all_timeframes(). The H1 fetch of 300 is passed as the 
+   df argument to evaluate() but D1/H4 are fetched inside the strategy with their 
+   own limits (300 each).
+
+   The new MIN_H4_BARS = 210 (from the multi_timeframe.py update) means H4 candles 
+   need at least 210 bars. Ensure the cache pre-warms H4 data by adding an explicit 
+   cache warm call before the per-asset loop in _scheduled_mtf_ema_evaluate():
+
+   Add after the log header and before the for-loop:
+     # Pre-warm H4 and D1 cache for all MTF assets to avoid cold-start on first run
+     for _asset in MTF_EMA_ASSETS:
+         try:
+             cache.get_candles(_asset, "4H", 300)
+             cache.get_candles(_asset, "D1", 300)
+         except Exception as _e:
+             logger.warning(f"[SCHEDULER] mtf_ema | Cache pre-warm failed for {_asset}: {_e}")
+
+   This mirrors the QC algo's warm-up pass in initialize() which pre-loads 200 H1 
+   bars via history before trading begins.
+
+7. UPDATE THE RECOVERY_STRATEGIES LIST:
+
+   Currently RECOVERY_STRATEGIES only covers trend_forex and trend_non_forex (both 
+   have fixed daily windows). MTF EMA runs hourly so it does not need recovery logic 
+   — confirm it is NOT in RECOVERY_STRATEGIES and do not add it.
+
+8. UPDATE STRATEGY DESCRIPTION STRINGS:
+
+   In API_TAGS_METADATA, update the Strategies description tag to reflect the 
+   corrected MTF EMA behavior:
+   
+   Change:
+     "MTF EMA (multi-timeframe)"
+   To:
+     "MTF EMA (multi-timeframe, hourly QC-aligned: D1+H4+H1 EMA slope + H1 EMA20 crossover entry, H1 EMA20 exit)"
+
+   In the FastAPI app description string, change:
+     "MTF EMA (multi-timeframe)"  
+   To:
+     "MTF EMA (multi-timeframe, QC-aligned)"
+
+Do not change: any other scheduled job triggers or timing, the lifespan() function 
+structure, the watchdog thread, recovery_check() logic, any non-MTF strategy 
+scheduler functions (_scheduled_trend_forex_evaluate, _scheduled_trend_non_forex_evaluate, 
+_scheduled_sp500_momentum_30m, _scheduled_highest_lowest_fx), the WebSocket 
+broadcaster setup, or the metrics full recap job at 17:15.
