@@ -1,0 +1,179 @@
+Update the _signals_to_table_rows() function in admin.py to show
+the exit_reason text as a hover tooltip on the CLOSED status badge,
+matching the hover-reveal pattern used in the Market Pulse widget.
+No other changes — do not touch any other function or file.
+
+─────────────────────────────────────────────
+CHANGE — Add tooltip to CLOSED status badge in signal rows
+─────────────────────────────────────────────
+
+In _signals_to_table_rows(), find the block that builds the
+status cell HTML. Currently it looks like this:
+
+  status_class = "status-active" if status == "OPEN" else "status-closed"
+
+  ...
+
+  exit_info = ""
+  if status == "CLOSED":
+      exit_price = s.get("exit_price")
+      exit_reason = s.get("exit_reason", "")
+      if exit_price is not None:
+          exit_info = f'<div style="font-size:0.75rem;color:#94a3b8;margin-top:2px;">Exit: {exit_price:.5f} ({exit_reason})</div>'
+      elif exit_reason:
+          exit_info = f'<div style="font-size:0.75rem;color:#94a3b8;margin-top:2px;">({exit_reason})</div>'
+
+And further down in the row HTML:
+  <td><span class="badge {status_class}">{status}</span>{exit_info}</td>
+
+─────────────────────────────────────────────
+STEP 1 — Build tooltip text for CLOSED badges
+─────────────────────────────────────────────
+
+After the existing exit_info block, add:
+
+  # Build tooltip for CLOSED status badge
+  badge_tooltip = ""
+  if status == "CLOSED":
+      exit_price = s.get("exit_price")
+      exit_reason = s.get("exit_reason", "")
+      parts = []
+      if exit_price is not None:
+          parts.append(f"Exit price: {exit_price:.5f}")
+      if exit_reason:
+          parts.append(exit_reason)
+      if parts:
+          tooltip_text = " | ".join(parts)
+          # Escape quotes for use inside an HTML attribute
+          tooltip_text = tooltip_text.replace('"', "&quot;").replace("'", "&#39;")
+          badge_tooltip = tooltip_text
+
+─────────────────────────────────────────────
+STEP 2 — Apply tooltip and cursor to the CLOSED badge
+─────────────────────────────────────────────
+
+Find the row HTML that renders the status cell:
+
+  FIND:
+    <td><span class="badge {status_class}">{status}</span>{exit_info}</td>
+
+  REPLACE WITH:
+    <td>
+      {(
+        f'<span class="badge {status_class}" '
+        f'title="{badge_tooltip}" '
+        f'style="cursor:help;" '
+        f'data-testid="badge-status-{s.get(\"id\",\"\")}">'
+        f'{status}</span>'
+        if status == "CLOSED" and badge_tooltip
+        else f'<span class="badge {status_class}">{status}</span>'
+      )}{exit_info}</td>
+
+  Write this as valid Python inside the existing f-string row
+  construction. The ternary ensures OPEN badges and CLOSED badges
+  with no exit_reason are rendered without tooltip attributes,
+  exactly as before.
+
+─────────────────────────────────────────────
+STEP 3 — Remove the exit_info sub-div for CLOSED rows
+         (the text is now in the tooltip, no need to show below)
+─────────────────────────────────────────────
+
+Now that exit_reason appears on hover, the sub-div text below
+the badge is redundant for clean rows. Make exit_info only show
+the exit price line (not the reason) for CLOSED signals:
+
+  FIND the exit_info block:
+    exit_info = ""
+    if status == "CLOSED":
+        exit_price = s.get("exit_price")
+        exit_reason = s.get("exit_reason", "")
+        if exit_price is not None:
+            exit_info = f'<div style="font-size:0.75rem;color:#94a3b8;margin-top:2px;">Exit: {exit_price:.5f} ({exit_reason})</div>'
+        elif exit_reason:
+            exit_info = f'<div style="font-size:0.75rem;color:#94a3b8;margin-top:2px;">({exit_reason})</div>'
+
+  REPLACE WITH:
+    exit_info = ""
+    if status == "CLOSED":
+        exit_price = s.get("exit_price")
+        if exit_price is not None:
+            exit_info = (
+                f'<div style="font-size:0.75rem;color:#94a3b8;'
+                f'margin-top:2px;">Exit: {exit_price:.5f}'
+                f'<span style="color:#64748b;font-size:0.7rem;'
+                f'margin-left:4px;">(hover for reason)</span></div>'
+            )
+
+  This keeps the exit price visible at a glance while signalling
+  to the user that the reason is available on hover. If there is
+  no exit_price, nothing is shown below the badge — the tooltip
+  on hover still reveals the full reason.
+
+─────────────────────────────────────────────
+STEP 4 — Add CSS for the tooltip appearance
+─────────────────────────────────────────────
+
+The native HTML title= attribute shows a plain OS tooltip which
+is functional but unstyled. To match the Market Pulse hover style,
+add a small CSS rule to ADMIN_CSS in admin.py.
+
+Find ADMIN_CSS and locate a natural end point (e.g. just before
+the closing triple-quote). Add:
+
+  /* Status badge tooltip — matches Market Pulse hover */
+  .badge[title] {
+      position: relative;
+  }
+  .badge[title]:hover::after {
+      content: attr(title);
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 0.75rem;
+      font-weight: 400;
+      white-space: pre-wrap;
+      max-width: 320px;
+      word-break: break-word;
+      z-index: 9999;
+      pointer-events: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      text-transform: none;
+      letter-spacing: 0;
+  }
+  .badge[title]:hover::before {
+      content: "";
+      position: absolute;
+      bottom: calc(100% + 1px);
+      left: 50%;
+      transform: translateX(-50%);
+      border: 5px solid transparent;
+      border-top-color: #334155;
+      z-index: 9999;
+      pointer-events: none;
+  }
+
+─────────────────────────────────────────────
+VERIFICATION CHECKLIST (confirm internally before saving)
+─────────────────────────────────────────────
+[ ] CLOSED badges have title= attribute containing exit price
+    and exit_reason joined by " | "
+[ ] Quotes in exit_reason are escaped with &quot; and &#39;
+[ ] OPEN badges have no title= attribute and no style= change
+[ ] CLOSED badges with no exit_reason and no exit_price render
+    as plain badge with no tooltip (no empty title= attribute)
+[ ] exit_info sub-div shows exit price + "(hover for reason)"
+    hint when exit_price is present
+[ ] exit_info is empty when exit_price is None (reason in tooltip)
+[ ] CSS tooltip appears above the badge on hover
+[ ] CSS tooltip uses pre-wrap so long exit_reason strings wrap
+[ ] CSS max-width is 320px to keep tooltip readable
+[ ] No other functions in admin.py were changed
+[ ] No other files were changed
+[ ] File is syntactically valid Python

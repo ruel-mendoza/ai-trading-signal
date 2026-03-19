@@ -162,11 +162,28 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
         exit_info = ""
         if status == "CLOSED":
             exit_price = s.get("exit_price")
-            exit_reason = s.get("exit_reason", "")
             if exit_price is not None:
-                exit_info = f'<div style="font-size:0.75rem;color:#94a3b8;margin-top:2px;">Exit: {exit_price:.5f} ({exit_reason})</div>'
-            elif exit_reason:
-                exit_info = f'<div style="font-size:0.75rem;color:#94a3b8;margin-top:2px;">({exit_reason})</div>'
+                exit_info = (
+                    f'<div style="font-size:0.75rem;color:#94a3b8;'
+                    f'margin-top:2px;">Exit: {exit_price:.5f}'
+                    f'<span style="color:#64748b;font-size:0.7rem;'
+                    f'margin-left:4px;">(hover for reason)</span></div>'
+                )
+
+        # Build tooltip for CLOSED status badge
+        badge_tooltip = ""
+        if status == "CLOSED":
+            exit_price = s.get("exit_price")
+            exit_reason = s.get("exit_reason", "")
+            parts = []
+            if exit_price is not None:
+                parts.append(f"Exit price: {exit_price:.5f}")
+            if exit_reason:
+                parts.append(exit_reason)
+            if parts:
+                tooltip_text = " | ".join(parts)
+                tooltip_text = tooltip_text.replace('"', "&quot;").replace("'", "&#39;")
+                badge_tooltip = tooltip_text
 
         # Show warning badge if this asset has multiple OPEN signals in raw data
         is_duplicate_asset = (
@@ -178,6 +195,18 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
                 '⚠ Multiple OPEN signals for this asset — auto-deduped</div>'
             )
 
+        sig_id = s.get("id", "")
+        if status == "CLOSED" and badge_tooltip:
+            status_badge = (
+                f'<span class="badge {status_class}" '
+                f'title="{badge_tooltip}" '
+                f'style="cursor:help;" '
+                f'data-testid="badge-status-{sig_id}">'
+                f'{status}</span>'
+            )
+        else:
+            status_badge = f'<span class="badge {status_class}">{status}</span>'
+
         rows.append(f"""
         <tr>
             <td>{s.get("asset", "")}</td>
@@ -186,7 +215,7 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
             <td>{sl_str}</td>
             <td>{tp_str}</td>
             <td>{s.get("strategy_name", "")}</td>
-            <td><span class="badge {status_class}">{status}</span>{exit_info}</td>
+            <td>{status_badge}{exit_info}</td>
             <td>{ts_display}</td>
         </tr>""")
     return "\n".join(rows)
@@ -2992,6 +3021,10 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 .toggle-slider:before { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; background: #f1f5f9; border-radius: 50%; transition: 0.3s; }
 .toggle-switch input:checked + .toggle-slider { background: #22c55e; }
 .toggle-switch input:checked + .toggle-slider:before { transform: translateX(22px); }
+/* Status badge tooltip — matches Market Pulse hover */
+.badge[title] { position: relative; }
+.badge[title]:hover::after { content: attr(title); position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 6px 10px; font-size: 0.75rem; font-weight: 400; white-space: pre-wrap; max-width: 320px; word-break: break-word; z-index: 9999; pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.4); text-transform: none; letter-spacing: 0; }
+.badge[title]:hover::before { content: ""; position: absolute; bottom: calc(100% + 1px); left: 50%; transform: translateX(-50%); border: 5px solid transparent; border-top-color: #334155; z-index: 9999; pointer-events: none; }
 """
 
 ADMIN_JS = """
