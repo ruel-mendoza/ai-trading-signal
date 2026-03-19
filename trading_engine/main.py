@@ -910,7 +910,7 @@ async def lifespan(app: FastAPI):
         _scheduled_mtf_ema_evaluate,
         trigger=CronTrigger(minute=1, timezone=ET_ZONE),
         id="mtf_ema_hourly",
-        name="MTF EMA Hourly Evaluation (every hour :01 ET)",
+        name="MTF EMA Hourly Evaluation — 12 assets (every hour :01 ET)",
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
@@ -973,7 +973,7 @@ async def lifespan(app: FastAPI):
     logger.info(
         f"[SCHEDULER] APScheduler started with {len(scheduler.get_jobs())} jobs | "
         f"trend_non_forex at 16:01, perf_context at 16:50, trend_forex at 17:01 | "
-        f"mtf_ema every hour (:01), sp500_momentum every 30m (:01/:31), "
+        f"mtf_ema every hour (:01, 12 assets), sp500_momentum every 30m (:01/:31), "
         f"highest_lowest_fx at 09:00 & 10:00 | "
         f"metrics hourly (:00) + full recap 17:15 | "
         f"misfire_grace={MISFIRE_GRACE_SECONDS}s | "

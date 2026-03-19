@@ -2134,16 +2134,8 @@ def _get_signal_analysis_data() -> dict:
         "DBB", "SLX",
     ]
     trend_fx_symbols = ["EUR/USD", "USD/JPY"]
-    mtf_symbols = [
-        "SPX", "NDX", "RUT",
-        "XAU/USD", "XAG/USD", "OSX",
-        "BTC/USD", "ETH/USD",
-        "EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD",
-        "CORN", "SOYB", "WEAT", "CANE", "WOOD",
-        "USO", "UNG", "UGA",
-        "SGOL", "SIVR", "CPER", "PPLT", "PALL",
-        "DBB", "SLX",
-    ]
+    from trading_engine.strategies.multi_timeframe import ALL_ASSETS as _MTF_ALL_ASSETS
+    mtf_symbols = list(_MTF_ALL_ASSETS)
 
     def _dp(sym):
         return 5 if "/" in sym else 2

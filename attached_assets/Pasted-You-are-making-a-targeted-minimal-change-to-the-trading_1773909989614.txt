@@ -1,0 +1,156 @@
+You are making a targeted, minimal change to the trading engine.
+Read all existing code before touching anything.
+This is a scope reduction only — zero logic changes.
+
+=============================================================
+OBJECTIVE
+=============================================================
+
+Remove all 15 commodity ETF symbols from the MTF EMA strategy.
+These ETFs are already fully covered by trend_non_forex.py which
+uses the correct breakout logic for trending commodity assets.
+
+Keeping ETFs in MTF EMA wastes ~1,080 API credits/day on evaluations
+that structurally cannot produce signals (ETFs never dip to H4 EMA50).
+
+=============================================================
+SYMBOLS TO REMOVE FROM MTF EMA
+=============================================================
+
+Remove these 15 symbols from MTF EMA only:
+  Grains:          CORN, SOYB, WEAT, CANE, WOOD
+  Energy:          USO, UNG, UGA
+  Precious metals: SGOL, SIVR, CPER, PPLT, PALL
+  Base metals:     DBB, SLX
+
+These 15 symbols must remain untouched in trend_non_forex.py.
+
+=============================================================
+TASK 1 — multi_timeframe.py
+=============================================================
+
+FIND:
+    TARGET_ASSETS = {
+        "indices": ["SPX", "NDX", "RUT"],
+        "commodities": ["XAU/USD", "XAG/USD", "OSX"],
+        "crypto": ["BTC/USD", "ETH/USD"],
+        "forex": ["EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"],
+        "etfs": [
+            "CORN", "SOYB", "WEAT", "CANE", "WOOD",
+            "USO", "UNG", "UGA",
+            "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+            "DBB", "SLX",
+        ],
+    }
+
+REPLACE WITH:
+    TARGET_ASSETS = {
+        "indices":    ["SPX", "NDX", "RUT"],
+        "commodities": ["XAU/USD", "XAG/USD", "OSX"],
+        "crypto":     ["BTC/USD", "ETH/USD"],
+        "forex":      ["EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"],
+        # ETFs removed — fully covered by trend_non_forex.py (50-day
+        # breakout logic). MTF EMA dip-and-recover does not suit
+        # continuously trending commodity ETFs.
+    }
+
+Verify ALL_ASSETS (computed below TARGET_ASSETS) auto-updates.
+After change: len(ALL_ASSETS) must equal 12.
+
+=============================================================
+TASK 2 — admin.py signal analysis table
+=============================================================
+
+In admin.py _get_signal_analysis_data(), find the hardcoded
+mtf_symbols list.
+
+FIND any block that looks like:
+    mtf_symbols = [
+        "SPX", "NDX", "RUT",
+        "XAU/USD", "XAG/USD", "OSX",
+        "BTC/USD", "ETH/USD",
+        "EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD",
+        "CORN", "SOYB", "WEAT", "CANE", "WOOD",
+        "USO", "UNG", "UGA",
+        "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+        "DBB", "SLX",
+    ]
+
+REPLACE WITH:
+    from trading_engine.strategies.multi_timeframe import ALL_ASSETS as _MTF_ALL_ASSETS
+    mtf_symbols = list(_MTF_ALL_ASSETS)
+
+This keeps the signal analysis table permanently in sync with
+the strategy — no future manual list maintenance needed.
+
+=============================================================
+TASK 3 — main.py scheduler job name
+=============================================================
+
+In main.py lifespan(), find the mtf_ema_hourly job registration.
+
+FIND the name= parameter:
+    name="MTF EMA Hourly Evaluation (every hour :01 ET)",
+
+REPLACE WITH:
+    name="MTF EMA Hourly Evaluation — 12 assets (every hour :01 ET)",
+
+Also find the startup logger.info() that lists the scheduled jobs
+and update any mention of MTF EMA asset count from 27 or 35 to 12.
+
+=============================================================
+TASK 4 — confirm trend_non_forex.py is untouched
+=============================================================
+
+Open trading_engine/strategies/trend_non_forex.py.
+Verify TARGET_SYMBOLS still contains all 15 ETFs:
+
+    TARGET_SYMBOLS = [
+        "CORN", "SOYB", "WEAT", "CANE", "WOOD",
+        "USO", "UNG", "UGA",
+        "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+        "DBB", "SLX",
+    ]
+
+DO NOT change this file in any way.
+If any ETF is missing from this list, add it — do not remove any.
+
+=============================================================
+VERIFICATION CHECKLIST
+=============================================================
+
+1. In multi_timeframe.py:
+   - "etfs" key is gone from TARGET_ASSETS
+   - len(ALL_ASSETS) == 12
+   - ALL_ASSETS contains exactly:
+     SPX, NDX, RUT, XAU/USD, XAG/USD, OSX,
+     BTC/USD, ETH/USD, EUR/USD, USD/JPY, GBP/USD, AUD/USD
+
+2. In admin.py:
+   - mtf_symbols is now derived from ALL_ASSETS import
+   - Signal analysis MTF EMA table shows exactly 12 rows
+   - No ETF rows (CORN, USO, SGOL etc.) appear in MTF EMA section
+
+3. In main.py:
+   - Scheduler job name says "12 assets"
+
+4. In trend_non_forex.py:
+   - All 15 ETFs still present in TARGET_SYMBOLS — file unchanged
+
+5. Existing open signals for ETFs under strategy_name="mtf_ema"
+   are NOT touched — they remain open until their own exit fires.
+
+6. No other files are modified.
+
+=============================================================
+CONSTRAINTS
+=============================================================
+
+- Touch ONLY: multi_timeframe.py, admin.py, main.py
+- Verify (read-only): trend_non_forex.py
+- DO NOT change any entry or exit logic
+- DO NOT close or modify any existing signals or positions
+- DO NOT change any other strategy file
+- DO NOT change ATR, SMA, EMA periods or multipliers
+- DO NOT change the scheduler cron triggers or timing
+- This is a list change only — 3 lines of code total

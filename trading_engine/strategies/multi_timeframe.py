@@ -28,16 +28,13 @@ logger = logging.getLogger("trading_engine.strategy.multi_timeframe")
 STRATEGY_NAME = "mtf_ema"
 
 TARGET_ASSETS = {
-    "indices": ["SPX", "NDX", "RUT"],
+    "indices":    ["SPX", "NDX", "RUT"],
     "commodities": ["XAU/USD", "XAG/USD", "OSX"],
-    "crypto": ["BTC/USD", "ETH/USD"],
-    "forex": ["EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"],
-    "etfs": [
-        "CORN", "SOYB", "WEAT", "CANE", "WOOD",
-        "USO", "UNG", "UGA",
-        "SGOL", "SIVR", "CPER", "PPLT", "PALL",
-        "DBB", "SLX",
-    ],
+    "crypto":     ["BTC/USD", "ETH/USD"],
+    "forex":      ["EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"],
+    # ETFs removed — fully covered by trend_non_forex.py (50-day
+    # breakout logic). MTF EMA dip-and-recover does not suit
+    # continuously trending commodity ETFs.
 }
 
 ALL_ASSETS = []
