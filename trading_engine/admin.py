@@ -3021,10 +3021,6 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 .toggle-slider:before { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; background: #f1f5f9; border-radius: 50%; transition: 0.3s; }
 .toggle-switch input:checked + .toggle-slider { background: #22c55e; }
 .toggle-switch input:checked + .toggle-slider:before { transform: translateX(22px); }
-/* Status badge tooltip — matches Market Pulse hover */
-.badge[title] { position: relative; }
-.badge[title]:hover::after { content: attr(title); position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 6px 10px; font-size: 0.75rem; font-weight: 400; white-space: pre-wrap; max-width: 320px; word-break: break-word; z-index: 9999; pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.4); text-transform: none; letter-spacing: 0; }
-.badge[title]:hover::before { content: ""; position: absolute; bottom: calc(100% + 1px); left: 50%; transform: translateX(-50%); border: 5px solid transparent; border-top-color: #334155; z-index: 9999; pointer-events: none; }
 """
 
 ADMIN_JS = """
