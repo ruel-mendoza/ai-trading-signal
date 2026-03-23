@@ -1,0 +1,205 @@
+Fix admin.py so the Trend Non-Forex asset cards and Signal
+Analysis tab always reflect the live TARGET_SYMBOLS list
+from trend_non_forex.py. Replace every hardcoded non-forex
+symbol list in admin.py with a direct import from the
+strategy module. No other files changed.
+
+The root cause is that admin.py has hardcoded symbol lists
+that are disconnected from trend_non_forex.py TARGET_SYMBOLS.
+Adding coins to the strategy does not automatically update
+the admin panel. The fix imports the live list directly so
+the two can never go out of sync again.
+
+─────────────────────────────────────────────
+CHANGE 1 — Add import at the top of admin.py
+─────────────────────────────────────────────
+
+At the top of admin.py, find the existing strategy imports.
+There should already be imports from strategy modules.
+Add these two imports if not already present:
+
+  from trading_engine.strategies.trend_non_forex import (
+      TARGET_SYMBOLS as _TNF_TARGET_SYMBOLS,
+      SHORT_ELIGIBLE_SYMBOLS as _TNF_SHORT_ELIGIBLE,
+      CRYPTO_ALTCOINS as _TNF_CRYPTO_ALTCOINS,
+  )
+
+  from trading_engine.strategies.trend_forex import (
+      TARGET_SYMBOLS as _TF_TARGET_SYMBOLS,
+  )
+
+If CRYPTO_ALTCOINS does not exist yet in trend_non_forex.py
+(it was added in the altcoin prompt), import it defensively:
+
+  try:
+      from trading_engine.strategies.trend_non_forex import (
+          CRYPTO_ALTCOINS as _TNF_CRYPTO_ALTCOINS,
+      )
+  except ImportError:
+      _TNF_CRYPTO_ALTCOINS = set()
+
+─────────────────────────────────────────────
+CHANGE 2 — Fix _get_trend_following_data()
+─────────────────────────────────────────────
+
+In _get_trend_following_data(), find the hardcoded lists:
+
+  FIND:
+    forex_symbols = ["EUR/USD", "USD/JPY"]
+    non_forex_symbols = [
+        "CORN", "SOYB", "WEAT", "CANE", "WOOD",
+        "USO", "UNG", "UGA",
+        "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+        "DBB", "SLX",
+    ]
+
+  REPLACE WITH:
+    forex_symbols = list(_TF_TARGET_SYMBOLS)
+    non_forex_symbols = list(_TNF_TARGET_SYMBOLS)
+
+This means every symbol in TARGET_SYMBOLS in
+trend_non_forex.py — including all 26 altcoins — will
+automatically appear in the admin panel cards.
+
+─────────────────────────────────────────────
+CHANGE 3 — Fix _compute_symbol_data() inside
+           _get_trend_following_data() to handle
+           altcoins correctly
+─────────────────────────────────────────────
+
+Inside _get_trend_following_data(), the inner function
+_compute_symbol_data() fetches D1 candles and computes
+indicators. Altcoins use the same D1 candles as ETFs so
+no change is needed to the candle fetch logic.
+
+However the SHORT eligibility check uses a hardcoded
+import. Find:
+
+  FIND:
+    from trading_engine.strategies.trend_non_forex import (
+        SHORT_ELIGIBLE_SYMBOLS as _SHORT_ELIGIBLE_SYMBOLS
+    )
+
+  REPLACE WITH:
+    _SHORT_ELIGIBLE_SYMBOLS = _TNF_SHORT_ELIGIBLE
+
+  (Use the module-level import added in Change 1 instead
+  of a local import inside the function.)
+
+Also update the sym_info initialisation to add an
+is_crypto field so the card can show a visual indicator
+for altcoins vs ETFs:
+
+  Add to sym_info initialisation dict:
+    "is_crypto": symbol in _TNF_CRYPTO_ALTCOINS,
+
+─────────────────────────────────────────────
+CHANGE 4 — Fix _build_trend_following_html()
+           to show crypto badge on altcoin cards
+─────────────────────────────────────────────
+
+In _build_trend_following_html(), inside _build_symbol_cards(),
+find the line that renders the card header:
+
+  FIND:
+    html += f"""
+    <div class="stat-card" style="min-width:250px;">
+        <div class="stat-label">{sym["symbol"]}{badges}</div>
+
+  REPLACE WITH:
+    crypto_badge = (
+        ' <span style="display:inline-block;padding:1px 6px;'
+        'border-radius:4px;font-size:0.65rem;font-weight:600;'
+        'background:rgba(168,85,247,0.15);color:#c4b5fd;'
+        'text-transform:uppercase;letter-spacing:0.03em;'
+        'vertical-align:middle;">crypto</span>'
+        if sym.get("is_crypto") else ""
+    )
+    html += f"""
+    <div class="stat-card" style="min-width:250px;">
+        <div class="stat-label">{sym["symbol"]}{crypto_badge}{badges}</div>
+
+─────────────────────────────────────────────
+CHANGE 5 — Fix _get_signal_analysis_data()
+─────────────────────────────────────────────
+
+In _get_signal_analysis_data(), find the hardcoded list:
+
+  FIND:
+    trend_nf_symbols = [
+        "CORN", "SOYB", "WEAT", "CANE", "WOOD",
+        "USO", "UNG", "UGA",
+        "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+        "DBB", "SLX",
+    ]
+
+  REPLACE WITH:
+    trend_nf_symbols = list(_TNF_TARGET_SYMBOLS)
+
+Also find the hardcoded trend forex symbols list:
+
+  FIND:
+    trend_fx_symbols = ["EUR/USD", "USD/JPY"]
+
+  REPLACE WITH:
+    trend_fx_symbols = list(_TF_TARGET_SYMBOLS)
+
+─────────────────────────────────────────────
+CHANGE 6 — Fix _build_signal_analysis_html()
+           section header to reflect dynamic count
+─────────────────────────────────────────────
+
+In _build_signal_analysis_html(), find the hardcoded
+count in the section header:
+
+  FIND:
+    "Commodity ETF Command Center <span ...>Scheduler: 4:01 PM ET
+    | LONG ONLY | 3&times;ATR(100) trailing stop</span>"
+
+  REPLACE WITH:
+    f"Trend Non-Forex Command Center "
+    f"<span ...>Scheduler: 4:01 PM ET | "
+    f"{len(list(_TNF_TARGET_SYMBOLS))} assets | "
+    f"LONG ONLY | 3&times;ATR(100) trailing stop</span>"
+
+─────────────────────────────────────────────
+CHANGE 7 — Update strategy rules note at the
+           bottom of _build_trend_following_html()
+─────────────────────────────────────────────
+
+In the strategy rules section at the bottom of
+_build_trend_following_html(), find the hardcoded
+asset count "15 ETFs":
+
+  FIND any occurrence of:
+    "15 ETFs"
+    or "15 commodity ETFs"
+
+  REPLACE WITH:
+    f"{len([s for s in _TNF_TARGET_SYMBOLS if s not in _TNF_CRYPTO_ALTCOINS])} ETFs + {len(_TNF_CRYPTO_ALTCOINS)} altcoins"
+
+─────────────────────────────────────────────
+VERIFICATION CHECKLIST (confirm internally before saving)
+─────────────────────────────────────────────
+[ ] _TNF_TARGET_SYMBOLS imported from trend_non_forex.py
+[ ] _TNF_SHORT_ELIGIBLE imported from trend_non_forex.py
+[ ] _TNF_CRYPTO_ALTCOINS imported with defensive try/except
+[ ] _TF_TARGET_SYMBOLS imported from trend_forex.py
+[ ] _get_trend_following_data() uses _TNF_TARGET_SYMBOLS
+    not a hardcoded list
+[ ] _get_trend_following_data() uses _TF_TARGET_SYMBOLS
+    not a hardcoded list
+[ ] _compute_symbol_data() uses _TNF_SHORT_ELIGIBLE
+    from module-level import not local import
+[ ] sym_info has is_crypto field
+[ ] Altcoin cards show purple "crypto" badge in header
+[ ] _get_signal_analysis_data() uses _TNF_TARGET_SYMBOLS
+[ ] _get_signal_analysis_data() uses _TF_TARGET_SYMBOLS
+[ ] Asset count in section header is dynamic not hardcoded
+[ ] Strategy rules note shows ETF + altcoin counts
+[ ] Adding future coins to trend_non_forex.py TARGET_SYMBOLS
+    automatically shows them in admin panel with zero
+    additional changes required
+[ ] No other functions in admin.py were changed
+[ ] No other files were changed
+[ ] File is syntactically valid Python

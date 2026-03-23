@@ -21,6 +21,21 @@ from trading_engine.database import (
 )
 from trading_engine.indicators import IndicatorEngine
 
+from trading_engine.strategies.trend_non_forex import (
+    TARGET_SYMBOLS as _TNF_TARGET_SYMBOLS,
+    SHORT_ELIGIBLE_SYMBOLS as _TNF_SHORT_ELIGIBLE,
+)
+try:
+    from trading_engine.strategies.trend_non_forex import (
+        CRYPTO_ALTCOINS as _TNF_CRYPTO_ALTCOINS,
+    )
+except ImportError:
+    _TNF_CRYPTO_ALTCOINS = set()
+
+from trading_engine.strategies.trend_forex import (
+    TARGET_SYMBOLS as _TF_TARGET_SYMBOLS,
+)
+
 router = APIRouter(prefix="/admin", tags=["admin"], include_in_schema=False)
 
 
@@ -1354,16 +1369,11 @@ def _get_trend_following_data() -> dict:
     et_now = datetime.now(et_zone)
     ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
 
-    forex_symbols = ["EUR/USD", "USD/JPY"]
-    non_forex_symbols = [
-        "CORN", "SOYB", "WEAT", "CANE", "WOOD",
-        "USO", "UNG", "UGA",
-        "SGOL", "SIVR", "CPER", "PPLT", "PALL",
-        "DBB", "SLX",
-    ]
+    forex_symbols = list(_TF_TARGET_SYMBOLS)
+    non_forex_symbols = list(_TNF_TARGET_SYMBOLS)
     all_symbols = forex_symbols + non_forex_symbols
 
-    from trading_engine.strategies.trend_non_forex import SHORT_ELIGIBLE_SYMBOLS as _SHORT_ELIGIBLE_SYMBOLS
+    _SHORT_ELIGIBLE_SYMBOLS = _TNF_SHORT_ELIGIBLE
 
     def _compute_symbol_data(symbol):
         sym_info = {
@@ -1385,6 +1395,7 @@ def _get_trend_following_data() -> dict:
             "pct_from_low": None,
             "proximity_long": "N/A",
             "proximity_short": "N/A",
+            "is_crypto": symbol in _TNF_CRYPTO_ALTCOINS,
         }
 
         candles = get_candles(symbol, "D1", 300)
@@ -1529,7 +1540,7 @@ def _get_trend_following_data() -> dict:
 
 
 def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_count: int) -> str:
-    from trading_engine.strategies.trend_non_forex import SHORT_ELIGIBLE_SYMBOLS as _SHORT_ELIGIBLE_SYMBOLS
+    _SHORT_ELIGIBLE_SYMBOLS = _TNF_SHORT_ELIGIBLE
 
     def _fmt(val, decimals=5):
         return f"{val:.{decimals}f}" if val is not None else "N/A"
@@ -1621,9 +1632,17 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
             if sym.get("short_met"):
                 badges += ' <span class="badge sell" style="font-size:0.7rem;">SHORT READY</span>'
 
+            crypto_badge = (
+                ' <span style="display:inline-block;padding:1px 6px;'
+                'border-radius:4px;font-size:0.65rem;font-weight:600;'
+                'background:rgba(168,85,247,0.15);color:#c4b5fd;'
+                'text-transform:uppercase;letter-spacing:0.03em;'
+                'vertical-align:middle;">crypto</span>'
+                if sym.get("is_crypto") else ""
+            )
             html += f"""
             <div class="stat-card" style="min-width:250px;">
-                <div class="stat-label">{sym["symbol"]}{badges}</div>
+                <div class="stat-label">{sym["symbol"]}{crypto_badge}{badges}</div>
                 {data_status}
             </div>"""
         return html
@@ -1690,7 +1709,7 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
         </div>
     </div>
     <div class="settings-section" style="margin-top:20px;">
-        <h3>Commodity ETF Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG ONLY | 15 ETFs</span></h3>
+        <h3>Non-Forex Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG ONLY | {len([s for s in _TNF_TARGET_SYMBOLS if s not in _TNF_CRYPTO_ALTCOINS])} ETFs + {len(_TNF_CRYPTO_ALTCOINS)} altcoins</span></h3>
         <div class="stats-grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
             {non_forex_cards}
         </div>
@@ -1721,7 +1740,7 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
     <div class="timezone-note" style="margin-top:16px;">
         <strong>Strategy Rules (Trend Following &mdash; Commodity ETF | QuantConnect Validated):</strong>
         <ul>
-            <li><strong>LONG Entry (all 15 ETFs):</strong> Close <strong>&ge;</strong> highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
+            <li><strong>LONG Entry (all {len([s for s in _TNF_TARGET_SYMBOLS if s not in _TNF_CRYPTO_ALTCOINS])} ETFs + {len(_TNF_CRYPTO_ALTCOINS)} altcoins):</strong> Close <strong>&ge;</strong> highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
             <li><strong>SHORT Entry (USO, UNG, UGA, DBB, SLX only):</strong> Close <strong>&le;</strong> lowest close of last 50 days AND SMA(50) &lt; SMA(100)</li>
             <li><strong>ATR:</strong> <strong>Dynamic (live)</strong> &mdash; ATR(100) is recalculated on every evaluation bar from current candle data. ATR is <em>never</em> stored at entry. This matches the QC <code>self._atr[symbol].current.value</code> behavior exactly.</li>
             <li><strong>Trailing Stop (LONG):</strong> <code>new_stop = current_price &minus; (ATR &times; 3)</code> &mdash; ratcheted upward with <code>max(stored_stop, new_stop)</code>. Stop only moves in the trade&rsquo;s favour (never back down).</li>
@@ -2359,13 +2378,8 @@ def _get_signal_analysis_data() -> dict:
         sn = s.get("strategy_name", "")
         sig_by_strat.setdefault(sn, []).append(s)
 
-    trend_nf_symbols = [
-        "CORN", "SOYB", "WEAT", "CANE", "WOOD",
-        "USO", "UNG", "UGA",
-        "SGOL", "SIVR", "CPER", "PPLT", "PALL",
-        "DBB", "SLX",
-    ]
-    trend_fx_symbols = ["EUR/USD", "USD/JPY"]
+    trend_nf_symbols = list(_TNF_TARGET_SYMBOLS)
+    trend_fx_symbols = list(_TF_TARGET_SYMBOLS)
     from trading_engine.strategies.multi_timeframe import ALL_ASSETS as _MTF_ALL_ASSETS
     mtf_symbols = list(_MTF_ALL_ASSETS)
 
@@ -2823,8 +2837,8 @@ def _build_signal_analysis_html(data: dict) -> str:
     </div>
 
     <div class="settings-section" style="margin-bottom:20px;">
-        <h3>Commodity ETF Command Center <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 4:01 PM ET | LONG ONLY | 3&times;ATR(100) trailing stop</span></h3>
-        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG), confirmed by SMA(50) &gt; SMA(100) crossover | 15 commodity ETFs</p>
+        <h3>Trend Non-Forex Command Center <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 4:01 PM ET | {len(list(_TNF_TARGET_SYMBOLS))} assets | LONG ONLY | 3&times;ATR(100) trailing stop</span></h3>
+        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG), confirmed by SMA(50) &gt; SMA(100) crossover | {len([s for s in _TNF_TARGET_SYMBOLS if s not in _TNF_CRYPTO_ALTCOINS])} ETFs + {len(_TNF_CRYPTO_ALTCOINS)} altcoins</p>
         <div style="overflow-x:auto;">
             <table class="data-table" data-testid="table-analysis-trend-nf">
                 <thead><tr>
