@@ -4172,7 +4172,7 @@ async function loadAssets() {
       var addedBy = a.added_by || '\u2014';
       var createdAt = a.created_at ? a.created_at.slice(0, 10) : '\u2014';
       var notes = a.notes ? '<span title="' + a.notes.replace(/"/g, '&quot;') + '" style="cursor:help;color:#64748b;">&#x1F4DD;</span>' : '\u2014';
-      var removeBtn = '<button class="btn" style="font-size:12px;padding:4px 10px;background:rgba(239,68,68,0.12);color:#ef4444;" onclick="removeAsset(\'' + a.strategy_name + '\',\'' + a.symbol + '\')" data-testid="button-remove-asset-' + a.symbol.replace(/\//g,'-') + '">Remove</button>';
+      var removeBtn = '<button class="btn" style="font-size:12px;padding:4px 10px;background:rgba(239,68,68,0.12);color:#ef4444;" onclick="removeAsset(this)" data-strategy="' + a.strategy_name + '" data-symbol="' + a.symbol + '" data-testid="button-remove-asset-' + a.symbol.replace(/\//g,'-') + '">Remove</button>';
       rows += '<tr data-testid="row-asset-' + a.symbol.replace(/\//g,'-') + '">'
         + '<td style="font-weight:600;color:#f1f5f9;">' + a.symbol + '</td>'
         + '<td>' + (strategyLabels[a.strategy_name] || a.strategy_name) + '</td>'
@@ -4236,8 +4236,10 @@ async function addAsset() {
   }
 }
 
-async function removeAsset(strategyName, symbol) {
-  if (!confirm('Remove ' + symbol + ' from ' + strategyName + '?\n\nThis will NOT close any open signals. The asset will be deactivated — it can be re-added at any time.')) return;
+async function removeAsset(btn) {
+  var strategyName = btn.dataset.strategy;
+  var symbol = btn.dataset.symbol;
+  if (!confirm('Remove ' + symbol + ' from ' + strategyName + '? This will NOT close any open signals. The asset will be excluded from future evaluation cycles and can be re-added at any time.')) return;
   try {
     var res = await fetch(BASE + '/admin/api/strategy-assets/' + encodeURIComponent(strategyName) + '/' + encodeURIComponent(symbol), { method: 'DELETE' });
     var data = await res.json();
