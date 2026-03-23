@@ -49,7 +49,7 @@ STRATEGY_ASSET_CONFIG: dict[str, dict] = {
             "SPX", "NDX", "RUT",
             "XAU/USD", "XAG/USD", "OSX",
             "BTC/USD", "ETH/USD",
-            "EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD",
+            "GBP/USD", "AUD/USD",
         ],
         "timeframe": "1H",
     },

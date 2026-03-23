@@ -589,6 +589,7 @@ def init_db():
     _migrate_schema()
     _backfill_asset_class()
     seed_strategy_assets()
+    sync_strategy_assets_dedup()
 
     with _get_session() as session:
         _seed_default_admin(session)
@@ -2192,8 +2193,6 @@ _STRATEGY_ASSET_SEEDS = {
         ("OSX",     "forex",  "commodities"),
         ("BTC/USD", "crypto", "crypto"),
         ("ETH/USD", "crypto", "crypto"),
-        ("EUR/USD", "forex",  "forex"),
-        ("USD/JPY", "forex",  "forex"),
         ("GBP/USD", "forex",  "forex"),
         ("AUD/USD", "forex",  "forex"),
     ],
@@ -2339,9 +2338,109 @@ def seed_strategy_assets():
                     f"{len(moved_rows)} coin(s) from mtf_ema"
                 )
 
+            # One-time cleanup: soft-delete EUR/USD and USD/JPY from mtf_ema.
+            # These pairs now live exclusively in trend_forex.
+            FOREX_REMOVED_FROM_MTF = ["EUR/USD", "USD/JPY"]
+            forex_removed = (
+                session.query(StrategyAsset)
+                .filter(
+                    StrategyAsset.strategy_name == "mtf_ema",
+                    StrategyAsset.symbol.in_(FOREX_REMOVED_FROM_MTF),
+                    StrategyAsset.is_active == 1,
+                )
+                .all()
+            )
+            for row in forex_removed:
+                row.is_active = 0
+                logger.info(
+                    f"[DB] seed_strategy_assets: deactivated "
+                    f"mtf_ema/{row.symbol} (moved to trend_forex only)"
+                )
+            if forex_removed:
+                session.commit()
+                logger.info(
+                    f"[DB] seed_strategy_assets: deactivated "
+                    f"{len(forex_removed)} forex pair(s) from mtf_ema"
+                )
+
         except Exception as e:
             session.rollback()
             logger.error(f"[DB] seed_strategy_assets failed: {e}")
+
+
+def sync_strategy_assets_dedup() -> dict:
+    """Detect and resolve duplicate active asset rows across strategies.
+    Deactivates mtf_ema rows that conflict with trend_forex or trend_non_forex.
+    Fully idempotent — safe to run multiple times.
+    """
+    results = {"mtf_vs_forex": 0, "mtf_vs_non_forex": 0, "total": 0}
+    with _get_session() as session:
+        try:
+            # --- mtf_ema vs trend_forex ---
+            forex_active = [
+                r.symbol for r in session.query(StrategyAsset)
+                .filter_by(strategy_name="trend_forex", is_active=1).all()
+            ]
+            if forex_active:
+                mtf_forex_conflicts = (
+                    session.query(StrategyAsset)
+                    .filter(
+                        StrategyAsset.strategy_name == "mtf_ema",
+                        StrategyAsset.symbol.in_(forex_active),
+                        StrategyAsset.is_active == 1,
+                    )
+                    .all()
+                )
+                for row in mtf_forex_conflicts:
+                    row.is_active = 0
+                    results["mtf_vs_forex"] += 1
+                    logger.info(
+                        f"[DB] sync_dedup: deactivated mtf_ema/{row.symbol} "
+                        f"(conflict with trend_forex)"
+                    )
+                if mtf_forex_conflicts:
+                    session.commit()
+
+            # --- mtf_ema vs trend_non_forex ---
+            non_forex_active = [
+                r.symbol for r in session.query(StrategyAsset)
+                .filter_by(strategy_name="trend_non_forex", is_active=1).all()
+            ]
+            if non_forex_active:
+                mtf_non_forex_conflicts = (
+                    session.query(StrategyAsset)
+                    .filter(
+                        StrategyAsset.strategy_name == "mtf_ema",
+                        StrategyAsset.symbol.in_(non_forex_active),
+                        StrategyAsset.is_active == 1,
+                    )
+                    .all()
+                )
+                for row in mtf_non_forex_conflicts:
+                    row.is_active = 0
+                    results["mtf_vs_non_forex"] += 1
+                    logger.info(
+                        f"[DB] sync_dedup: deactivated mtf_ema/{row.symbol} "
+                        f"(conflict with trend_non_forex)"
+                    )
+                if mtf_non_forex_conflicts:
+                    session.commit()
+
+            results["total"] = (
+                results["mtf_vs_forex"] + results["mtf_vs_non_forex"]
+            )
+            if results["total"] > 0:
+                logger.info(
+                    f"[DB] sync_dedup complete: "
+                    f"{results['total']} conflict(s) resolved"
+                )
+            else:
+                logger.info("[DB] sync_dedup complete: no conflicts found")
+            return results
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] sync_dedup failed: {e}")
+            return results
 
 
 def _strategy_asset_to_dict(row: StrategyAsset) -> dict:

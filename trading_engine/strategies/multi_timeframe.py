@@ -31,7 +31,7 @@ TARGET_ASSETS = {
     "indices":    ["SPX", "NDX", "RUT"],
     "commodities": ["XAU/USD", "XAG/USD", "OSX"],
     "crypto":     ["BTC/USD", "ETH/USD"],
-    "forex":      ["EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"],
+    "forex":      ["GBP/USD", "AUD/USD"],
 }
 
 ALL_ASSETS = []

@@ -1,0 +1,326 @@
+I have a FastAPI + SQLAlchemy (SQLite) trading signals app. I need to fix a 
+conflict where trend_forex signals for EUR/USD and USD/JPY are permanently 
+blocked because mtf_ema holds open positions on the same assets. I also need 
+to sync the Asset Management database to remove duplicates and prevent future 
+conflicts.
+
+Read these files first before making any changes:
+- trading_engine/strategies/multi_timeframe.py
+- trading_engine/strategies/trend_forex.py
+- trading_engine/database.py
+- trading_engine/admin.py
+- trading_engine/strategy_runner.py
+- trading_engine/main.py
+
+---
+
+PROBLEM SUMMARY:
+trend_forex evaluates EUR/USD and USD/JPY at 5:01 PM ET daily but is blocked 
+by has_any_open_signal_for_asset() when mtf_ema has an open signal on the same 
+asset. EUR/USD and USD/JPY must be removed from mtf_ema entirely and kept only 
+in trend_forex. GBP/USD and AUD/USD must remain in mtf_ema.
+
+Make ALL of the following changes in ONE pass:
+
+---
+
+1. trading_engine/strategies/multi_timeframe.py
+
+a) In TARGET_ASSETS, remove EUR/USD and USD/JPY from the forex list.
+   Keep GBP/USD and AUD/USD exactly as-is:
+     "forex": ["GBP/USD", "AUD/USD"],
+
+b) ALL_ASSETS is built from TARGET_ASSETS via a loop — it will update 
+   automatically. Verify and fix if it is a hardcoded list.
+
+c) No changes to any entry or exit logic, indicator calculations, or 
+   condition checks.
+
+---
+
+2. trading_engine/database.py
+
+a) In _STRATEGY_ASSET_SEEDS, remove EUR/USD and USD/JPY from the mtf_ema 
+   seeds list. Keep all other mtf_ema entries exactly as-is:
+     # REMOVE these two lines from mtf_ema seeds:
+     ("EUR/USD", "forex", "forex"),
+     ("USD/JPY", "forex", "forex"),
+
+b) In seed_strategy_assets(), add a cleanup block after the main seed loop 
+   to soft-delete EUR/USD and USD/JPY from mtf_ema in the DB. Place this 
+   block alongside the existing COINS_MOVED_FROM_MTF cleanup block (or add 
+   it if missing). Do NOT create a separate function — keep it inside 
+   seed_strategy_assets():
+
+     FOREX_REMOVED_FROM_MTF = ["EUR/USD", "USD/JPY"]
+     forex_removed = (
+         session.query(StrategyAsset)
+         .filter(
+             StrategyAsset.strategy_name == "mtf_ema",
+             StrategyAsset.symbol.in_(FOREX_REMOVED_FROM_MTF),
+             StrategyAsset.is_active == 1,
+         )
+         .all()
+     )
+     for row in forex_removed:
+         row.is_active = 0
+         logger.info(
+             f"[DB] seed_strategy_assets: deactivated "
+             f"mtf_ema/{row.symbol} (moved to trend_forex only)"
+         )
+     if forex_removed:
+         session.commit()
+         logger.info(
+             f"[DB] seed_strategy_assets: deactivated "
+             f"{len(forex_removed)} forex pair(s) from mtf_ema"
+         )
+
+c) Add a new function called sync_strategy_assets_dedup() in database.py 
+   after seed_strategy_assets(). This function detects and resolves duplicate 
+   active asset rows across strategies. A duplicate is defined as the same 
+   symbol being active (is_active=1) in more than one strategy where that 
+   creates a known conflict. The function should:
+
+   - Find any symbol that is is_active=1 in BOTH mtf_ema AND trend_forex
+   - For those symbols, deactivate the mtf_ema row (trend_forex takes priority)
+   - Find any symbol that is is_active=1 in BOTH mtf_ema AND trend_non_forex
+   - For those symbols, deactivate the mtf_ema row (trend_non_forex takes 
+     priority for the moved coins)
+   - Log every deactivation clearly
+   - Be fully idempotent (safe to run multiple times)
+   - Return a dict with counts: 
+     {"mtf_vs_forex": N, "mtf_vs_non_forex": N, "total": N}
+
+   Implementation:
+
+     def sync_strategy_assets_dedup() -> dict:
+         results = {"mtf_vs_forex": 0, "mtf_vs_non_forex": 0, "total": 0}
+         with _get_session() as session:
+             try:
+                 # --- mtf_ema vs trend_forex ---
+                 forex_active = [
+                     r.symbol for r in session.query(StrategyAsset)
+                     .filter_by(strategy_name="trend_forex", is_active=1).all()
+                 ]
+                 mtf_forex_conflicts = (
+                     session.query(StrategyAsset)
+                     .filter(
+                         StrategyAsset.strategy_name == "mtf_ema",
+                         StrategyAsset.symbol.in_(forex_active),
+                         StrategyAsset.is_active == 1,
+                     )
+                     .all()
+                 )
+                 for row in mtf_forex_conflicts:
+                     row.is_active = 0
+                     results["mtf_vs_forex"] += 1
+                     logger.info(
+                         f"[DB] sync_dedup: deactivated mtf_ema/{row.symbol} "
+                         f"(conflict with trend_forex)"
+                     )
+                 if mtf_forex_conflicts:
+                     session.commit()
+
+                 # --- mtf_ema vs trend_non_forex ---
+                 non_forex_active = [
+                     r.symbol for r in session.query(StrategyAsset)
+                     .filter_by(strategy_name="trend_non_forex", is_active=1).all()
+                 ]
+                 mtf_non_forex_conflicts = (
+                     session.query(StrategyAsset)
+                     .filter(
+                         StrategyAsset.strategy_name == "mtf_ema",
+                         StrategyAsset.symbol.in_(non_forex_active),
+                         StrategyAsset.is_active == 1,
+                     )
+                     .all()
+                 )
+                 for row in mtf_non_forex_conflicts:
+                     row.is_active = 0
+                     results["mtf_vs_non_forex"] += 1
+                     logger.info(
+                         f"[DB] sync_dedup: deactivated mtf_ema/{row.symbol} "
+                         f"(conflict with trend_non_forex)"
+                     )
+                 if mtf_non_forex_conflicts:
+                     session.commit()
+
+                 results["total"] = (
+                     results["mtf_vs_forex"] + results["mtf_vs_non_forex"]
+                 )
+                 if results["total"] > 0:
+                     logger.info(
+                         f"[DB] sync_dedup complete: "
+                         f"{results['total']} conflict(s) resolved"
+                     )
+                 else:
+                     logger.info(
+                         "[DB] sync_dedup complete: no conflicts found"
+                     )
+                 return results
+             except Exception as e:
+                 session.rollback()
+                 logger.error(f"[DB] sync_dedup failed: {e}")
+                 return results
+
+d) In init_db(), call sync_strategy_assets_dedup() after 
+   seed_strategy_assets():
+     seed_strategy_assets()
+     sync_strategy_assets_dedup()   # ← add this line
+
+---
+
+3. trading_engine/strategy_runner.py
+
+In STRATEGY_ASSET_CONFIG, update the mtf_ema assets list — remove EUR/USD 
+and USD/JPY, keep everything else exactly as-is:
+
+   "mtf_ema": {
+       "assets": [
+           "SPX", "NDX", "RUT",
+           "XAU/USD", "XAG/USD", "OSX",
+           "BTC/USD", "ETH/USD",
+           "GBP/USD", "AUD/USD",        # EUR/USD and USD/JPY removed
+       ],
+       "timeframe": "1H",
+   },
+
+Do NOT change any other strategy config in STRATEGY_ASSET_CONFIG.
+
+---
+
+4. trading_engine/main.py
+
+In _scheduled_mtf_ema_evaluate(), the asset list is loaded via 
+get_all_mtf_assets() which reads from DB. After the seed cleanup and 
+sync_dedup run on startup, EUR/USD and USD/JPY will be is_active=0 in 
+mtf_ema and will no longer be returned by get_all_mtf_assets(). No code 
+change needed here — just verify get_all_mtf_assets() filters by 
+is_active=1. If it does not, add the filter:
+
+   def get_all_mtf_assets() -> list[str]:
+       try:
+           from trading_engine.database import get_strategy_assets
+           symbols = get_strategy_assets(STRATEGY_NAME, active_only=True)
+           if symbols:
+               return symbols
+       except Exception:
+           pass
+       result = []
+       for group in TARGET_ASSETS.values():
+           result.extend(group)
+       return result
+
+In _scheduled_trend_non_forex_evaluate(), the symbol list is loaded via 
+get_active_symbols() — verify it also filters active_only=True. No other 
+changes needed here.
+
+---
+
+5. trading_engine/admin.py
+
+a) Add a new admin API endpoint to manually trigger the dedup sync. Place it 
+   after the existing api_remove_strategy_asset endpoint:
+
+     @router.post("/api/strategy-assets/sync-dedup")
+     def api_sync_strategy_assets_dedup(request: Request):
+         guard = _admin_role_guard(request)
+         if guard:
+             return guard
+         from trading_engine.database import sync_strategy_assets_dedup
+         try:
+             result = sync_strategy_assets_dedup()
+             return JSONResponse(content={
+                 "success": True,
+                 "resolved": result,
+                 "message": (
+                     f"Sync complete. {result['total']} conflict(s) resolved: "
+                     f"{result['mtf_vs_forex']} mtf/forex, "
+                     f"{result['mtf_vs_non_forex']} mtf/non-forex."
+                 ),
+             })
+         except Exception as e:
+             return JSONResponse(
+                 content={"success": False, "error": str(e)},
+                 status_code=500,
+             )
+
+b) In the Asset Management tab HTML, add a "Sync & Remove Duplicates" button 
+   next to the existing Refresh button in the assets content section:
+
+     <button class="btn" 
+             onclick="syncAssetDedup()" 
+             data-testid="button-sync-dedup"
+             style="font-size:13px;padding:6px 14px;
+                    background:rgba(234,179,8,0.12);
+                    color:#eab308;
+                    border:1px solid rgba(234,179,8,0.3);">
+         Sync &amp; Remove Duplicates
+     </button>
+
+c) In ADMIN_JS, add the syncAssetDedup() function:
+
+     async function syncAssetDedup() {
+         var btn = document.querySelector(
+             '[data-testid="button-sync-dedup"]'
+         );
+         if (btn) {
+             btn.disabled = true;
+             btn.textContent = 'Syncing...';
+         }
+         try {
+             var res = await fetch(
+                 BASE + '/admin/api/strategy-assets/sync-dedup',
+                 { method: 'POST' }
+             );
+             var data = await res.json();
+             if (data.success) {
+                 alert(data.message);
+                 loadAssets();
+             } else {
+                 alert('Sync failed: ' + (data.error || 'Unknown error'));
+             }
+         } catch(e) {
+             alert('Error: ' + e.message);
+         } finally {
+             if (btn) {
+                 btn.disabled = false;
+                 btn.textContent = 'Sync \u0026 Remove Duplicates';
+             }
+         }
+     }
+
+d) In _get_mtf_ema_data() inside admin.py, the symbol list is built from 
+   TARGET_ASSETS imported from multi_timeframe.py via:
+     from trading_engine.strategies.multi_timeframe import (
+         TARGET_ASSETS,
+         ALL_ASSETS as _MTF_ALL_ASSETS_LOCAL,
+     )
+   Since TARGET_ASSETS is updated in step 1, EUR/USD and USD/JPY will 
+   automatically be excluded from the MTF EMA admin panel. Verify the import 
+   alias _MTF_ALL_ASSETS still resolves correctly after the TARGET_ASSETS 
+   change. No other changes needed here.
+
+---
+
+CONSTRAINTS:
+- Do NOT remove EUR/USD or USD/JPY from trend_forex. They must stay in 
+  trend_forex as the primary strategy for those pairs.
+- Do NOT change GBP/USD or AUD/USD — they stay in mtf_ema only.
+- Do NOT change any strategy entry/exit logic, indicator calculations, 
+  trailing stop rules, or timing windows.
+- Do NOT change has_any_open_signal_for_asset() — the cross-strategy 
+  idempotency guard must remain intact for all strategies.
+- Do NOT touch sp500_momentum.py, highest_lowest.py, or trend_non_forex.py.
+- All DB changes must be idempotent (safe to run on existing DB multiple times).
+- sync_strategy_assets_dedup() must always resolve conflicts in favor of 
+  the more specific strategy (trend_forex over mtf_ema, trend_non_forex 
+  over mtf_ema).
+- The dedup sync must NOT close any open signals or positions — it only 
+  updates is_active on strategy_assets rows.
+- After changes, the app must start without errors, the MTF EMA admin panel 
+  must not show EUR/USD or USD/JPY, the trend_forex admin panel must show 
+  EUR/USD and USD/JPY, and the Asset Management tab must show no duplicates 
+  across strategies.
+- Verify all imports resolve correctly after TARGET_ASSETS changes in 
+  multi_timeframe.py.

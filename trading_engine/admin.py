@@ -4262,6 +4262,25 @@ async function removeAsset(btn) {
   } catch(e) { alert('Error: ' + e.message); }
 }
 
+async function syncAssetDedup() {
+  var btn = document.querySelector('[data-testid="button-sync-dedup"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Syncing...'; }
+  try {
+    var res = await fetch(BASE + '/admin/api/strategy-assets/sync-dedup', { method: 'POST' });
+    var data = await res.json();
+    if (data.success) {
+      alert(data.message);
+      loadAssets();
+    } else {
+      alert('Sync failed: ' + (data.error || 'Unknown error'));
+    }
+  } catch(e) {
+    alert('Error: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Sync \u0026 Remove Duplicates'; }
+  }
+}
+
 async function loadUserCmsConfigs() {
     var colCount = IS_ADMIN ? 7 : 6;
     try {
@@ -5671,6 +5690,7 @@ def admin_dashboard(
                                 <option value="highest_lowest_fx">Highest/Lowest FX</option>
                             </select>
                             <button class="btn" onclick="loadAssets()" style="font-size:13px;padding:6px 14px;">Refresh</button>
+                            <button class="btn" onclick="syncAssetDedup()" data-testid="button-sync-dedup" style="font-size:13px;padding:6px 14px;background:rgba(234,179,8,0.12);color:#eab308;border:1px solid rgba(234,179,8,0.3);">Sync &amp; Remove Duplicates</button>
                         </div>
                     </div>
                     <div style="overflow-x:auto;">
@@ -6690,6 +6710,30 @@ def api_remove_strategy_asset(
         content={"success": False, "error": "Asset not found"},
         status_code=404,
     )
+
+
+@router.post("/api/strategy-assets/sync-dedup")
+def api_sync_strategy_assets_dedup(request: Request):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import sync_strategy_assets_dedup
+    try:
+        result = sync_strategy_assets_dedup()
+        return JSONResponse(content={
+            "success": True,
+            "resolved": result,
+            "message": (
+                f"Sync complete. {result['total']} conflict(s) resolved: "
+                f"{result['mtf_vs_forex']} mtf/forex, "
+                f"{result['mtf_vs_non_forex']} mtf/non-forex."
+            ),
+        })
+    except Exception as e:
+        return JSONResponse(
+            content={"success": False, "error": str(e)},
+            status_code=500,
+        )
 
 
 @router.delete("/api/user-cms-configs/{config_id}")
