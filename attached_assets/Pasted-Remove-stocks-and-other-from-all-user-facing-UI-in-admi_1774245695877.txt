@@ -1,0 +1,207 @@
+Remove "stocks" and "other" from all user-facing UI in admin.py
+and api_v1.py. Keep "other" as a silent internal DB fallback only.
+Change files: admin.py, api_v1.py, database.py.
+No other files changed.
+
+─────────────────────────────────────────────
+THE APPROACH
+─────────────────────────────────────────────
+"stocks"  — remove everywhere. Nothing generates it.
+           No strategy, no asset, no DB row maps to it.
+
+"other"   — keep in DB layer only as a silent fallback so
+           unknown future symbols do not crash insert_signal().
+           Never show "other" or "OTHER" in the UI.
+           In the signal table badge, if asset_class resolves
+           to "other", show the raw asset symbol instead so
+           the user always sees something meaningful.
+
+─────────────────────────────────────────────
+CHANGE 1 — database.py
+─────────────────────────────────────────────
+
+In _ASSET_CLASS_MAP, remove any entry whose value is "stocks".
+There should be none — confirm and leave the map unchanged
+if no "stocks" entries exist.
+
+In _get_asset_class(), the fallback "other" is correct — keep
+it exactly as-is. This is the DB layer, not user-facing.
+
+In _backfill_asset_class(), the filter already includes
+"stocks" — keep that line so any previously mis-tagged rows
+get corrected on next startup:
+
+  session.query(Signal).filter(
+      Signal.asset_class.in_([None, "other", "stocks"])
+  ).all()
+
+No other changes to database.py.
+
+─────────────────────────────────────────────
+CHANGE 2 — admin.py: filter dropdown
+─────────────────────────────────────────────
+
+In admin_dashboard(), find ASSET_CLASS_CHOICES and ensure
+it has exactly these 5 entries — no "stocks", no "other":
+
+  FIND and REPLACE with:
+    ASSET_CLASS_CHOICES = [
+        ("",            "All Asset Classes"),
+        ("forex",       "Forex"),
+        ("crypto",      "Crypto"),
+        ("commodities", "Commodities"),
+        ("indices",     "Indices"),
+    ]
+
+─────────────────────────────────────────────
+CHANGE 3 — admin.py: _CLASS_COLORS
+─────────────────────────────────────────────
+
+In _CLASS_COLORS at module level, remove "stocks" and "other"
+entries. The dict should have exactly 4 entries:
+
+  FIND and REPLACE with:
+    _CLASS_COLORS = {
+        "forex":       ("rgba(59,130,246,0.15)",  "#60a5fa"),
+        "crypto":      ("rgba(168,85,247,0.15)",  "#c4b5fd"),
+        "commodities": ("rgba(245,158,11,0.15)",  "#fcd34d"),
+        "indices":     ("rgba(34,197,94,0.15)",   "#86efac"),
+    }
+
+─────────────────────────────────────────────
+CHANGE 4 — admin.py: badge fallback in _signals_to_table_rows()
+─────────────────────────────────────────────
+
+In _signals_to_table_rows(), find the block that resolves
+ac_raw and builds ac_badge. Currently it falls back to
+_CLASS_COLORS["other"] for unmapped classes.
+
+FIND:
+  ac_bg, ac_color = _CLASS_COLORS.get(ac_raw, _CLASS_COLORS["other"])
+  ac_badge = (
+      f'<span style="display:inline-block;padding:2px 8px;'
+      f'border-radius:4px;font-size:0.7rem;font-weight:600;'
+      f'text-transform:uppercase;letter-spacing:0.03em;'
+      f'background:{ac_bg};color:{ac_color};">'
+      f'{ac_raw}</span>'
+  )
+
+REPLACE WITH:
+  if ac_raw in _CLASS_COLORS:
+      ac_bg, ac_color = _CLASS_COLORS[ac_raw]
+      ac_label = ac_raw
+  else:
+      # Unknown class — show raw asset symbol so user sees
+      # something meaningful instead of "other" or blank
+      ac_bg    = "rgba(100,116,139,0.12)"
+      ac_color = "#94a3b8"
+      ac_label = s.get("asset", ac_raw)
+
+  ac_badge = (
+      f'<span style="display:inline-block;padding:2px 8px;'
+      f'border-radius:4px;font-size:0.7rem;font-weight:600;'
+      f'text-transform:uppercase;letter-spacing:0.03em;'
+      f'background:{ac_bg};color:{ac_color};">'
+      f'{ac_label}</span>'
+  )
+
+─────────────────────────────────────────────
+CHANGE 5 — admin.py: _ADMIN_CLASS_MAP
+─────────────────────────────────────────────
+
+In _ADMIN_CLASS_MAP at module level, remove any entry whose
+value is "stocks". Confirm all 15 ETF symbols map to
+"commodities". The map should contain only these four
+value types: "forex", "crypto", "commodities", "indices".
+
+Verify the complete map is:
+  _ADMIN_CLASS_MAP = {
+      # Forex
+      "EUR/USD": "forex",   "GBP/USD": "forex",   "USD/JPY": "forex",
+      "USD/CAD": "forex",   "AUD/USD": "forex",   "NZD/USD": "forex",
+      "USD/CHF": "forex",   "EUR/GBP": "forex",
+      # Crypto
+      "BTC/USD": "crypto",  "ETH/USD": "crypto",  "LTC/USD": "crypto",
+      "XRP/USD": "crypto",  "BNB/USD": "crypto",
+      # Commodities — spot
+      "XAU/USD": "commodities", "XAG/USD": "commodities",
+      "XPT/USD": "commodities", "XPD/USD": "commodities",
+      "OSX":     "commodities",
+      # Commodities — ETFs
+      "USO":  "commodities", "UNG":  "commodities", "UGA":  "commodities",
+      "DBB":  "commodities", "SLX":  "commodities",
+      "SGOL": "commodities", "SIVR": "commodities", "CPER": "commodities",
+      "PPLT": "commodities", "PALL": "commodities",
+      "CORN": "commodities", "SOYB": "commodities", "WEAT": "commodities",
+      "CANE": "commodities", "WOOD": "commodities",
+      # Indices
+      "SPX": "indices", "NDX": "indices", "RUT": "indices",
+      "DJI": "indices",
+  }
+
+─────────────────────────────────────────────
+CHANGE 6 — api_v1.py: CATEGORY_MAP
+─────────────────────────────────────────────
+
+In CATEGORY_MAP, ensure all 15 ETF symbols map to
+"commodities". The map fallback .get(symbol, "other")
+is kept — "other" is a silent internal value only,
+never surfaced directly to API consumers since
+_format_signal_public() now has asset_class from DB.
+
+Add any missing ETF entries:
+  "CORN": "commodities", "SOYB": "commodities",
+  "WEAT": "commodities", "CANE": "commodities",
+  "WOOD": "commodities",
+  "SGOL": "commodities", "SIVR": "commodities",
+  "CPER": "commodities", "PPLT": "commodities",
+  "PALL": "commodities",
+  "NDX":  "indices",
+
+Remove any entry mapping to "stocks" if present.
+
+─────────────────────────────────────────────
+CHANGE 7 — api_v1.py: SignalPublic description
+─────────────────────────────────────────────
+
+Update the asset_class field description to reflect the
+four active categories only:
+
+  FIND:
+    asset_class: str = Field(
+        ...,
+        example="forex",
+        description="Asset class: forex | crypto | commodities | indices"
+    )
+
+  REPLACE WITH:
+    asset_class: str = Field(
+        ...,
+        example="forex",
+        description=(
+            "Asset class label: forex | crypto | commodities | indices. "
+            "Set automatically at signal creation from the asset symbol."
+        ),
+    )
+
+─────────────────────────────────────────────
+VERIFICATION CHECKLIST (confirm internally before saving)
+─────────────────────────────────────────────
+[ ] "stocks" does not appear anywhere in admin.py,
+    api_v1.py, or database.py as a mapped value
+[ ] "other" does not appear in ASSET_CLASS_CHOICES dropdown
+[ ] "other" does not appear in _CLASS_COLORS
+[ ] "other" is kept only as the DB fallback in
+    _get_asset_class() and _backfill filter list
+[ ] _CLASS_COLORS has exactly 4 entries
+[ ] ASSET_CLASS_CHOICES has exactly 5 entries (blank + 4)
+[ ] _ADMIN_CLASS_MAP values are only forex/crypto/
+    commodities/indices — nothing else
+[ ] Badge fallback shows raw asset symbol (not "other")
+    when asset_class is not in _CLASS_COLORS
+[ ] Badge fallback uses muted grey color #94a3b8
+[ ] CATEGORY_MAP in api_v1.py has all ETFs → commodities
+[ ] SignalPublic description updated to 4 categories
+[ ] _backfill_asset_class() still catches "stocks" rows
+[ ] No other functions or files were changed
+[ ] All three files are syntactically valid Python

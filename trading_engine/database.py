@@ -536,7 +536,7 @@ def _backfill_asset_class():
     with _get_session() as session:
         try:
             rows = session.query(Signal).filter(
-                Signal.asset_class.in_([None, "other"])
+                Signal.asset_class.in_([None, "other", "stocks"])
             ).all()
             updated = 0
             for sig in rows:

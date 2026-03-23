@@ -103,21 +103,26 @@ def _nth_weekday(year: int, month: int, weekday: int, n: int) -> datetime:
 
 
 _ADMIN_CLASS_MAP: dict[str, str] = {
-    "EUR/USD": "forex",    "GBP/USD": "forex",    "USD/JPY": "forex",
-    "USD/CAD": "forex",    "AUD/USD": "forex",    "NZD/USD": "forex",
-    "USD/CHF": "forex",    "EUR/GBP": "forex",
-    "BTC/USD": "crypto",   "ETH/USD": "crypto",   "LTC/USD": "crypto",
-    "XRP/USD": "crypto",   "BNB/USD": "crypto",
+    # Forex
+    "EUR/USD": "forex",   "GBP/USD": "forex",   "USD/JPY": "forex",
+    "USD/CAD": "forex",   "AUD/USD": "forex",   "NZD/USD": "forex",
+    "USD/CHF": "forex",   "EUR/GBP": "forex",
+    # Crypto
+    "BTC/USD": "crypto",  "ETH/USD": "crypto",  "LTC/USD": "crypto",
+    "XRP/USD": "crypto",  "BNB/USD": "crypto",
+    # Commodities — spot
     "XAU/USD": "commodities", "XAG/USD": "commodities",
     "XPT/USD": "commodities", "XPD/USD": "commodities",
-    "OSX": "commodities",  "USO": "commodities",
-    "UNG": "commodities",  "UGA": "commodities",
-    "DBB": "commodities",  "SLX": "commodities",
-    "SGOL": "commodities", "SIVR": "commodities",
-    "CPER": "commodities", "PPLT": "commodities", "PALL": "commodities",
+    "OSX":     "commodities",
+    # Commodities — ETFs
+    "USO":  "commodities", "UNG":  "commodities", "UGA":  "commodities",
+    "DBB":  "commodities", "SLX":  "commodities",
+    "SGOL": "commodities", "SIVR": "commodities", "CPER": "commodities",
+    "PPLT": "commodities", "PALL": "commodities",
     "CORN": "commodities", "SOYB": "commodities", "WEAT": "commodities",
     "CANE": "commodities", "WOOD": "commodities",
-    "SPX": "indices",      "NDX": "indices",      "RUT": "indices",
+    # Indices
+    "SPX": "indices", "NDX": "indices", "RUT": "indices",
     "DJI": "indices",
 }
 
@@ -126,8 +131,6 @@ _CLASS_COLORS: dict[str, tuple[str, str]] = {
     "crypto":      ("rgba(168,85,247,0.15)",  "#c4b5fd"),
     "commodities": ("rgba(245,158,11,0.15)",  "#fcd34d"),
     "indices":     ("rgba(34,197,94,0.15)",   "#86efac"),
-    "stocks":      ("rgba(239,68,68,0.15)",   "#fca5a5"),
-    "other":       ("rgba(100,116,139,0.15)", "#94a3b8"),
 }
 
 
@@ -237,13 +240,20 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
             status_badge = f'<span class="badge {status_class}">{status}</span>'
 
         ac_raw = s.get("asset_class") or _ADMIN_CLASS_MAP.get(s.get("asset", ""), "other")
-        ac_bg, ac_color = _CLASS_COLORS.get(ac_raw, _CLASS_COLORS["other"])
+        if ac_raw in _CLASS_COLORS:
+            ac_bg, ac_color = _CLASS_COLORS[ac_raw]
+            ac_label = ac_raw
+        else:
+            ac_bg    = "rgba(100,116,139,0.12)"
+            ac_color = "#94a3b8"
+            ac_label = s.get("asset", ac_raw)
+
         ac_badge = (
             f'<span style="display:inline-block;padding:2px 8px;'
             f'border-radius:4px;font-size:0.7rem;font-weight:600;'
             f'text-transform:uppercase;letter-spacing:0.03em;'
             f'background:{ac_bg};color:{ac_color};">'
-            f'{ac_raw}</span>'
+            f'{ac_label}</span>'
         )
 
         rows.append(f"""
@@ -4381,8 +4391,6 @@ def admin_dashboard(
         ("crypto",      "Crypto"),
         ("commodities", "Commodities"),
         ("indices",     "Indices"),
-        ("stocks",      "Stocks"),
-        ("other",       "Other"),
     ]
     asset_class_options = ""
     for v, label in ASSET_CLASS_CHOICES:

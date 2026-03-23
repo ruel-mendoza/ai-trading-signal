@@ -29,7 +29,14 @@ logger = logging.getLogger("trading_engine.api_v1")
 
 class SignalPublic(BaseModel):
     asset: str = Field(..., example="EUR/USD")
-    asset_class: str = Field(..., example="forex")
+    asset_class: str = Field(
+        ...,
+        example="forex",
+        description=(
+            "Asset class label: forex | crypto | commodities | indices. "
+            "Set automatically at signal creation from the asset symbol."
+        ),
+    )
     direction: str = Field(..., example="LONG")
     entry: float = Field(..., example=1.0845)
     stop_loss: float = Field(..., example=1.0790)
