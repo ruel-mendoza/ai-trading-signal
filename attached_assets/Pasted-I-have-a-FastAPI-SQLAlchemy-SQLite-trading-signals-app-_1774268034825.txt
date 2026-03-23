@@ -1,0 +1,223 @@
+I have a FastAPI + SQLAlchemy (SQLite) trading signals app. The Asset 
+Management tab shows duplicate coins — 26 crypto coins appear in BOTH 
+mtf_ema AND trend_non_forex strategies, and EUR/USD and USD/JPY are 
+still active in mtf_ema. All duplicates need to be permanently removed 
+from mtf_ema. Only BTC/USD and ETH/USD must remain in mtf_ema crypto. 
+EUR/USD and USD/JPY must be removed from mtf_ema entirely.
+
+Read these files first before making any changes:
+- trading_engine/database.py
+- trading_engine/strategies/multi_timeframe.py
+- trading_engine/strategy_runner.py
+
+---
+
+EXACT DUPLICATES TO FIX based on current Asset Management data:
+
+REMOVE from mtf_ema (set is_active=0, added_by="admin_removed"):
+  Crypto coins (keep only BTC/USD and ETH/USD in mtf_ema):
+    ADA/USD, APT/USD, ARB/USD, ATOM/USD, AVAX/USD, BCH/USD,
+    BNB/USD, CRO/USD, DOGE/USD, DOT/USD, HBAR/USD, ICP/USD,
+    INJ/USD, LINK/USD, LTC/USD, MATIC/USD, NEAR/USD, OP/USD,
+    SHIB/USD, SOL/USD, SUI/USD, TON/USD, TRX/USD, UNI/USD,
+    XLM/USD, XRP/USD
+  Forex pairs:
+    EUR/USD, USD/JPY
+
+KEEP in mtf_ema (do not touch):
+  BTC/USD, ETH/USD,
+  AUD/USD, GBP/USD,
+  NDX, OSX, RUT, SPX,
+  XAG/USD, XAU/USD
+
+KEEP in trend_non_forex (do not touch — all 26 coins stay here):
+  All existing trend_non_forex rows exactly as-is
+
+---
+
+Make ALL of the following changes in ONE pass:
+
+---
+
+1. trading_engine/database.py
+
+a) In _STRATEGY_ASSET_SEEDS, update the mtf_ema seeds list to remove 
+   all 26 coins and EUR/USD and USD/JPY. The final mtf_ema seeds 
+   list must contain ONLY these entries:
+
+     "mtf_ema": [
+         ("SPX",     "forex",  "indices"),
+         ("NDX",     "forex",  "indices"),
+         ("RUT",     "forex",  "indices"),
+         ("XAU/USD", "forex",  "commodities"),
+         ("XAG/USD", "forex",  "commodities"),
+         ("OSX",     "forex",  "commodities"),
+         ("BTC/USD", "crypto", "crypto"),
+         ("ETH/USD", "crypto", "crypto"),
+         ("GBP/USD", "forex",  "forex"),
+         ("AUD/USD", "forex",  "forex"),
+     ],
+
+   Remove ALL other entries from the mtf_ema seeds including:
+   - All 26 crypto altcoins
+   - EUR/USD
+   - USD/JPY
+
+   Do NOT change trend_non_forex seeds — keep exactly as-is.
+   Do NOT change any other strategy seeds.
+
+b) In seed_strategy_assets(), verify the reactivation guard checks 
+   added_by == "system_seed" before reactivating. If it does not 
+   already have this guard add it now:
+
+     elif not existing.is_active and existing.added_by == "system_seed":
+         existing.is_active = 1
+         session.commit()
+
+   This ensures manually removed assets are never re-activated on 
+   restart.
+
+c) Add a one-time cleanup block inside seed_strategy_assets() after 
+   the main seed loop. This block permanently deactivates all 28 
+   symbols from mtf_ema in the existing DB. Place it after any 
+   existing COINS_MOVED_FROM_MTF or FOREX_REMOVED_FROM_MTF cleanup 
+   blocks. If those blocks already exist and cover the same symbols, 
+   replace them with this single consolidated block:
+
+     MTF_CLEANUP_SYMBOLS = [
+         # 26 crypto coins
+         "ADA/USD",  "APT/USD",  "ARB/USD",  "ATOM/USD",
+         "AVAX/USD", "BCH/USD",  "BNB/USD",  "CRO/USD",
+         "DOGE/USD", "DOT/USD",  "HBAR/USD", "ICP/USD",
+         "INJ/USD",  "LINK/USD", "LTC/USD",  "MATIC/USD",
+         "NEAR/USD", "OP/USD",   "SHIB/USD", "SOL/USD",
+         "SUI/USD",  "TON/USD",  "TRX/USD",  "UNI/USD",
+         "XLM/USD",  "XRP/USD",
+         # forex pairs
+         "EUR/USD",  "USD/JPY",
+     ]
+     mtf_cleanup = (
+         session.query(StrategyAsset)
+         .filter(
+             StrategyAsset.strategy_name == "mtf_ema",
+             StrategyAsset.symbol.in_(MTF_CLEANUP_SYMBOLS),
+             StrategyAsset.is_active == 1,
+         )
+         .all()
+     )
+     for row in mtf_cleanup:
+         row.is_active = 0
+         row.added_by = "admin_removed"
+         logger.info(
+             f"[DB] seed_strategy_assets: permanently deactivated "
+             f"mtf_ema/{row.symbol} (duplicate — moved to other strategy)"
+         )
+     if mtf_cleanup:
+         session.commit()
+         logger.info(
+             f"[DB] seed_strategy_assets: permanently deactivated "
+             f"{len(mtf_cleanup)} duplicate asset(s) from mtf_ema"
+         )
+
+d) Also update remove_strategy_asset() to always set 
+   added_by="admin_removed" when deactivating so restarts never 
+   re-activate manually removed assets. Find this in 
+   remove_strategy_asset():
+
+     FIND:
+       row.is_active = 0
+       session.commit()
+
+     CHANGE TO:
+       row.is_active = 0
+       row.added_by = "admin_removed"
+       session.commit()
+
+---
+
+2. trading_engine/strategies/multi_timeframe.py
+
+a) Update TARGET_ASSETS to remove all 26 coins and EUR/USD and 
+   USD/JPY. The final TARGET_ASSETS must be:
+
+     TARGET_ASSETS = {
+         "indices":    ["SPX", "NDX", "RUT"],
+         "commodities": ["XAU/USD", "XAG/USD", "OSX"],
+         "crypto":     ["BTC/USD", "ETH/USD"],
+         "forex":      ["GBP/USD", "AUD/USD"],
+     }
+
+b) ALL_ASSETS is built from TARGET_ASSETS via a loop — verify it 
+   updates automatically. If it is a hardcoded flat list, replace 
+   it with:
+
+     ALL_ASSETS = []
+     for group in TARGET_ASSETS.values():
+         ALL_ASSETS.extend(group)
+
+c) Verify get_all_mtf_assets() reads from DB with active_only=True. 
+   If it does not filter by is_active, fix it:
+
+     def get_all_mtf_assets() -> list[str]:
+         try:
+             from trading_engine.database import get_strategy_assets
+             symbols = get_strategy_assets(
+                 STRATEGY_NAME, active_only=True
+             )
+             if symbols:
+                 return symbols
+         except Exception:
+             pass
+         result = []
+         for group in TARGET_ASSETS.values():
+             result.extend(group)
+         return result
+
+d) Do NOT change any entry conditions, exit logic, indicator 
+   calculations, or any other code in this file.
+
+---
+
+3. trading_engine/strategy_runner.py
+
+Update STRATEGY_ASSET_CONFIG for mtf_ema to remove all 26 coins 
+and EUR/USD and USD/JPY. The final mtf_ema assets list must be:
+
+   "mtf_ema": {
+       "assets": [
+           "SPX", "NDX", "RUT",
+           "XAU/USD", "XAG/USD", "OSX",
+           "BTC/USD", "ETH/USD",
+           "GBP/USD", "AUD/USD",
+       ],
+       "timeframe": "1H",
+   },
+
+Do NOT change any other strategy config in STRATEGY_ASSET_CONFIG.
+
+---
+
+CONSTRAINTS:
+- BTC/USD and ETH/USD must remain in mtf_ema — do NOT remove them.
+- GBP/USD and AUD/USD must remain in mtf_ema — do NOT remove them.
+- SPX, NDX, RUT, XAU/USD, XAG/USD, OSX must remain in mtf_ema — 
+  do NOT remove them.
+- Do NOT touch trend_non_forex seeds, symbols, or config — all 26 
+  coins and ETF symbols stay exactly as-is in trend_non_forex.
+- Do NOT touch trend_forex, sp500_momentum, or highest_lowest_fx.
+- Do NOT change any strategy entry/exit logic or indicator 
+  calculations.
+- All DB changes must be idempotent — safe to run on existing DB 
+  multiple times without creating duplicates or errors.
+- The cleanup block must use added_by="admin_removed" so the seed 
+  loop never re-activates these rows on future restarts.
+- After changes the Asset Management tab must show:
+    mtf_ema: exactly 10 assets 
+      (SPX, NDX, RUT, XAU/USD, XAG/USD, OSX, 
+       BTC/USD, ETH/USD, GBP/USD, AUD/USD)
+    trend_non_forex: all 26 crypto coins + 15 ETFs = 41 assets
+    trend_forex: EUR/USD, USD/JPY
+    sp500_momentum: SPX
+    highest_lowest_fx: EUR/USD
+    No symbol should appear in both mtf_ema and trend_non_forex.
+    EUR/USD and USD/JPY must not appear in mtf_ema.

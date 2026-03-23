@@ -2324,62 +2324,44 @@ def seed_strategy_assets():
                     f"{backfilled} mtf_ema asset(s)"
                 )
 
-            # One-time cleanup: soft-delete any mtf_ema rows for the 26 coins
-            # that were moved to trend_non_forex. is_active=0 prevents future
-            # evaluation under mtf_ema without deleting history.
-            COINS_MOVED_FROM_MTF = [
-                "BNB/USD",  "XRP/USD",  "SOL/USD",  "TRX/USD",  "DOGE/USD",
-                "ADA/USD",  "TON/USD",  "SHIB/USD", "AVAX/USD", "LINK/USD",
-                "LTC/USD",  "DOT/USD",  "BCH/USD",  "UNI/USD",
-                "ATOM/USD", "XLM/USD",  "HBAR/USD", "ICP/USD",  "APT/USD",
-                "NEAR/USD", "ARB/USD",  "OP/USD",   "SUI/USD",  "INJ/USD",
-                "CRO/USD",
+            # One-time consolidated cleanup: permanently deactivate all 28
+            # symbols that no longer belong in mtf_ema (26 crypto altcoins
+            # moved to trend_non_forex + EUR/USD and USD/JPY moved to
+            # trend_forex). Sets added_by="admin_removed" so the seed loop
+            # never re-activates them on future restarts.
+            MTF_CLEANUP_SYMBOLS = [
+                # 26 crypto altcoins
+                "ADA/USD",  "APT/USD",  "ARB/USD",  "ATOM/USD",
+                "AVAX/USD", "BCH/USD",  "BNB/USD",  "CRO/USD",
+                "DOGE/USD", "DOT/USD",  "HBAR/USD", "ICP/USD",
+                "INJ/USD",  "LINK/USD", "LTC/USD",  "MATIC/USD",
+                "NEAR/USD", "OP/USD",   "SHIB/USD", "SOL/USD",
+                "SUI/USD",  "TON/USD",  "TRX/USD",  "UNI/USD",
+                "XLM/USD",  "XRP/USD",
+                # forex pairs
+                "EUR/USD",  "USD/JPY",
             ]
-            moved_rows = (
+            mtf_cleanup = (
                 session.query(StrategyAsset)
                 .filter(
                     StrategyAsset.strategy_name == "mtf_ema",
-                    StrategyAsset.symbol.in_(COINS_MOVED_FROM_MTF),
+                    StrategyAsset.symbol.in_(MTF_CLEANUP_SYMBOLS),
                     StrategyAsset.is_active == 1,
                 )
                 .all()
             )
-            for row in moved_rows:
+            for row in mtf_cleanup:
                 row.is_active = 0
+                row.added_by = "admin_removed"
                 logger.info(
-                    f"[DB] seed_strategy_assets: deactivated "
-                    f"mtf_ema/{row.symbol} (moved to trend_non_forex)"
+                    f"[DB] seed_strategy_assets: permanently deactivated "
+                    f"mtf_ema/{row.symbol} (duplicate — moved to other strategy)"
                 )
-            if moved_rows:
+            if mtf_cleanup:
                 session.commit()
                 logger.info(
-                    f"[DB] seed_strategy_assets: deactivated "
-                    f"{len(moved_rows)} coin(s) from mtf_ema"
-                )
-
-            # One-time cleanup: soft-delete EUR/USD and USD/JPY from mtf_ema.
-            # These pairs now live exclusively in trend_forex.
-            FOREX_REMOVED_FROM_MTF = ["EUR/USD", "USD/JPY"]
-            forex_removed = (
-                session.query(StrategyAsset)
-                .filter(
-                    StrategyAsset.strategy_name == "mtf_ema",
-                    StrategyAsset.symbol.in_(FOREX_REMOVED_FROM_MTF),
-                    StrategyAsset.is_active == 1,
-                )
-                .all()
-            )
-            for row in forex_removed:
-                row.is_active = 0
-                logger.info(
-                    f"[DB] seed_strategy_assets: deactivated "
-                    f"mtf_ema/{row.symbol} (moved to trend_forex only)"
-                )
-            if forex_removed:
-                session.commit()
-                logger.info(
-                    f"[DB] seed_strategy_assets: deactivated "
-                    f"{len(forex_removed)} forex pair(s) from mtf_ema"
+                    f"[DB] seed_strategy_assets: permanently deactivated "
+                    f"{len(mtf_cleanup)} duplicate asset(s) from mtf_ema"
                 )
 
         except Exception as e:
