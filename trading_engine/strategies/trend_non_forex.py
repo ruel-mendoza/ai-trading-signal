@@ -463,8 +463,86 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
 
         return SignalResult()
 
+    def _close_orphaned_signals(self) -> list[dict]:
+        """Close any OPEN signals that have no corresponding open_positions record,
+        and close any position records for assets no longer in TARGET_SYMBOLS
+        (legacy assets removed from the strategy).
+        """
+        orphans = get_active_signals(strategy_name=STRATEGY_NAME)
+        if not orphans:
+            return []
+
+        positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
+        position_assets = {p["asset"] for p in positions}
+
+        closed: list[dict] = []
+        for sig in orphans:
+            asset = sig["asset"]
+            sig_id = sig["id"]
+            direction = sig.get("direction", "")
+            entry_price = sig.get("entry_price", 0)
+            ts_raw = sig.get("signal_timestamp") or ""
+
+            is_orphaned = asset not in position_assets
+            is_legacy = asset not in TARGET_SYMBOLS
+
+            if not is_orphaned and not is_legacy:
+                continue
+
+            hours_open = None
+            try:
+                entry_time = datetime.strptime(str(ts_raw)[:19], "%Y-%m-%dT%H:%M:%S")
+                entry_time = pytz.timezone("America/New_York").localize(entry_time)
+                now_et = datetime.now(pytz.utc).astimezone(pytz.timezone("America/New_York"))
+                hours_open = (now_et - entry_time).total_seconds() / 3600
+            except (ValueError, TypeError):
+                pass
+
+            reason_tag = []
+            if is_legacy:
+                reason_tag.append(f"asset '{asset}' removed from strategy TARGET_SYMBOLS")
+            if is_orphaned:
+                reason_tag.append("no open_positions record (cleared on restart)")
+
+            exit_price = entry_price
+            try:
+                candles = self.cache.get_candles(asset, TIMEFRAME, 5)
+                if candles:
+                    exit_price = candles[-1]["close"]
+            except Exception:
+                pass
+
+            hours_str = f"{hours_open:.1f}h" if hours_open is not None else "unknown duration"
+            exit_reason = (
+                f"Orphaned/legacy signal close | {'; '.join(reason_tag)} | "
+                f"open for {hours_str}"
+            )
+            logger.warning(
+                f"[TREND-NONFX-EXIT] ORPHAN/LEGACY SIGNAL | id={sig_id} | {asset} {direction} | "
+                f"is_orphaned={is_orphaned} | is_legacy={is_legacy} | hours_open={hours_str} | Closing"
+            )
+            close_signal(sig_id, exit_reason, exit_price=exit_price)
+            if is_legacy and asset in position_assets:
+                close_position(STRATEGY_NAME, asset)
+            closed.append({
+                "asset": asset, "direction": direction,
+                "entry_price": entry_price, "exit_price": exit_price,
+                "exit_reason": "orphaned_or_legacy",
+            })
+
+        return closed
+
     def check_exits(self) -> list[dict]:
         closed_signals = []
+
+        # Safety net: close orphaned signals and legacy assets removed from strategy
+        orphan_closes = self._close_orphaned_signals()
+        closed_signals.extend(orphan_closes)
+        if orphan_closes:
+            logger.warning(
+                f"[TREND-NONFX-EXIT] {len(orphan_closes)} orphaned/legacy signal(s) closed"
+            )
+
         positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
         logger.info(f"[TREND-NONFX-EXIT] ====== Checking exits (closing-rule gate) | {len(positions)} open position(s) ======")
 

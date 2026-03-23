@@ -892,6 +892,86 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
 
         return SignalResult()
 
+    def _close_orphaned_signals(self) -> list[dict]:
+        """Close any OPEN signals that have no corresponding open_positions record.
+
+        Handles post-restart desync where open_positions is cleared but signals
+        remain OPEN. For mtf_ema, we attempt the EMA20 exit check; if candles
+        are unavailable, we close unconditionally as orphaned.
+        """
+        orphans = get_active_signals(strategy_name=STRATEGY_NAME)
+        if not orphans:
+            return []
+
+        positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
+        position_assets = {p["asset"] for p in positions}
+
+        closed: list[dict] = []
+        for sig in orphans:
+            asset = sig["asset"]
+            if asset in position_assets:
+                continue
+
+            sig_id = sig["id"]
+            direction = sig.get("direction", "")
+            entry_price = sig.get("entry_price", 0)
+            ts_raw = sig.get("signal_timestamp") or ""
+
+            hours_open = None
+            try:
+                entry_time = datetime.strptime(str(ts_raw)[:19], "%Y-%m-%dT%H:%M:%S")
+                import pytz as _pytz
+                entry_time = _pytz.timezone("America/New_York").localize(entry_time)
+                now_et = datetime.now(_pytz.utc).astimezone(_pytz.timezone("America/New_York"))
+                hours_open = (now_et - entry_time).total_seconds() / 3600
+            except (ValueError, TypeError):
+                pass
+
+            logger.warning(
+                f"[MTF-EMA-EXIT] ORPHAN SIGNAL detected | id={sig_id} | {asset} {direction} | "
+                f"entry={entry_price} | "
+                f"hours_open={f'{hours_open:.1f}' if hours_open is not None else 'unknown'} | "
+                f"No open_positions record — attempting EMA20 exit check"
+            )
+
+            exit_price = entry_price
+            exit_reason_base = (
+                f"Orphaned signal close | No open_positions record (cleared on restart) | "
+                f"open for {f'{hours_open:.1f}h' if hours_open is not None else 'unknown duration'}"
+            )
+
+            try:
+                h1_candles = self.cache.get_candles(asset, TIMEFRAME_H1, 300)
+                if h1_candles and len(h1_candles) >= EMA_20 + 1:
+                    h1_closes = [float(c["close"]) for c in h1_candles]
+                    h1_ema20_series = IndicatorEngine.ema(h1_closes, EMA_20)
+                    h1_ema20 = h1_ema20_series[-1] if h1_ema20_series and h1_ema20_series[-1] is not None else None
+                    h1_close = float(h1_candles[-1]["close"])
+                    exit_price = h1_close
+
+                    if h1_ema20 is not None:
+                        ema_exit = (direction == "BUY" and h1_close < h1_ema20) or \
+                                   (direction == "SELL" and h1_close > h1_ema20)
+                        exit_reason_base += (
+                            f" | EMA20_check: H1_close={h1_close:.5f} H1_EMA20={h1_ema20:.5f} "
+                            f"exit_triggered={ema_exit}"
+                        )
+            except Exception as e:
+                logger.warning(f"[MTF-EMA-EXIT] ORPHAN id={sig_id} | EMA20 check failed: {e}")
+
+            close_signal(sig_id, exit_reason_base, exit_price=exit_price)
+            closed.append({
+                "asset": asset, "direction": direction,
+                "entry_price": entry_price, "exit_price": exit_price,
+                "exit_reason": "orphaned_no_position_record",
+            })
+            logger.info(
+                f"[MTF-EMA-EXIT] ORPHAN SIGNAL closed | id={sig_id} | {asset} {direction} | "
+                f"exit_price={exit_price}"
+            )
+
+        return closed
+
     def check_exits(self) -> list[dict]:
         """Standalone exit checker called by the scheduler after the per-asset evaluation loop.
 
@@ -905,6 +985,16 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
         Never closes a position just because conditions changed or because the signal is old.
         """
         closed: list[dict] = []
+
+        # Safety net: close any OPEN signals with no position record
+        orphan_closes = self._close_orphaned_signals()
+        closed.extend(orphan_closes)
+        if orphan_closes:
+            logger.warning(
+                f"[MTF-EMA-EXIT] {len(orphan_closes)} orphaned signal(s) closed — "
+                f"open_positions was out of sync with signals table"
+            )
+
         positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
 
         if not positions:
