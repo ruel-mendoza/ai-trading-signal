@@ -30,7 +30,14 @@ STRATEGY_NAME = "mtf_ema"
 TARGET_ASSETS = {
     "indices":    ["SPX", "NDX", "RUT"],
     "commodities": ["XAU/USD", "XAG/USD", "OSX"],
-    "crypto":     ["BTC/USD", "ETH/USD"],
+    "crypto": [
+        # Original
+        "BTC/USD", "ETH/USD",
+        # Tier 1 altcoins — sufficient D1+H4+H1 history
+        "BNB/USD", "XRP/USD", "SOL/USD", "ADA/USD",
+        "DOGE/USD", "AVAX/USD", "LINK/USD", "DOT/USD",
+        "BCH/USD", "ATOM/USD",
+    ],
     "forex":      ["EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"],
 }
 

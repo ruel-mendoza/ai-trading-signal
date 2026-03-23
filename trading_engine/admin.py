@@ -741,7 +741,10 @@ def _build_spx_momentum_html(spx_data: dict, spx_signal_rows: str, spx_signal_co
 
 def _get_mtf_ema_data() -> dict:
     from zoneinfo import ZoneInfo
-    from trading_engine.strategies.multi_timeframe import TARGET_ASSETS
+    from trading_engine.strategies.multi_timeframe import (
+        TARGET_ASSETS,
+        ALL_ASSETS as _MTF_ALL_ASSETS_LOCAL,
+    )
     et_zone = ZoneInfo("America/New_York")
     et_now = datetime.now(et_zone)
     ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
@@ -960,6 +963,11 @@ def _get_mtf_ema_data() -> dict:
 
 
 def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: int) -> str:
+    from trading_engine.strategies.multi_timeframe import (
+        ALL_ASSETS as _MTF_ALL_ASSETS,
+        TARGET_ASSETS as _MTF_TARGET_ASSETS,
+    )
+
     def _fmt(val, decimals=5):
         return f"{val:.{decimals}f}" if val is not None else "N/A"
 
@@ -1096,7 +1104,7 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
         <div class="stat-label" style="margin-top:4px;">DST: {'Active' if mtf_data['dst_active'] else 'Inactive'}</div>
     </div>
     <div class="settings-section">
-        <h3>Multi-Timeframe Conditions <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">27 assets &middot; 5 groups &middot; Hourly at :01 ET</span></h3>
+        <h3>Multi-Timeframe Conditions <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">{len(_MTF_ALL_ASSETS)} assets &middot; {len(_MTF_TARGET_ASSETS)} groups &middot; Hourly at :01 ET</span></h3>
         {sections_html}
     </div>
     {active_html}

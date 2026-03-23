@@ -1,0 +1,158 @@
+Add selected altcoins to multi_timeframe.py TARGET_ASSETS
+under the existing "crypto" group. Only add Tier 1 large-cap
+altcoins with sufficient multi-timeframe history.
+No other files changed except admin.py to reflect the
+updated asset count.
+
+─────────────────────────────────────────────
+CHANGE 1 — multi_timeframe.py: expand crypto group
+─────────────────────────────────────────────
+
+In multi_timeframe.py, find TARGET_ASSETS and update
+the "crypto" group:
+
+  FIND:
+    "crypto": ["BTC/USD", "ETH/USD"],
+
+  REPLACE WITH:
+    "crypto": [
+        # Original
+        "BTC/USD", "ETH/USD",
+        # Tier 1 altcoins — sufficient D1+H4+H1 history
+        "BNB/USD", "XRP/USD", "SOL/USD", "ADA/USD",
+        "DOGE/USD", "AVAX/USD", "LINK/USD", "DOT/USD",
+        "BCH/USD", "ATOM/USD",
+    ],
+
+─────────────────────────────────────────────
+CHANGE 2 — multi_timeframe.py: update ALL_ASSETS
+─────────────────────────────────────────────
+
+ALL_ASSETS is built from TARGET_ASSETS via a for-loop:
+
+  ALL_ASSETS = []
+  for group in TARGET_ASSETS.values():
+      ALL_ASSETS.extend(group)
+
+This is dynamic — no change needed. ALL_ASSETS will
+automatically include the new coins.
+
+─────────────────────────────────────────────
+CHANGE 3 — fcsapi_client.py: verify routing
+─────────────────────────────────────────────
+
+All new crypto symbols (BNB/USD, XRP/USD, SOL/USD, etc.)
+must already be present in CRYPTO_SYMBOLS, CRYPTO_SYMBOL_MAP,
+and ADVANCE_SYMBOL_MAP from the altcoin addition prompt.
+
+Verify — do not duplicate. If any of the 10 new coins
+are missing from any of the three maps, add them now
+using the same pattern as existing crypto entries:
+
+  CRYPTO_SYMBOLS additions if missing:
+    "SOL/USD", "DOGE/USD", "ADA/USD", "AVAX/USD",
+    "LINK/USD", "DOT/USD", "BCH/USD", "ATOM/USD"
+    (BNB/USD and XRP/USD already present)
+
+  CRYPTO_SYMBOL_MAP additions if missing:
+    "SOL/USD":  "SOLUSDT",
+    "DOGE/USD": "DOGEUSDT",
+    "ADA/USD":  "ADAUSDT",
+    "AVAX/USD": "AVAXUSDT",
+    "LINK/USD": "LINKUSDT",
+    "DOT/USD":  "DOTUSDT",
+    "BCH/USD":  "BCHUSDT",
+    "ATOM/USD": "ATOMUSDT",
+
+  ADVANCE_SYMBOL_MAP additions if missing:
+    Same 8 entries as CRYPTO_SYMBOL_MAP above.
+
+─────────────────────────────────────────────
+CHANGE 4 — admin.py: update MTF EMA asset count
+           in strategy rules section
+─────────────────────────────────────────────
+
+In admin.py, inside _build_mtf_ema_html(), find the
+hardcoded asset count in the strategy rules header.
+The count was previously 12. It is now 22 (12 original
++ 10 new altcoins).
+
+  FIND any occurrence of:
+    "27 assets" or "12 assets" or any hardcoded asset
+    count referring to MTF EMA
+
+  REPLACE WITH a dynamic count using the imported
+  ALL_ASSETS list. At the top of _build_mtf_ema_html(),
+  add:
+
+    from trading_engine.strategies.multi_timeframe import (
+        ALL_ASSETS as _MTF_ALL_ASSETS,
+        TARGET_ASSETS as _MTF_TARGET_ASSETS,
+    )
+
+  Then replace any hardcoded count with:
+    len(_MTF_ALL_ASSETS)
+
+  And update the asset group counts in the badge displays
+  to use dynamic len() calls:
+    len(_MTF_TARGET_ASSETS.get("indices", []))
+    len(_MTF_TARGET_ASSETS.get("commodities", []))
+    len(_MTF_TARGET_ASSETS.get("crypto", []))
+    len(_MTF_TARGET_ASSETS.get("forex", []))
+
+─────────────────────────────────────────────
+CHANGE 5 — admin.py: update _get_mtf_ema_data()
+           to use live TARGET_ASSETS
+─────────────────────────────────────────────
+
+In _get_mtf_ema_data(), find the import of TARGET_ASSETS:
+
+  FIND:
+    from trading_engine.strategies.multi_timeframe import (
+        TARGET_ASSETS, HISTORICAL_DIP_H4_BARS
+    )
+
+  REPLACE WITH:
+    from trading_engine.strategies.multi_timeframe import (
+        TARGET_ASSETS,
+        ALL_ASSETS as _MTF_ALL_ASSETS_LOCAL,
+    )
+
+The per-symbol loop already iterates over TARGET_ASSETS
+dynamically so new coins will appear automatically in
+the admin cards without any further changes.
+
+─────────────────────────────────────────────
+DO NOT CHANGE
+─────────────────────────────────────────────
+- Entry conditions (5 conditions unchanged)
+- Exit conditions (H1 EMA20 unchanged)
+- MIN_D1_BARS, MIN_H4_BARS, MIN_H1_BARS thresholds
+  These will naturally filter out any coin that does
+  not yet have sufficient history — the card will show
+  "insufficient data" for those coins until enough
+  bars accumulate, exactly as it does today for any
+  new asset
+- Scheduler timing — MTF EMA hourly at :00 ET
+- Any other strategy file
+- trend_non_forex.py — altcoins stay there too
+
+─────────────────────────────────────────────
+VERIFICATION CHECKLIST (confirm internally before saving)
+─────────────────────────────────────────────
+[ ] TARGET_ASSETS "crypto" group has 12 coins total
+    (BTC, ETH + 10 new altcoins)
+[ ] ALL_ASSETS is built dynamically — no manual update needed
+[ ] New coins appear in MTF EMA admin cards automatically
+[ ] Cards for coins with insufficient H4 history show
+    "insufficient data" gracefully — no crash
+[ ] CRYPTO_SYMBOLS in fcsapi_client.py has all 10 new coins
+[ ] CRYPTO_SYMBOL_MAP has all 10 → USDT mappings
+[ ] ADVANCE_SYMBOL_MAP has all 10 entries
+[ ] Admin MTF EMA asset count is dynamic not hardcoded
+[ ] _get_mtf_ema_data() iterates live TARGET_ASSETS
+[ ] Coins in both MTF EMA and Trend Non-Forex are protected
+    by has_any_open_signal_for_asset() cross-strategy guard
+[ ] multi_timeframe.py is syntactically valid Python
+[ ] fcsapi_client.py is syntactically valid Python
+[ ] admin.py is syntactically valid Python
