@@ -365,6 +365,88 @@ def _scheduled_highest_lowest_fx():
     logger.info(f"[SCHEDULER] ====== highest_lowest_fx complete | {status} ======")
 
 
+def _scheduled_hlc_fx_exit_check():
+    """Hourly exit checker for highest_lowest_fx open positions.
+
+    Runs every hour during NY session (9:00 AM – 4:00 PM ET).
+    Entry is only allowed at 9:00 and 10:00 AM via the separate
+    _scheduled_highest_lowest_fx() job. This job only checks exits
+    so open positions close in a timely manner via H1 EMA20 cross
+    or the 6-hour time exit safety net.
+    """
+    from trading_engine.utils.holiday_manager import is_trading_holiday
+
+    et = _get_et_context()
+    et_hour = et["now"].hour
+    et_minutes = et["now"].hour * 60 + et["now"].minute
+
+    # Only run during NY session: 9:00 AM to 4:00 PM ET
+    ny_start = 9 * 60
+    ny_end   = 16 * 60
+
+    if et_minutes < ny_start or et_minutes > ny_end:
+        logger.info(
+            f"[SCHEDULER] hlc_fx_exit | Outside NY session "
+            f"({et['now'].strftime('%H:%M')} {et['label']}) — skipping"
+        )
+        return
+
+    if is_trading_holiday(et["now"]):
+        logger.info("[SCHEDULER] hlc_fx_exit | Trading holiday — skipping")
+        return
+
+    # Skip the 9:00 and 10:00 AM ticks — those are handled by
+    # _scheduled_highest_lowest_fx() which calls check_exits()
+    # internally via the strategy evaluate() path
+    if et_hour in (9, 10) and et["now"].minute == 0:
+        logger.info(
+            f"[SCHEDULER] hlc_fx_exit | Skipping {et_hour}:00 tick — "
+            f"covered by _scheduled_highest_lowest_fx()"
+        )
+        return
+
+    from trading_engine.database import get_all_open_positions
+    positions = get_all_open_positions(strategy_name="highest_lowest_fx")
+
+    if not positions:
+        logger.info(
+            f"[SCHEDULER] hlc_fx_exit | "
+            f"{et['time_str']} {et['label']} | No open positions — skipping"
+        )
+        return
+
+    logger.info(
+        f"[SCHEDULER] ====== hlc_fx_exit hourly check | "
+        f"{et['time_str']} {et['label']} | "
+        f"{len(positions)} open position(s) ======"
+    )
+
+    try:
+        exits = strategy_engine.highest_lowest_strategy.check_exits()
+        if exits:
+            for ex in exits:
+                logger.info(
+                    f"[SCHEDULER] hlc_fx_exit | EXIT: "
+                    f"{ex.get('asset')} {ex.get('direction')} | "
+                    f"exit_price={ex.get('exit_price')} | "
+                    f"reason={ex.get('exit_reason')}"
+                )
+            logger.info(
+                f"[SCHEDULER] ====== hlc_fx_exit complete | "
+                f"{len(exits)} position(s) closed ======"
+            )
+        else:
+            logger.info(
+                f"[SCHEDULER] ====== hlc_fx_exit complete | "
+                f"Holding — no exits triggered ======"
+            )
+    except Exception as e:
+        logger.error(
+            f"[SCHEDULER] hlc_fx_exit | check_exits() failed: {e}",
+            exc_info=True,
+        )
+
+
 def _scheduled_sp500_momentum_30m():
     et = _get_et_context()
     et_minutes = et["now"].hour * 60 + et["now"].minute
@@ -899,6 +981,18 @@ async def lifespan(app: FastAPI):
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
     scheduler.add_job(
+        _scheduled_hlc_fx_exit_check,
+        trigger=CronTrigger(
+            hour="9,10,11,12,13,14,15,16",
+            minute=0,
+            timezone=ET_ZONE,
+        ),
+        id="hlc_fx_exit_hourly",
+        name="HLC FX Hourly Exit Check (9:00 AM – 4:00 PM ET)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
+    scheduler.add_job(
         _scheduled_mtf_ema_evaluate,
         trigger=CronTrigger(minute=0, timezone=ET_ZONE),
         id="mtf_ema_hourly",
@@ -966,7 +1060,8 @@ async def lifespan(app: FastAPI):
         f"[SCHEDULER] APScheduler started with {len(scheduler.get_jobs())} jobs | "
         f"trend_non_forex at 16:01, perf_context at 16:50, trend_forex at 17:01 | "
         f"mtf_ema every hour (:00, 12 assets, QC-aligned), sp500_momentum every 30m (:01/:31), "
-        f"highest_lowest_fx at 09:00 & 10:00 | "
+        f"highest_lowest_fx entry at 09:00 & 10:00, "
+        f"exit checks hourly 09:00-16:00 | "
         f"metrics hourly (:02) + full recap 17:15 | "
         f"misfire_grace={MISFIRE_GRACE_SECONDS}s | "
         f"watchdog interval={WATCHDOG_INTERVAL_SECONDS}s | "
