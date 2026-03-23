@@ -34,7 +34,7 @@ TARGET_SYMBOLS = [
     # ── Crypto altcoins (moved from mtf_ema, LONG_ONLY) ────
     "BNB/USD",  "XRP/USD",  "SOL/USD",  "TRX/USD",  "DOGE/USD",
     "ADA/USD",  "TON/USD",  "SHIB/USD", "AVAX/USD", "LINK/USD",
-    "MATIC/USD","LTC/USD",  "DOT/USD",  "BCH/USD",  "UNI/USD",
+    "LTC/USD",  "DOT/USD",  "BCH/USD",  "UNI/USD",
     "ATOM/USD", "XLM/USD",  "HBAR/USD", "ICP/USD",  "APT/USD",
     "NEAR/USD", "ARB/USD",  "OP/USD",   "SUI/USD",  "INJ/USD",
     "CRO/USD",

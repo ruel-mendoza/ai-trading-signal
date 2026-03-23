@@ -264,6 +264,100 @@ def _purge_unsupported_symbols():
             logger.warning(f"[DB] Error purging unsupported symbols: {e}")
 
 
+def purge_matic_usd():
+    """Permanently remove MATIC/USD from all DB tables.
+    Called on every startup — idempotent, no error if not found.
+    """
+    SYMBOL = "MATIC/USD"
+    with _get_session() as session:
+        try:
+            # Step 1: Close any OPEN signals
+            open_sigs = (
+                session.query(Signal)
+                .filter(
+                    Signal.asset == SYMBOL,
+                    Signal.status == "OPEN",
+                )
+                .all()
+            )
+            for sig in open_sigs:
+                sig.status = "CLOSED"
+                sig.exit_reason = (
+                    "Symbol permanently removed — "
+                    "MATIC/USD not supported by FCSAPI"
+                )
+            if open_sigs:
+                session.commit()
+                logger.info(
+                    f"[DB] purge_matic_usd: closed "
+                    f"{len(open_sigs)} open signal(s)"
+                )
+
+            # Step 2: Delete open positions
+            pos = (
+                session.query(OpenPosition)
+                .filter(OpenPosition.asset == SYMBOL)
+                .delete(synchronize_session=False)
+            )
+            if pos:
+                session.commit()
+                logger.info(
+                    f"[DB] purge_matic_usd: deleted "
+                    f"{pos} open position(s)"
+                )
+
+            # Step 3: Hard delete all strategy_assets rows
+            sa = (
+                session.query(StrategyAsset)
+                .filter(StrategyAsset.symbol == SYMBOL)
+                .delete(synchronize_session=False)
+            )
+            if sa:
+                session.commit()
+                logger.info(
+                    f"[DB] purge_matic_usd: deleted "
+                    f"{sa} strategy_asset row(s)"
+                )
+
+            # Step 4: Delete all candles
+            c = (
+                session.query(Candle)
+                .filter(Candle.asset == SYMBOL)
+                .delete(synchronize_session=False)
+            )
+            if c:
+                session.commit()
+                logger.info(
+                    f"[DB] purge_matic_usd: deleted "
+                    f"{c} candle row(s)"
+                )
+
+            # Step 5: Delete cache metadata
+            m = (
+                session.query(CacheMetadata)
+                .filter(CacheMetadata.asset == SYMBOL)
+                .delete(synchronize_session=False)
+            )
+            if m:
+                session.commit()
+                logger.info(
+                    f"[DB] purge_matic_usd: deleted "
+                    f"{m} cache metadata row(s)"
+                )
+
+            logger.info(
+                "[DB] purge_matic_usd: complete — "
+                "MATIC/USD fully removed from all tables"
+            )
+            _invalidate_signal_cache()
+
+        except Exception as e:
+            session.rollback()
+            logger.error(
+                f"[DB] purge_matic_usd failed: {e}"
+            )
+
+
 def close_stale_manual_signals():
     """One-time cleanup: close OPEN signals not from known strategies that are older than 7 days.
 
@@ -600,6 +694,7 @@ def init_db():
     _migrate_schema()
     _backfill_asset_class()
     seed_strategy_assets()
+    purge_matic_usd()
     sync_strategy_assets_dedup()
 
     with _get_session() as session:
@@ -2223,7 +2318,7 @@ _STRATEGY_ASSET_SEEDS = {
         ("DOGE/USD",  "crypto"), ("ADA/USD",   "crypto"),
         ("TON/USD",   "crypto"), ("SHIB/USD",  "crypto"),
         ("AVAX/USD",  "crypto"), ("LINK/USD",  "crypto"),
-        ("MATIC/USD", "crypto"), ("LTC/USD",   "crypto"),
+        ("LTC/USD",   "crypto"),
         ("DOT/USD",   "crypto"), ("BCH/USD",   "crypto"),
         ("UNI/USD",   "crypto"), ("ATOM/USD",  "crypto"),
         ("XLM/USD",   "crypto"), ("HBAR/USD",  "crypto"),
@@ -2355,7 +2450,7 @@ def seed_strategy_assets():
                 "ADA/USD",  "APT/USD",  "ARB/USD",  "ATOM/USD",
                 "AVAX/USD", "BCH/USD",  "BNB/USD",  "CRO/USD",
                 "DOGE/USD", "DOT/USD",  "HBAR/USD", "ICP/USD",
-                "INJ/USD",  "LINK/USD", "LTC/USD",  "MATIC/USD",
+                "INJ/USD",  "LINK/USD", "LTC/USD",
                 "NEAR/USD", "OP/USD",   "SHIB/USD", "SOL/USD",
                 "SUI/USD",  "TON/USD",  "TRX/USD",  "UNI/USD",
                 "XLM/USD",  "XRP/USD",  "EUR/USD",  "USD/JPY",

@@ -39,7 +39,7 @@ CRYPTO_SYMBOLS = {
     "BTC/USD", "ETH/USD", "LTC/USD", "XRP/USD", "BNB/USD",
     # Tier 1 — high confidence
     "SOL/USD", "DOGE/USD", "ADA/USD", "AVAX/USD", "LINK/USD",
-    "MATIC/USD", "DOT/USD", "BCH/USD", "XLM/USD", "ATOM/USD",
+    "DOT/USD", "BCH/USD", "XLM/USD", "ATOM/USD",
     "UNI/USD",
     # Tier 2 — medium confidence (verified at runtime)
     "TON/USD", "SHIB/USD", "HBAR/USD", "NEAR/USD",
@@ -62,7 +62,6 @@ CRYPTO_SYMBOL_MAP = {
     "ADA/USD":  "ADAUSDT",
     "AVAX/USD": "AVAXUSDT",
     "LINK/USD": "LINKUSDT",
-    "MATIC/USD":"MATICUSDT",
     "DOT/USD":  "DOTUSDT",
     "BCH/USD":  "BCHUSDT",
     "XLM/USD":  "XLMUSDT",
@@ -118,7 +117,11 @@ ETF_SYMBOLS = {
 
 _NASDAQ_ETFS = {"WOOD"}
 
-UNSUPPORTED_SYMBOLS: set[str] = {"WTI/USD", "BRENT/USD"}
+UNSUPPORTED_SYMBOLS: set[str] = {
+    "WTI/USD",
+    "BRENT/USD",
+    "MATIC/USD",
+}
 
 ADVANCE_SYMBOL_MAP = {
     "EUR/USD": "EURUSD",
@@ -150,7 +153,6 @@ ADVANCE_SYMBOL_MAP = {
     "ADA/USD":  "ADAUSDT",
     "AVAX/USD": "AVAXUSDT",
     "LINK/USD": "LINKUSDT",
-    "MATIC/USD":"MATICUSDT",
     "DOT/USD":  "DOTUSDT",
     "BCH/USD":  "BCHUSDT",
     "XLM/USD":  "XLMUSDT",

@@ -1,0 +1,288 @@
+I have a FastAPI + SQLAlchemy (SQLite) trading signals app. 
+MATIC/USD is not supported by FCSAPI and must be completely 
+removed from every single location in the entire codebase and 
+database. No trace of MATIC/USD should remain anywhere.
+
+Read ALL of these files before making any changes:
+- trading_engine/database.py
+- trading_engine/models.py
+- trading_engine/fcsapi_client.py
+- trading_engine/strategies/multi_timeframe.py
+- trading_engine/strategies/trend_non_forex.py
+- trading_engine/strategy_runner.py
+- trading_engine/admin.py
+- trading_engine/api_v1.py
+
+---
+
+STEP 1 — DATABASE PURGE (run on startup via init_db)
+
+In trading_engine/database.py, add a new function called 
+purge_matic_usd() that completely removes MATIC/USD from every 
+single database table. Place it after the existing 
+_purge_unsupported_symbols() function. Call it from init_db() 
+immediately after seed_strategy_assets():
+
+def purge_matic_usd():
+    """Permanently remove MATIC/USD from all DB tables.
+    Called on every startup — idempotent, no error if not found.
+    """
+    SYMBOL = "MATIC/USD"
+    with _get_session() as session:
+        try:
+            # Step 1: Close any OPEN signals
+            open_sigs = (
+                session.query(Signal)
+                .filter(
+                    Signal.asset == SYMBOL,
+                    Signal.status == "OPEN",
+                )
+                .all()
+            )
+            for sig in open_sigs:
+                sig.status = "CLOSED"
+                sig.exit_reason = (
+                    "Symbol permanently removed — "
+                    "MATIC/USD not supported by FCSAPI"
+                )
+            if open_sigs:
+                session.commit()
+                logger.info(
+                    f"[DB] purge_matic_usd: closed "
+                    f"{len(open_sigs)} open signal(s)"
+                )
+
+            # Step 2: Delete open positions
+            pos = (
+                session.query(OpenPosition)
+                .filter(OpenPosition.asset == SYMBOL)
+                .delete(synchronize_session=False)
+            )
+            if pos:
+                session.commit()
+                logger.info(
+                    f"[DB] purge_matic_usd: deleted "
+                    f"{pos} open position(s)"
+                )
+
+            # Step 3: Hard delete all strategy_assets rows
+            sa = (
+                session.query(StrategyAsset)
+                .filter(StrategyAsset.symbol == SYMBOL)
+                .delete(synchronize_session=False)
+            )
+            if sa:
+                session.commit()
+                logger.info(
+                    f"[DB] purge_matic_usd: deleted "
+                    f"{sa} strategy_asset row(s)"
+                )
+
+            # Step 4: Delete all candles
+            c = (
+                session.query(Candle)
+                .filter(Candle.asset == SYMBOL)
+                .delete(synchronize_session=False)
+            )
+            if c:
+                session.commit()
+                logger.info(
+                    f"[DB] purge_matic_usd: deleted "
+                    f"{c} candle row(s)"
+                )
+
+            # Step 5: Delete cache metadata
+            m = (
+                session.query(CacheMetadata)
+                .filter(CacheMetadata.asset == SYMBOL)
+                .delete(synchronize_session=False)
+            )
+            if m:
+                session.commit()
+                logger.info(
+                    f"[DB] purge_matic_usd: deleted "
+                    f"{m} cache metadata row(s)"
+                )
+
+            logger.info(
+                f"[DB] purge_matic_usd: complete — "
+                f"MATIC/USD fully removed from all tables"
+            )
+            _invalidate_signal_cache()
+
+        except Exception as e:
+            session.rollback()
+            logger.error(
+                f"[DB] purge_matic_usd failed: {e}"
+            )
+
+In init_db() find the existing calls and add purge_matic_usd():
+
+    seed_strategy_assets()
+    purge_matic_usd()    # ← add immediately after seed
+
+---
+
+STEP 2 — REMOVE FROM _STRATEGY_ASSET_SEEDS IN database.py
+
+In _STRATEGY_ASSET_SEEDS, search every strategy list and remove 
+every tuple where the first element is "MATIC/USD":
+
+Remove from mtf_ema list:
+    ("MATIC/USD", "crypto", "crypto"),
+
+Remove from trend_non_forex list:
+    ("MATIC/USD", "crypto"),
+
+Search all other strategy lists too — remove if found anywhere.
+Do not change any other tuple in any strategy list.
+
+---
+
+STEP 3 — REMOVE FROM fcsapi_client.py
+
+a) Add MATIC/USD to UNSUPPORTED_SYMBOLS:
+
+   FIND:
+     UNSUPPORTED_SYMBOLS: set[str] = {"WTI/USD", "BRENT/USD"}
+
+   REPLACE WITH:
+     UNSUPPORTED_SYMBOLS: set[str] = {
+         "WTI/USD",
+         "BRENT/USD",
+         "MATIC/USD",
+     }
+
+b) Remove from CRYPTO_SYMBOLS set:
+   Find and delete this line:
+     "MATIC/USD",
+
+c) Remove from CRYPTO_SYMBOL_MAP dict:
+   Find and delete this line:
+     "MATIC/USD": "MATICUSDT",
+
+d) Remove from ADVANCE_SYMBOL_MAP dict:
+   Find and delete this line:
+     "MATIC/USD":"MATICUSDT",
+
+Do not change any other entry in any of these collections.
+
+---
+
+STEP 4 — REMOVE FROM multi_timeframe.py
+
+a) In TARGET_ASSETS crypto list, find and remove:
+     "MATIC/USD",
+
+b) Verify ALL_ASSETS is built dynamically from TARGET_ASSETS 
+   via a loop — if it is a hardcoded flat list replace it with:
+     ALL_ASSETS = []
+     for group in TARGET_ASSETS.values():
+         ALL_ASSETS.extend(group)
+
+c) Do not change any other code in this file.
+
+---
+
+STEP 5 — REMOVE FROM trend_non_forex.py
+
+In TARGET_SYMBOLS list, find and remove:
+    "MATIC/USD",
+
+Do not change SHORT_ELIGIBLE_SYMBOLS or any other list.
+Do not change any strategy logic.
+
+---
+
+STEP 6 — REMOVE FROM strategy_runner.py
+
+In STRATEGY_ASSET_CONFIG, search every strategy assets list 
+for "MATIC/USD" and remove it wherever found:
+
+Check mtf_ema assets list — remove if present:
+    "MATIC/USD",
+
+Check trend_non_forex assets list — remove if present:
+    "MATIC/USD",
+
+Check all other strategy assets lists too.
+Do not change any other entry.
+
+---
+
+STEP 7 — REMOVE FROM admin.py
+
+a) In _ADMIN_CLASS_MAP, find and remove:
+     "MATIC/USD": "crypto",
+
+b) Search the entire admin.py file for any other hardcoded 
+   occurrence of "MATIC/USD" in any dict, list, HTML string, 
+   or badge rendering code. Remove every occurrence found.
+
+Do not change any other entry or any logic.
+
+---
+
+STEP 8 — REMOVE FROM api_v1.py
+
+a) In CATEGORY_MAP, find and remove:
+     "MATIC/USD":"crypto",
+
+b) Search the entire api_v1.py file for any other hardcoded 
+   occurrence of "MATIC/USD". Remove every occurrence found.
+
+Do not change any other entry or any logic.
+
+---
+
+STEP 9 — VERIFY COMPLETE REMOVAL
+
+After making all changes, do a full text search across ALL 
+files in the trading_engine directory for the string 
+"MATIC/USD" and "MATICUSDT". 
+
+If found in any file not listed above, remove it from that 
+file too.
+
+Report every file where MATIC/USD was found and removed.
+
+---
+
+CONSTRAINTS:
+- Do NOT remove any other crypto symbol.
+- Do NOT change any strategy entry/exit logic, indicator 
+  calculations, trailing stop rules, or timing windows.
+- Do NOT change models.py table definitions.
+- Do NOT remove any imports from any file.
+- purge_matic_usd() must be fully idempotent — if MATIC/USD 
+  rows do not exist in any table it must complete silently 
+  without errors.
+- Adding MATIC/USD to UNSUPPORTED_SYMBOLS ensures 
+  is_symbol_supported("MATIC/USD") returns False and all 
+  future API calls for this symbol are automatically skipped.
+- The existing _purge_unsupported_symbols() in database.py 
+  already reads from fcsapi_client.UNSUPPORTED_SYMBOLS — 
+  adding MATIC/USD there means it will also be caught by 
+  that existing purge on every startup as a double safety net.
+- After all changes MATIC/USD must not appear in ANY of:
+    strategy_assets table (hard deleted)
+    candles table (hard deleted)
+    open_positions table (hard deleted)
+    cache_metadata table (hard deleted)
+    signals table OPEN status (closed before deletion)
+    _STRATEGY_ASSET_SEEDS in database.py
+    UNSUPPORTED_SYMBOLS in fcsapi_client.py (must be present)
+    CRYPTO_SYMBOLS in fcsapi_client.py
+    CRYPTO_SYMBOL_MAP in fcsapi_client.py
+    ADVANCE_SYMBOL_MAP in fcsapi_client.py
+    TARGET_ASSETS in multi_timeframe.py
+    ALL_ASSETS in multi_timeframe.py
+    TARGET_SYMBOLS in trend_non_forex.py
+    STRATEGY_ASSET_CONFIG in strategy_runner.py
+    _ADMIN_CLASS_MAP in admin.py
+    CATEGORY_MAP in api_v1.py
+    Any other hardcoded list or dict in any file
+- The app must start without errors after all changes.
+- The Asset Management tab must show zero rows for MATIC/USD.
+- Any FCSAPI data fetch attempted for MATIC/USD must be 
+  blocked by is_symbol_supported() returning False.
