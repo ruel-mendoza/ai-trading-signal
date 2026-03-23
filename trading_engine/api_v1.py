@@ -33,7 +33,8 @@ class SignalPublic(BaseModel):
         ...,
         example="forex",
         description=(
-            "Asset class label: forex | crypto | commodities | indices. "
+            "Asset class: forex (includes forex pairs, commodities "
+            "and indices) | crypto | stocks (reserved). "
             "Set automatically at signal creation from the asset symbol."
         ),
     )
@@ -398,20 +399,31 @@ def cache_response(ttl: int = CachePool.DEFAULT_TTL, prefix: Optional[str] = Non
 router = APIRouter(prefix="/api/v1", tags=["Public API v1"])
 
 
-CATEGORY_MAP = {
-    "EUR/USD": "forex", "GBP/USD": "forex", "USD/JPY": "forex",
-    "USD/CAD": "forex", "AUD/USD": "forex", "NZD/USD": "forex",
-    "USD/CHF": "forex", "EUR/GBP": "forex",
+CATEGORY_MAP: dict[str, str] = {
+    # ── Forex (pairs) ──────────────────────────────────
+    "EUR/USD": "forex",  "GBP/USD": "forex",  "USD/JPY": "forex",
+    "USD/CAD": "forex",  "AUD/USD": "forex",  "NZD/USD": "forex",
+    "USD/CHF": "forex",  "EUR/GBP": "forex",
+    # ── Forex (spot commodities) ───────────────────────
+    "XAU/USD": "forex",  "XAG/USD": "forex",  "XPT/USD": "forex",
+    "XPD/USD": "forex",  "XCU/USD": "forex",  "OSX":     "forex",
+    "NATGAS/USD": "forex",
+    "CORN/USD": "forex", "SOYBEAN/USD": "forex",
+    "WHEAT/USD": "forex","SUGAR/USD":   "forex",
+    # ── Forex (commodity ETFs) ─────────────────────────
+    "USO":  "forex", "UNG":  "forex", "UGA":  "forex",
+    "DBB":  "forex", "SLX":  "forex",
+    "SGOL": "forex", "SIVR": "forex", "CPER": "forex",
+    "PPLT": "forex", "PALL": "forex",
+    "CORN": "forex", "SOYB": "forex", "WEAT": "forex",
+    "CANE": "forex", "WOOD": "forex",
+    # ── Forex (indices) ────────────────────────────────
+    "SPX": "forex", "NDX": "forex", "RUT": "forex",
+    "DJI": "forex",
+    # ── Crypto ─────────────────────────────────────────
     "BTC/USD": "crypto", "ETH/USD": "crypto",
-    "LTC/USD": "crypto", "XRP/USD": "crypto", "BNB/USD": "crypto",
-    "XAU/USD": "commodities", "XAG/USD": "commodities", "OSX": "commodities",
-    "USO": "commodities", "UNG": "commodities", "UGA": "commodities",
-    "DBB": "commodities", "SLX": "commodities",
-    "SGOL": "commodities", "SIVR": "commodities", "CPER": "commodities",
-    "PPLT": "commodities", "PALL": "commodities",
-    "CORN": "commodities", "SOYB": "commodities", "WEAT": "commodities",
-    "CANE": "commodities", "WOOD": "commodities",
-    "SPX": "indices", "NDX": "indices", "RUT": "indices", "DJI": "indices",
+    "LTC/USD": "crypto", "XRP/USD": "crypto",
+    "BNB/USD": "crypto",
 }
 
 STRATEGY_LABELS = {

@@ -103,34 +103,36 @@ def _nth_weekday(year: int, month: int, weekday: int, n: int) -> datetime:
 
 
 _ADMIN_CLASS_MAP: dict[str, str] = {
-    # Forex
-    "EUR/USD": "forex",   "GBP/USD": "forex",   "USD/JPY": "forex",
-    "USD/CAD": "forex",   "AUD/USD": "forex",   "NZD/USD": "forex",
-    "USD/CHF": "forex",   "EUR/GBP": "forex",
-    # Crypto
-    "BTC/USD": "crypto",  "ETH/USD": "crypto",  "LTC/USD": "crypto",
-    "XRP/USD": "crypto",  "BNB/USD": "crypto",
-    # Commodities — spot
-    "XAU/USD": "commodities", "XAG/USD": "commodities",
-    "XPT/USD": "commodities", "XPD/USD": "commodities",
-    "OSX":     "commodities",
-    # Commodities — ETFs
-    "USO":  "commodities", "UNG":  "commodities", "UGA":  "commodities",
-    "DBB":  "commodities", "SLX":  "commodities",
-    "SGOL": "commodities", "SIVR": "commodities", "CPER": "commodities",
-    "PPLT": "commodities", "PALL": "commodities",
-    "CORN": "commodities", "SOYB": "commodities", "WEAT": "commodities",
-    "CANE": "commodities", "WOOD": "commodities",
-    # Indices
-    "SPX": "indices", "NDX": "indices", "RUT": "indices",
-    "DJI": "indices",
+    # ── Forex (pairs) ──────────────────────────────────
+    "EUR/USD": "forex",  "GBP/USD": "forex",  "USD/JPY": "forex",
+    "USD/CAD": "forex",  "AUD/USD": "forex",  "NZD/USD": "forex",
+    "USD/CHF": "forex",  "EUR/GBP": "forex",
+    # ── Forex (spot commodities) ───────────────────────
+    "XAU/USD": "forex",  "XAG/USD": "forex",  "XPT/USD": "forex",
+    "XPD/USD": "forex",  "XCU/USD": "forex",  "OSX":     "forex",
+    "NATGAS/USD": "forex",
+    "CORN/USD": "forex", "SOYBEAN/USD": "forex",
+    "WHEAT/USD": "forex","SUGAR/USD":   "forex",
+    # ── Forex (commodity ETFs) ─────────────────────────
+    "USO":  "forex", "UNG":  "forex", "UGA":  "forex",
+    "DBB":  "forex", "SLX":  "forex",
+    "SGOL": "forex", "SIVR": "forex", "CPER": "forex",
+    "PPLT": "forex", "PALL": "forex",
+    "CORN": "forex", "SOYB": "forex", "WEAT": "forex",
+    "CANE": "forex", "WOOD": "forex",
+    # ── Forex (indices) ────────────────────────────────
+    "SPX": "forex", "NDX": "forex", "RUT": "forex",
+    "DJI": "forex",
+    # ── Crypto ─────────────────────────────────────────
+    "BTC/USD": "crypto", "ETH/USD": "crypto",
+    "LTC/USD": "crypto", "XRP/USD": "crypto",
+    "BNB/USD": "crypto",
 }
 
 _CLASS_COLORS: dict[str, tuple[str, str]] = {
-    "forex":       ("rgba(59,130,246,0.15)",  "#60a5fa"),
-    "crypto":      ("rgba(168,85,247,0.15)",  "#c4b5fd"),
-    "commodities": ("rgba(245,158,11,0.15)",  "#fcd34d"),
-    "indices":     ("rgba(34,197,94,0.15)",   "#86efac"),
+    "forex":   ("rgba(6,182,212,0.15)",  "#67e8f9"),
+    "crypto":  ("rgba(168,85,247,0.15)", "#c4b5fd"),
+    "stocks":  ("rgba(34,197,94,0.15)",  "#86efac"),
 }
 
 
@@ -4386,11 +4388,10 @@ def admin_dashboard(
         status_options += f'<option value="{s}" {selected}>{label}</option>'
 
     ASSET_CLASS_CHOICES = [
-        ("",            "All Asset Classes"),
-        ("forex",       "Forex"),
-        ("crypto",      "Crypto"),
-        ("commodities", "Commodities"),
-        ("indices",     "Indices"),
+        ("",       "All Asset Classes"),
+        ("forex",  "Forex"),
+        ("crypto", "Crypto"),
+        ("stocks", "Stocks"),
     ]
     asset_class_options = ""
     for v, label in ASSET_CLASS_CHOICES:
@@ -5432,7 +5433,7 @@ def admin_dashboard(
                     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;font-size:13px;color:#94a3b8;">
                         <div><strong style="color:#e2e8f0;">Timeframes:</strong> 30m, 1H, 4H, D1</div>
                         <div><strong style="color:#e2e8f0;">Strategies:</strong> mtf_ema, trend_forex, trend_non_forex, sp500_momentum, highest_lowest_fx</div>
-                        <div><strong style="color:#e2e8f0;">Asset Classes:</strong> forex, crypto, commodities, indices</div>
+                        <div><strong style="color:#e2e8f0;">Asset Classes:</strong> forex (pairs, commodities &amp; indices), crypto, stocks (reserved)</div>
                         <div><strong style="color:#e2e8f0;">Signal Status:</strong> OPEN, CLOSED</div>
                         <div><strong style="color:#e2e8f0;">Metric Periods:</strong> all_time, 7d, 30d</div>
                         <div><strong style="color:#e2e8f0;">Swagger Docs:</strong> <a href="/docs" target="_blank" style="color:#38bdf8;text-decoration:underline;" data-testid="link-swagger-docs">/docs</a></div>

@@ -1,0 +1,261 @@
+Remap the asset class labelling system across database.py,
+api_v1.py, and admin.py to use three categories only:
+  "forex"  — forex pairs + commodities + indices
+  "crypto" — all cryptocurrencies
+  "stocks" — reserved for future equity strategy
+
+All existing signals will be re-tagged on next startup via
+the backfill. No strategy files changed. No other files changed.
+
+═══════════════════════════════════════════════════════════
+THE MAPPING RULE
+═══════════════════════════════════════════════════════════
+"forex"  = everything that is NOT crypto or stocks:
+           - forex pairs (EUR/USD, GBP/USD, USD/JPY, etc.)
+           - spot commodities (XAU/USD, XAG/USD, OSX, etc.)
+           - commodity ETFs (CORN, USO, SGOL, SLX, etc.)
+           - indices (SPX, NDX, RUT, DJI)
+
+"crypto" = all crypto assets (BTC/USD, ETH/USD, and any
+           future altcoins added to any strategy)
+
+"stocks" = individual equities — no assets map here yet,
+           reserved for the upcoming equity strategy.
+           Kept in the DB layer so it is ready to use.
+
+"other"  = silent internal fallback only — never shown
+           in UI, never shown as a badge. Exists only so
+           unknown future symbols do not crash insert_signal().
+
+═══════════════════════════════════════════════════════════
+CHANGE 1 — database.py: rebuild _ASSET_CLASS_MAP
+═══════════════════════════════════════════════════════════
+
+Replace the entire _ASSET_CLASS_MAP dict with:
+
+  _ASSET_CLASS_MAP: dict[str, str] = {
+      # ── Forex (pairs) ──────────────────────────────────
+      "EUR/USD": "forex",  "GBP/USD": "forex",  "USD/JPY": "forex",
+      "USD/CAD": "forex",  "AUD/USD": "forex",  "NZD/USD": "forex",
+      "USD/CHF": "forex",  "EUR/GBP": "forex",
+      # ── Forex (spot commodities) ───────────────────────
+      "XAU/USD": "forex",  "XAG/USD": "forex",  "XPT/USD": "forex",
+      "XPD/USD": "forex",  "XCU/USD": "forex",  "OSX":     "forex",
+      "NATGAS/USD": "forex",
+      "CORN/USD": "forex", "SOYBEAN/USD": "forex",
+      "WHEAT/USD": "forex","SUGAR/USD": "forex",
+      # ── Forex (commodity ETFs) ─────────────────────────
+      "USO":  "forex", "UNG":  "forex", "UGA":  "forex",
+      "DBB":  "forex", "SLX":  "forex",
+      "SGOL": "forex", "SIVR": "forex", "CPER": "forex",
+      "PPLT": "forex", "PALL": "forex",
+      "CORN": "forex", "SOYB": "forex", "WEAT": "forex",
+      "CANE": "forex", "WOOD": "forex",
+      # ── Forex (indices) ────────────────────────────────
+      "SPX": "forex", "NDX": "forex", "RUT": "forex",
+      "DJI": "forex",
+      # ── Crypto ─────────────────────────────────────────
+      "BTC/USD": "crypto", "ETH/USD": "crypto",
+      "LTC/USD": "crypto", "XRP/USD": "crypto",
+      "BNB/USD": "crypto", "ETHUSD":  "crypto",
+      "BTCUSD":  "crypto",
+  }
+
+Update _get_asset_class() — no logic change needed, fallback
+"other" is correct for genuinely unknown symbols:
+
+  def _get_asset_class(symbol: str) -> str:
+      return _ASSET_CLASS_MAP.get(symbol, "other")
+
+Update _backfill_asset_class() to catch all previously used
+values so every existing signal gets re-tagged correctly:
+
+  FIND:
+    rows = session.query(Signal).filter(
+        Signal.asset_class.in_([None, "other", "stocks"])
+    ).all()
+
+  REPLACE WITH:
+    rows = session.query(Signal).filter(
+        Signal.asset_class.in_(
+            [None, "other", "stocks",
+             "commodities", "indices"]   # old category names
+        )
+    ).all()
+
+This ensures signals previously tagged "commodities" or
+"indices" are re-tagged to "forex" on next startup.
+
+═══════════════════════════════════════════════════════════
+CHANGE 2 — api_v1.py: rebuild CATEGORY_MAP
+═══════════════════════════════════════════════════════════
+
+Replace the entire CATEGORY_MAP dict with:
+
+  CATEGORY_MAP: dict[str, str] = {
+      # ── Forex (pairs) ──────────────────────────────────
+      "EUR/USD": "forex",  "GBP/USD": "forex",  "USD/JPY": "forex",
+      "USD/CAD": "forex",  "AUD/USD": "forex",  "NZD/USD": "forex",
+      "USD/CHF": "forex",  "EUR/GBP": "forex",
+      # ── Forex (spot commodities) ───────────────────────
+      "XAU/USD": "forex",  "XAG/USD": "forex",  "XPT/USD": "forex",
+      "XPD/USD": "forex",  "XCU/USD": "forex",  "OSX":     "forex",
+      "NATGAS/USD": "forex",
+      "CORN/USD": "forex", "SOYBEAN/USD": "forex",
+      "WHEAT/USD": "forex","SUGAR/USD":   "forex",
+      # ── Forex (commodity ETFs) ─────────────────────────
+      "USO":  "forex", "UNG":  "forex", "UGA":  "forex",
+      "DBB":  "forex", "SLX":  "forex",
+      "SGOL": "forex", "SIVR": "forex", "CPER": "forex",
+      "PPLT": "forex", "PALL": "forex",
+      "CORN": "forex", "SOYB": "forex", "WEAT": "forex",
+      "CANE": "forex", "WOOD": "forex",
+      # ── Forex (indices) ────────────────────────────────
+      "SPX": "forex", "NDX": "forex", "RUT": "forex",
+      "DJI": "forex",
+      # ── Crypto ─────────────────────────────────────────
+      "BTC/USD": "crypto", "ETH/USD": "crypto",
+      "LTC/USD": "crypto", "XRP/USD": "crypto",
+      "BNB/USD": "crypto",
+  }
+
+Update SignalPublic asset_class field description:
+
+  FIND:
+    asset_class: str = Field(
+        ...,
+        example="forex",
+        description=(
+            "Asset class label: forex | crypto | commodities | indices. "
+            "Set automatically at signal creation from the asset symbol."
+        ),
+    )
+
+  REPLACE WITH:
+    asset_class: str = Field(
+        ...,
+        example="forex",
+        description=(
+            "Asset class: forex (includes forex pairs, commodities "
+            "and indices) | crypto | stocks (reserved). "
+            "Set automatically at signal creation from the asset symbol."
+        ),
+    )
+
+Update _filter_by_asset_class() and _filter_by_category()
+— these filter by the string value so no logic change needed.
+The new values "forex" / "crypto" / "stocks" will work
+automatically once the map is updated.
+
+═══════════════════════════════════════════════════════════
+CHANGE 3 — admin.py: filter dropdown
+═══════════════════════════════════════════════════════════
+
+In admin_dashboard(), replace ASSET_CLASS_CHOICES:
+
+  FIND and REPLACE with:
+    ASSET_CLASS_CHOICES = [
+        ("",       "All Asset Classes"),
+        ("forex",  "Forex"),
+        ("crypto", "Crypto"),
+        ("stocks", "Stocks"),
+    ]
+
+Note: "Stocks" is shown in the dropdown even though no signals
+map to it yet — this gives a clean visible placeholder that
+confirms to the client the category is reserved and ready.
+When stock signals are live it will populate automatically.
+
+═══════════════════════════════════════════════════════════
+CHANGE 4 — admin.py: _ADMIN_CLASS_MAP
+═══════════════════════════════════════════════════════════
+
+Replace the entire _ADMIN_CLASS_MAP dict with:
+
+  _ADMIN_CLASS_MAP: dict[str, str] = {
+      # ── Forex (pairs) ──────────────────────────────────
+      "EUR/USD": "forex",  "GBP/USD": "forex",  "USD/JPY": "forex",
+      "USD/CAD": "forex",  "AUD/USD": "forex",  "NZD/USD": "forex",
+      "USD/CHF": "forex",  "EUR/GBP": "forex",
+      # ── Forex (spot commodities) ───────────────────────
+      "XAU/USD": "forex",  "XAG/USD": "forex",  "XPT/USD": "forex",
+      "XPD/USD": "forex",  "XCU/USD": "forex",  "OSX":     "forex",
+      "NATGAS/USD": "forex",
+      "CORN/USD": "forex", "SOYBEAN/USD": "forex",
+      "WHEAT/USD": "forex","SUGAR/USD":   "forex",
+      # ── Forex (commodity ETFs) ─────────────────────────
+      "USO":  "forex", "UNG":  "forex", "UGA":  "forex",
+      "DBB":  "forex", "SLX":  "forex",
+      "SGOL": "forex", "SIVR": "forex", "CPER": "forex",
+      "PPLT": "forex", "PALL": "forex",
+      "CORN": "forex", "SOYB": "forex", "WEAT": "forex",
+      "CANE": "forex", "WOOD": "forex",
+      # ── Forex (indices) ────────────────────────────────
+      "SPX": "forex", "NDX": "forex", "RUT": "forex",
+      "DJI": "forex",
+      # ── Crypto ─────────────────────────────────────────
+      "BTC/USD": "crypto", "ETH/USD": "crypto",
+      "LTC/USD": "crypto", "XRP/USD": "crypto",
+      "BNB/USD": "crypto",
+  }
+
+═══════════════════════════════════════════════════════════
+CHANGE 5 — admin.py: _CLASS_COLORS
+═══════════════════════════════════════════════════════════
+
+Replace _CLASS_COLORS with three active categories plus the
+silent fallback. Forex gets a teal/blue color to reflect its
+broader meaning (not just currency pairs):
+
+  _CLASS_COLORS: dict[str, tuple[str, str]] = {
+      "forex":  ("rgba(6,182,212,0.15)",   "#67e8f9"),
+      "crypto": ("rgba(168,85,247,0.15)",  "#c4b5fd"),
+      "stocks": ("rgba(34,197,94,0.15)",   "#86efac"),
+  }
+
+The fallback in _signals_to_table_rows() for unknown classes
+uses muted grey and shows the raw asset symbol — keep that
+logic exactly as-is from the previous implementation.
+
+═══════════════════════════════════════════════════════════
+CHANGE 6 — admin.py: update Signal Analysis tab CATEGORY_MAP
+═══════════════════════════════════════════════════════════
+
+In _get_signal_analysis_data(), there is an inline category
+computation for open signals:
+
+  FIND:
+    open_by_asset: dict[str, int] = {}
+    for s in all_signals:
+        if s.get("status") == "OPEN":
+            open_by_asset[s["asset"]] = ...
+
+This does not use CATEGORY_MAP directly — no change needed.
+
+However, check if _build_signal_analysis_html() references
+any of the old category names ("commodities", "indices") in
+any hardcoded string or filter. If found, update to "forex".
+
+═══════════════════════════════════════════════════════════
+VERIFICATION CHECKLIST (confirm internally before saving)
+═══════════════════════════════════════════════════════════
+[ ] _ASSET_CLASS_MAP in database.py has exactly 3 value types:
+    "forex", "crypto", "other" (fallback only)
+[ ] All commodity ETFs map to "forex" in database.py
+[ ] All indices (SPX, NDX, RUT, DJI) map to "forex" in database.py
+[ ] All spot commodities (XAU/USD, XAG/USD) map to "forex"
+[ ] All crypto assets map to "crypto" in database.py
+[ ] No "stocks" entry in _ASSET_CLASS_MAP (reserved, not mapped yet)
+[ ] _backfill_asset_class() filter includes "commodities"
+    and "indices" so old signals get re-tagged to "forex"
+[ ] CATEGORY_MAP in api_v1.py mirrors database.py mapping exactly
+[ ] SignalPublic asset_class description updated to 3 categories
+[ ] ASSET_CLASS_CHOICES in admin.py has exactly 4 entries
+    (blank + forex + crypto + stocks)
+[ ] _ADMIN_CLASS_MAP mirrors database.py mapping exactly
+[ ] _CLASS_COLORS has exactly 3 active entries + fallback logic
+[ ] Forex color changed to teal (#67e8f9) to reflect broader scope
+[ ] No hardcoded "commodities" or "indices" strings remain in
+    any user-facing label, badge, or dropdown
+[ ] "other" appears only in DB fallback — never in UI
+[ ] All three files are syntactically valid Python
