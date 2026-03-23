@@ -2284,6 +2284,14 @@ def seed_strategy_assets():
                             added_by="system_seed",
                         ))
                         seeded += 1
+                    elif not existing.is_active and existing.added_by == "system_seed":
+                        existing.is_active = 1
+                        existing.sub_category = sub_cat
+                        session.commit()
+                        logger.info(
+                            f"[DB] seed_strategy_assets: reactivated "
+                            f"{strategy_name}/{symbol} (system seed)"
+                        )
             session.commit()
             if seeded:
                 logger.info(
@@ -2604,10 +2612,11 @@ def remove_strategy_asset(
                 )
                 return False
             row.is_active = 0
+            row.added_by = "admin_removed"
             session.commit()
             logger.info(
                 f"[DB] Deactivated strategy asset: "
-                f"{strategy_name}/{symbol}"
+                f"{strategy_name}/{symbol} (marked admin_removed)"
             )
             return True
         except Exception as e:
