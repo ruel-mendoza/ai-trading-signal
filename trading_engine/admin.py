@@ -4171,7 +4171,7 @@ async function loadAssets() {
         : '<span class="badge status-expired" style="font-size:0.65rem;">Unverified</span>';
       var addedBy = a.added_by || '\u2014';
       var createdAt = a.created_at ? a.created_at.slice(0, 10) : '\u2014';
-      var notes = a.notes ? '<span title="' + a.notes.replace(/"/g, '&quot;') + '" style="cursor:help;color:#64748b;">\ud83d\udcdd</span>' : '\u2014';
+      var notes = a.notes ? '<span title="' + a.notes.replace(/"/g, '&quot;') + '" style="cursor:help;color:#64748b;">&#x1F4DD;</span>' : '\u2014';
       var removeBtn = '<button class="btn" style="font-size:12px;padding:4px 10px;background:rgba(239,68,68,0.12);color:#ef4444;" onclick="removeAsset(\'' + a.strategy_name + '\',\'' + a.symbol + '\')" data-testid="button-remove-asset-' + a.symbol.replace(/\//g,'-') + '">Remove</button>';
       rows += '<tr data-testid="row-asset-' + a.symbol.replace(/\//g,'-') + '">'
         + '<td style="font-weight:600;color:#f1f5f9;">' + a.symbol + '</td>'
