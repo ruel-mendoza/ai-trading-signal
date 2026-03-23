@@ -16,6 +16,7 @@ from trading_engine.api_v1 import (
     cache_response,
     CATEGORY_MAP,
     STRATEGY_LABELS,
+    _resolve_asset_class,
 )
 
 logger = logging.getLogger("trading_engine.api_v1.public_signals")
@@ -24,7 +25,7 @@ logger = logging.getLogger("trading_engine.api_v1.public_signals")
 class SignalRead(BaseModel):
     id: int = Field(..., description="Unique signal identifier")
     asset: str = Field(..., example="EUR/USD", description="Trading pair / asset symbol")
-    asset_class: str = Field(..., example="forex", description="Asset class: forex, crypto, commodities, indices")
+    asset_class: str = Field(..., example="forex", description="Asset class: forex | crypto | stocks")
     strategy: str = Field(..., example="mtf_ema", description="Strategy that generated this signal")
     strategy_label: str = Field(..., example="MTF EMA", description="Human-readable strategy name")
     direction: str = Field(..., example="LONG", description="Signal direction: LONG or SHORT")
@@ -41,7 +42,7 @@ class SignalRead(BaseModel):
 
 class AssetRead(BaseModel):
     symbol: str = Field(..., example="EUR/USD", description="Asset symbol")
-    asset_class: str = Field(..., example="forex", description="Asset class: forex, crypto, commodities, indices")
+    asset_class: str = Field(..., example="forex", description="Asset class: forex | crypto | stocks")
     active_signals: int = Field(..., description="Number of currently OPEN signals for this asset")
     strategies: list[str] = Field(..., description="Strategies that have generated signals for this asset")
 
@@ -126,7 +127,14 @@ def _to_signal_read(s) -> dict:
 def list_signals(
     strategy: Optional[str] = Query(None, description="Filter by strategy name (e.g. mtf_ema)"),
     asset: Optional[str] = Query(None, description="Filter by asset symbol (e.g. EUR/USD)"),
-    asset_class: Optional[str] = Query(None, description="Filter by asset class: forex, crypto, commodities, indices"),
+    asset_class: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by asset class: forex | crypto | stocks. "
+            "Legacy values 'commodities' and 'indices' are accepted "
+            "as aliases for 'forex'."
+        ),
+    ),
     status: Optional[str] = Query(None, description="Filter by status: OPEN or CLOSED"),
     limit: int = Query(50, ge=1, le=200, description="Max results (1-200)"),
 ):
@@ -136,6 +144,8 @@ def list_signals(
     Internal fields like atr_at_entry and raw database metadata are excluded.
     Cached for 60 seconds.
     """
+    asset_class = _resolve_asset_class(asset_class)
+
     @cache_response(ttl=60, prefix="public_signals")
     def _inner(strategy=strategy, asset=asset, asset_class=asset_class, status=status, limit=limit):
         all_sigs = get_all_signals()
@@ -168,13 +178,22 @@ def list_signals(
 def list_active_signals(
     strategy: Optional[str] = Query(None, description="Filter by strategy name"),
     asset: Optional[str] = Query(None, description="Filter by asset symbol"),
-    asset_class: Optional[str] = Query(None, description="Filter by asset class"),
+    asset_class: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by asset class: forex | crypto | stocks. "
+            "Legacy values 'commodities' and 'indices' are accepted "
+            "as aliases for 'forex'."
+        ),
+    ),
 ):
     """Fetch currently active (OPEN) signals only.
 
     Returns only signals with status=OPEN. Ideal for frontend widgets
     showing current trading opportunities. Cached for 60 seconds.
     """
+    asset_class = _resolve_asset_class(asset_class)
+
     @cache_response(ttl=60, prefix="public_signals_active")
     def _inner(strategy=strategy, asset=asset, asset_class=asset_class):
         active = get_active_signals()
@@ -222,7 +241,14 @@ def get_signal(signal_id: int):
     summary="List assets with signal activity",
 )
 def list_assets(
-    asset_class: Optional[str] = Query(None, description="Filter by asset class"),
+    asset_class: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by asset class: forex | crypto | stocks. "
+            "Legacy values 'commodities' and 'indices' are accepted "
+            "as aliases for 'forex'."
+        ),
+    ),
 ):
     """List all assets that have at least one signal, with open signal counts.
 
@@ -230,6 +256,8 @@ def list_assets(
     number of active signals, and which strategies have produced signals for it.
     Cached for 60 seconds.
     """
+    asset_class = _resolve_asset_class(asset_class)
+
     @cache_response(ttl=60, prefix="public_assets")
     def _inner(asset_class=asset_class):
         all_sigs = get_all_signals()

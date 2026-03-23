@@ -1,0 +1,216 @@
+Update api_v1.py to add alias support for legacy asset_class
+filter values so that ?asset_class=commodities and
+?asset_class=indices continue to work after the three-category
+remapping. These aliases transparently resolve to "forex" at
+the API query layer. No DB changes. No other files changed.
+
+─────────────────────────────────────────────
+THE ALIAS MAP
+─────────────────────────────────────────────
+Callers using any of these values get "forex" results:
+  commodities → forex
+  indices     → forex
+  fx          → forex  (common shorthand — add proactively)
+
+Callers using these values get exact matches:
+  forex       → forex
+  crypto      → crypto
+  stocks      → stocks
+
+─────────────────────────────────────────────
+CHANGE 1 — Add alias resolver at module level
+─────────────────────────────────────────────
+
+Add this constant and function at module level in api_v1.py,
+immediately after the CATEGORY_MAP dict:
+
+  # Aliases for legacy and shorthand asset_class filter values.
+  # Allows ?asset_class=commodities and ?asset_class=indices to
+  # keep working after the three-category remapping.
+  ASSET_CLASS_ALIASES: dict[str, str] = {
+      "commodities": "forex",
+      "indices":     "forex",
+      "fx":          "forex",
+      "index":       "forex",
+      "commodity":   "forex",
+  }
+
+  def _resolve_asset_class(value: Optional[str]) -> Optional[str]:
+      """Resolve an asset_class filter value to its canonical form.
+      Aliases (commodities, indices, fx) transparently map to forex.
+      Returns None unchanged so no-filter behaviour is preserved.
+      """
+      if not value:
+          return value
+      normalised = value.lower().strip()
+      return ASSET_CLASS_ALIASES.get(normalised, normalised)
+
+─────────────────────────────────────────────
+CHANGE 2 — Apply resolver in get_signals_latest()
+─────────────────────────────────────────────
+
+In get_signals_latest(), find the asset_class parameter and
+apply the resolver before the filter is used:
+
+  FIND:
+    asset_class: Optional[str] = Query(
+        None,
+        description="Filter by asset class: forex, crypto, commodities, indices"
+    ),
+
+  REPLACE WITH:
+    asset_class: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by asset class: forex | crypto | stocks. "
+            "Legacy values 'commodities' and 'indices' are accepted "
+            "as aliases for 'forex'."
+        ),
+    ),
+
+  Then immediately inside the function body, before any use of
+  asset_class, add:
+
+    asset_class = _resolve_asset_class(asset_class)
+
+─────────────────────────────────────────────
+CHANGE 3 — Apply resolver in get_signals_history()
+─────────────────────────────────────────────
+
+In get_signals_history(), find the asset_class parameter:
+
+  FIND:
+    asset_class: Optional[str] = Query(
+        None,
+        description="Filter by asset class: forex, crypto, commodities, indices"
+    ),
+
+  REPLACE WITH:
+    asset_class: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by asset class: forex | crypto | stocks. "
+            "Legacy values 'commodities' and 'indices' are accepted "
+            "as aliases for 'forex'."
+        ),
+    ),
+
+  Then immediately inside the function body, before any use of
+  asset_class, add:
+
+    asset_class = _resolve_asset_class(asset_class)
+
+─────────────────────────────────────────────
+CHANGE 4 — Apply resolver in get_signals_active()
+─────────────────────────────────────────────
+
+In get_signals_active(), find the category parameter
+(note: this endpoint uses "category" not "asset_class"):
+
+  FIND:
+    category: Optional[str] = Query(
+        None,
+        description="Filter by category: forex, crypto, commodities, indices"
+    ),
+
+  REPLACE WITH:
+    category: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by asset class: forex | crypto | stocks. "
+            "Legacy values 'commodities' and 'indices' are accepted "
+            "as aliases for 'forex'."
+        ),
+    ),
+
+  Then immediately inside the function body, before
+  _filter_by_category() is called, add:
+
+    category = _resolve_asset_class(category)
+
+─────────────────────────────────────────────
+CHANGE 5 — Apply resolver in get_signals()
+─────────────────────────────────────────────
+
+In get_signals(), find the category parameter:
+
+  FIND:
+    category: Optional[str] = Query(
+        None, description="Filter by category"
+    ),
+
+  REPLACE WITH:
+    category: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by asset class: forex | crypto | stocks. "
+            "Legacy values 'commodities' and 'indices' are accepted "
+            "as aliases for 'forex'."
+        ),
+    ),
+
+  Then immediately inside the function body, before
+  _filter_by_category() is called, add:
+
+    category = _resolve_asset_class(category)
+
+─────────────────────────────────────────────
+CHANGE 6 — Update _filter_by_asset_class() and
+           _filter_by_category() docstrings
+─────────────────────────────────────────────
+
+Add a one-line comment to each filter function explaining
+that alias resolution happens before these are called:
+
+  In _filter_by_asset_class():
+    # asset_class has already been resolved via _resolve_asset_class()
+    # at the endpoint level — no alias handling needed here.
+
+  In _filter_by_category():
+    # category has already been resolved via _resolve_asset_class()
+    # at the endpoint level — no alias handling needed here.
+
+─────────────────────────────────────────────
+CHANGE 7 — Update public_signals.py if it has
+           its own asset_class filter parameter
+─────────────────────────────────────────────
+
+Check trading_engine/api/v1/public_signals.py for any endpoint
+that accepts asset_class or category as a query parameter.
+If found, import _resolve_asset_class from api_v1 and apply
+it the same way:
+
+  from trading_engine.api_v1 import _resolve_asset_class
+
+  # Then inside each affected endpoint function body:
+  asset_class = _resolve_asset_class(asset_class)
+
+If no asset_class / category filter exists in public_signals.py,
+make no changes to that file.
+
+─────────────────────────────────────────────
+VERIFICATION CHECKLIST (confirm internally before saving)
+─────────────────────────────────────────────
+[ ] ASSET_CLASS_ALIASES dict exists at module level in api_v1.py
+[ ] _resolve_asset_class() returns None unchanged for None input
+[ ] _resolve_asset_class("commodities") returns "forex"
+[ ] _resolve_asset_class("indices") returns "forex"
+[ ] _resolve_asset_class("fx") returns "forex"
+[ ] _resolve_asset_class("index") returns "forex"
+[ ] _resolve_asset_class("commodity") returns "forex"
+[ ] _resolve_asset_class("forex") returns "forex"
+[ ] _resolve_asset_class("crypto") returns "crypto"
+[ ] _resolve_asset_class("stocks") returns "stocks"
+[ ] _resolve_asset_class(None) returns None
+[ ] get_signals_latest() calls _resolve_asset_class(asset_class)
+    before using asset_class in any filter
+[ ] get_signals_history() calls _resolve_asset_class(asset_class)
+[ ] get_signals_active() calls _resolve_asset_class(category)
+[ ] get_signals() calls _resolve_asset_class(category)
+[ ] All Query description strings updated to 3-category wording
+    with legacy alias note
+[ ] public_signals.py updated if it has asset_class filter
+[ ] No DB changes made
+[ ] No other files changed beyond api_v1.py and
+    public_signals.py (if applicable)
+[ ] File is syntactically valid Python

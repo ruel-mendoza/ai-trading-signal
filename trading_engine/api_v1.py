@@ -426,6 +426,29 @@ CATEGORY_MAP: dict[str, str] = {
     "BNB/USD": "crypto",
 }
 
+# Aliases for legacy and shorthand asset_class filter values.
+# Allows ?asset_class=commodities and ?asset_class=indices to
+# keep working after the three-category remapping.
+ASSET_CLASS_ALIASES: dict[str, str] = {
+    "commodities": "forex",
+    "indices":     "forex",
+    "fx":          "forex",
+    "index":       "forex",
+    "commodity":   "forex",
+}
+
+
+def _resolve_asset_class(value: Optional[str]) -> Optional[str]:
+    """Resolve an asset_class filter value to its canonical form.
+    Aliases (commodities, indices, fx) transparently map to forex.
+    Returns None unchanged so no-filter behaviour is preserved.
+    """
+    if not value:
+        return value
+    normalised = value.lower().strip()
+    return ASSET_CLASS_ALIASES.get(normalised, normalised)
+
+
 STRATEGY_LABELS = {
     "mtf_ema": "MTF EMA",
     "trend_non_forex": "Trend Non-Forex",
@@ -494,12 +517,16 @@ def _format_signal(s: dict) -> dict:
 
 
 def _filter_by_category(signals: list, category: Optional[str]) -> list:
+    # category has already been resolved via _resolve_asset_class()
+    # at the endpoint level — no alias handling needed here.
     if not category:
         return signals
     return [s for s in signals if s["category"] == category]
 
 
 def _filter_by_asset_class(signals: list, asset_class: Optional[str]) -> list:
+    # asset_class has already been resolved via _resolve_asset_class()
+    # at the endpoint level — no alias handling needed here.
     if not asset_class:
         return signals
     return [s for s in signals if s["category"] == asset_class]
@@ -552,7 +579,14 @@ def _deduplicate_signals(signals: list[dict]) -> list[dict]:
 def get_signals_latest(
     asset: Optional[str] = Query(None, description="Filter by asset symbol (e.g. EUR/USD, SPX)"),
     strategy: Optional[str] = Query(None, description="Filter by strategy name (e.g. mtf_ema, trend_forex)"),
-    asset_class: Optional[str] = Query(None, description="Filter by asset class: forex, crypto, commodities, indices"),
+    asset_class: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by asset class: forex | crypto | stocks. "
+            "Legacy values 'commodities' and 'indices' are accepted "
+            "as aliases for 'forex'."
+        ),
+    ),
 ):
     """
     Fetch the latest active (OPEN) signals in the public format.
@@ -562,6 +596,7 @@ def get_signals_latest(
     Direction is normalized to LONG/SHORT. Each signal is enriched with
     trailing-stop position metadata (highest_close, lowest_close) when available.
     """
+    asset_class = _resolve_asset_class(asset_class)
     raw = get_active_signals(strategy_name=strategy, asset=asset)
     raw = _deduplicate_signals(raw)
 
@@ -611,7 +646,14 @@ def get_signals_history(
     asset: Optional[str] = Query(None, description="Filter by asset symbol"),
     strategy: Optional[str] = Query(None, description="Filter by strategy name"),
     status: Optional[str] = Query(None, description="Filter by status: OPEN or CLOSED"),
-    asset_class: Optional[str] = Query(None, description="Filter by asset class: forex, crypto, commodities, indices"),
+    asset_class: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by asset class: forex | crypto | stocks. "
+            "Legacy values 'commodities' and 'indices' are accepted "
+            "as aliases for 'forex'."
+        ),
+    ),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     size: int = Query(20, ge=1, le=50, description="Items per page (max 50)"),
 ):
@@ -625,6 +667,7 @@ def get_signals_history(
     Retention window: CLOSED signals older than 92 days are excluded. OPEN signals are
     always returned regardless of age.
     """
+    asset_class = _resolve_asset_class(asset_class)
     all_raw = get_all_signals(strategy_name=strategy, asset=asset, status=status, limit=500, max_age_days=92)
     all_raw = _deduplicate_signals(all_raw)
     all_formatted = [_format_signal(s) for s in all_raw]
@@ -649,7 +692,14 @@ def get_signals_history(
 def get_signals_active(
     strategy: Optional[str] = Query(None, description="Filter by strategy name"),
     asset: Optional[str] = Query(None, description="Filter by asset symbol"),
-    category: Optional[str] = Query(None, description="Filter by category: forex, crypto, commodities, indices"),
+    category: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by asset class: forex | crypto | stocks. "
+            "Legacy values 'commodities' and 'indices' are accepted "
+            "as aliases for 'forex'."
+        ),
+    ),
 ):
     """
     Fetch currently open signals in the legacy format.
@@ -657,6 +707,7 @@ def get_signals_active(
     Returns only signals with status=OPEN. Uses the internal format
     with BUY/SELL direction and entry_price. Cached for 60 seconds.
     """
+    category = _resolve_asset_class(category)
     raw = get_active_signals(strategy_name=strategy, asset=asset)
     raw = _deduplicate_signals(raw)
     formatted = [_format_signal(s) for s in raw]
@@ -686,7 +737,14 @@ def get_signals(
     strategy: Optional[str] = Query(None, description="Filter by strategy name"),
     asset: Optional[str] = Query(None, description="Filter by asset symbol"),
     status: Optional[str] = Query(None, description="Filter by status: OPEN or CLOSED"),
-    category: Optional[str] = Query(None, description="Filter by category"),
+    category: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by asset class: forex | crypto | stocks. "
+            "Legacy values 'commodities' and 'indices' are accepted "
+            "as aliases for 'forex'."
+        ),
+    ),
     limit: int = Query(50, ge=1, le=200, description="Max results (default 50, max 200)"),
 ):
     """
@@ -696,6 +754,7 @@ def get_signals(
     Supports filtering by strategy, asset, status, and category.
     Results capped at 200 per request. Cached for 60 seconds.
     """
+    category = _resolve_asset_class(category)
     raw = get_all_signals(strategy_name=strategy, asset=asset, status=status, limit=limit)
     raw = _deduplicate_signals(raw)
     formatted = [_format_signal(s) for s in raw]
