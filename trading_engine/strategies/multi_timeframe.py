@@ -918,7 +918,10 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             logger.info(f"[MTF-EMA] {asset} | Position already open — skipping entry check")
             return SignalResult()
 
-        if has_any_open_signal_for_asset(asset):
+        if has_any_open_signal_for_asset(
+            asset,
+            exclude_strategies=["sp500_momentum"],
+        ):
             logger.info(
                 f"[MTF-EMA] {asset} | IDEMPOTENCY BLOCK: "
                 f"An OPEN signal already exists for this asset "

@@ -1,0 +1,176 @@
+I have a FastAPI + SQLAlchemy (SQLite) trading signals app. I need to implement 
+a full cross-strategy priority system so that mtf_ema and sp500_momentum can 
+both generate independent signals on SPX simultaneously, and highest_lowest_fx 
+and trend_forex can both generate independent signals on EUR/USD simultaneously, 
+without blocking each other. All per-strategy idempotency guards must remain 
+fully intact.
+
+Read these files first before making any changes:
+- trading_engine/database.py
+- trading_engine/strategies/multi_timeframe.py
+- trading_engine/strategies/sp500_momentum.py
+- trading_engine/strategies/highest_lowest.py
+- trading_engine/strategies/trend_forex.py
+
+---
+
+PROBLEM:
+has_any_open_signal_for_asset() checks ALL strategies and blocks any strategy 
+from entering if ANY other strategy has an open signal on the same asset. This 
+causes:
+  1. mtf_ema and sp500_momentum block each other on SPX
+  2. highest_lowest_fx and trend_forex block each other on EUR/USD
+
+SOLUTION:
+Add an optional exclude_strategies parameter to has_any_open_signal_for_asset() 
+in database.py, then update each strategy to exclude its known non-conflicting 
+partner strategies from the cross-strategy block.
+
+Make ALL of the following changes in ONE pass:
+
+---
+
+1. trading_engine/database.py
+
+Update has_any_open_signal_for_asset() to accept an optional 
+exclude_strategies parameter. When provided, signals from those strategies 
+are ignored in the cross-strategy check. All other behavior stays exactly 
+the same:
+
+  def has_any_open_signal_for_asset(
+      asset: str,
+      exclude_strategies: Optional[list[str]] = None,
+  ) -> bool:
+      with _get_session() as session:
+          q = (
+              session.query(
+                  Signal.id,
+                  Signal.strategy_name,
+                  Signal.direction,
+              )
+              .filter(
+                  Signal.asset == asset,
+                  Signal.status == "OPEN",
+              )
+          )
+          if exclude_strategies:
+              q = q.filter(
+                  Signal.strategy_name.notin_(exclude_strategies)
+              )
+          row = q.first()
+          if row:
+              logger.debug(
+                  f"[DB] has_any_open_signal_for_asset({asset}): "
+                  f"blocked by signal #{row[0]} | "
+                  f"strategy={row[1]} | direction={row[2]}"
+              )
+              return True
+          return False
+
+The Optional import is already in database.py — do not add a duplicate import.
+
+---
+
+2. trading_engine/strategies/multi_timeframe.py
+
+In the evaluate() method, find the has_any_open_signal_for_asset() call in 
+the entry check section and add exclude_strategies:
+
+  # CURRENT:
+  if has_any_open_signal_for_asset(asset):
+
+  # CHANGE TO:
+  if has_any_open_signal_for_asset(
+      asset,
+      exclude_strategies=["sp500_momentum"],
+  ):
+
+There is only ONE has_any_open_signal_for_asset() call in evaluate() — 
+update that one only. Do not change any other code in this file.
+
+---
+
+3. trading_engine/strategies/sp500_momentum.py
+
+In the evaluate() method, find the has_any_open_signal_for_asset() call 
+and add exclude_strategies:
+
+  # CURRENT:
+  if has_any_open_signal_for_asset(asset):
+
+  # CHANGE TO:
+  if has_any_open_signal_for_asset(
+      asset,
+      exclude_strategies=["mtf_ema"],
+  ):
+
+There is only ONE has_any_open_signal_for_asset() call in evaluate() — 
+update that one only. Do not change any other code in this file.
+
+---
+
+4. trading_engine/strategies/highest_lowest.py
+
+In the evaluate() method, find the has_any_open_signal_for_asset() call 
+and add exclude_strategies:
+
+  # CURRENT:
+  if has_any_open_signal_for_asset(asset):
+
+  # CHANGE TO:
+  if has_any_open_signal_for_asset(
+      asset,
+      exclude_strategies=["trend_forex"],
+  ):
+
+There is only ONE has_any_open_signal_for_asset() call in evaluate() — 
+update that one only. Do not change any other code in this file.
+
+---
+
+5. trading_engine/strategies/trend_forex.py
+
+In the evaluate() method there are TWO has_any_open_signal_for_asset() 
+calls — one inside the LONG entry block and one inside the SHORT entry 
+block. Update BOTH to add exclude_strategies:
+
+  # CURRENT (both occurrences):
+  if has_any_open_signal_for_asset(asset):
+
+  # CHANGE TO (both occurrences):
+  if has_any_open_signal_for_asset(
+      asset,
+      exclude_strategies=["highest_lowest_fx"],
+  ):
+
+Do not change any other code in this file.
+
+---
+
+CONSTRAINTS:
+- Do NOT change has_open_signal() — per-strategy idempotency must remain 
+  fully intact. Each strategy can still only have ONE open signal per asset 
+  at a time.
+- Do NOT change signal_exists() — timestamp-level idempotency must remain 
+  fully intact.
+- Do NOT change close_opposite_signal_if_exists() — direction flip handling 
+  must remain intact within each strategy.
+- Do NOT change trend_non_forex.py — it has no overlap conflict that needs 
+  fixing here.
+- Do NOT change any entry conditions, exit logic, indicator calculations, 
+  trailing stop rules, or timing windows in any strategy file.
+- The exclude_strategies parameter must default to None so all existing 
+  callers that do not pass it continue to work exactly as before.
+- After changes, the following must be true:
+    mtf_ema and sp500_momentum are fully independent on SPX — each can 
+    hold one open signal simultaneously without blocking the other
+    highest_lowest_fx and trend_forex are fully independent on EUR/USD — 
+    each can hold one open signal simultaneously without blocking the other
+    All other cross-strategy blocks remain in effect — for example 
+    trend_non_forex still blocks mtf_ema on the 26 crypto coins and 
+    trend_forex still blocks mtf_ema on EUR/USD and USD/JPY
+    No duplicate signals can be generated within the same strategy
+- Do not add any new imports to any file — all required imports already 
+  exist in each file.
+- Make only the exact changes described above. Do not refactor, rename, 
+  or reorganize any code.

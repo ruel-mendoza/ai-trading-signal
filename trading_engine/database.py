@@ -439,15 +439,22 @@ def close_stale_mtf_ema_longs(h4_ema50_map: Optional[dict] = None) -> None:
             logger.error(f"[DB] close_stale_mtf_ema_longs failed: {e}")
 
 
-def has_any_open_signal_for_asset(asset: str) -> bool:
+def has_any_open_signal_for_asset(
+    asset: str,
+    exclude_strategies: Optional[list[str]] = None,
+) -> bool:
     """Return True if ANY open signal exists for this asset, regardless of strategy or direction.
 
     Use as the primary cross-strategy idempotency guard to prevent a second strategy
     from opening a position on an asset that already has one open (e.g. mtf_ema BUY
     while a manual SELL is still OPEN in the DB).
+
+    exclude_strategies: when provided, signals from those strategies are ignored in the
+    cross-strategy check, allowing known non-conflicting partner strategies to coexist
+    (e.g. mtf_ema and sp500_momentum can both hold open signals on SPX simultaneously).
     """
     with _get_session() as session:
-        row = (
+        q = (
             session.query(
                 Signal.id,
                 Signal.strategy_name,
@@ -457,8 +464,12 @@ def has_any_open_signal_for_asset(asset: str) -> bool:
                 Signal.asset == asset,
                 Signal.status == "OPEN",
             )
-            .first()
         )
+        if exclude_strategies:
+            q = q.filter(
+                Signal.strategy_name.notin_(exclude_strategies)
+            )
+        row = q.first()
         if row:
             logger.debug(
                 f"[DB] has_any_open_signal_for_asset({asset}): "

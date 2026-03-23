@@ -328,7 +328,10 @@ class HighestLowestFXStrategy(BaseStrategy):
 
         direction = signal_data["direction"]
 
-        if has_any_open_signal_for_asset(asset):
+        if has_any_open_signal_for_asset(
+            asset,
+            exclude_strategies=["trend_forex"],
+        ):
             logger.info(
                 f"[HLC-FX] {asset} | IDEMPOTENCY BLOCK: "
                 f"An OPEN signal already exists for this asset "

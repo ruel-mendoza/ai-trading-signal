@@ -266,7 +266,10 @@ class ForexTrendFollowingStrategy(BaseStrategy):
 
         # ── LONG ENTRY ──
         if close_above_highest and sma50_above_sma100:
-            if has_any_open_signal_for_asset(asset):
+            if has_any_open_signal_for_asset(
+                asset,
+                exclude_strategies=["highest_lowest_fx"],
+            ):
                 logger.info(
                     f"[TREND-FOREX] {asset} | IDEMPOTENCY BLOCK: "
                     f"An OPEN signal already exists for this asset "
@@ -350,7 +353,10 @@ class ForexTrendFollowingStrategy(BaseStrategy):
 
         # ── SHORT ENTRY (all forex pairs per QC algo) ──
         if sma50_below_sma100 and close_below_lowest:
-            if has_any_open_signal_for_asset(asset):
+            if has_any_open_signal_for_asset(
+                asset,
+                exclude_strategies=["highest_lowest_fx"],
+            ):
                 logger.info(
                     f"[TREND-FOREX] {asset} | IDEMPOTENCY BLOCK: "
                     f"An OPEN signal already exists for this asset "

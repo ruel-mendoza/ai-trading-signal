@@ -233,7 +233,10 @@ class SP500MomentumStrategy(BaseStrategy):
             logger.info(f"[SP500-MOM] {asset} | Entry conditions not met — no action")
             return SignalResult()
 
-        if has_any_open_signal_for_asset(asset):
+        if has_any_open_signal_for_asset(
+            asset,
+            exclude_strategies=["mtf_ema"],
+        ):
             logger.info(
                 f"[SP500-MOM] {asset} | IDEMPOTENCY BLOCK: "
                 f"An OPEN signal already exists for this asset "
