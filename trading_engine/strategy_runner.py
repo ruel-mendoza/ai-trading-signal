@@ -70,7 +70,18 @@ STRATEGY_ASSET_CONFIG: dict[str, dict] = {
         "timeframe": "D1",
     },
     "trend_non_forex": {
-        "assets": ["GLD", "SLV", "USO", "DBA", "GSG", "PDBC"],
+        "assets": [
+            "CORN", "SOYB", "WEAT", "CANE", "WOOD",
+            "USO", "UNG", "UGA",
+            "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+            "DBB", "SLX",
+            "BNB/USD", "XRP/USD", "SOL/USD", "TRX/USD", "DOGE/USD",
+            "ADA/USD", "TON/USD", "SHIB/USD", "AVAX/USD", "LINK/USD",
+            "MATIC/USD", "LTC/USD", "DOT/USD", "BCH/USD", "UNI/USD",
+            "ATOM/USD", "XLM/USD", "HBAR/USD", "ICP/USD", "APT/USD",
+            "NEAR/USD", "ARB/USD", "OP/USD", "SUI/USD", "INJ/USD",
+            "CRO/USD",
+        ],
         "timeframe": "D1",
     },
 }

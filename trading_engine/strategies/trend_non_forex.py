@@ -26,11 +26,24 @@ logger = logging.getLogger("trading_engine.strategy.trend_non_forex")
 
 STRATEGY_NAME = "trend_non_forex"
 TARGET_SYMBOLS = [
+    # ── Commodity ETFs ──────────────────────────────────────
     "CORN", "SOYB", "WEAT", "CANE", "WOOD",
     "USO", "UNG", "UGA",
     "SGOL", "SIVR", "CPER", "PPLT", "PALL",
     "DBB", "SLX",
+    # ── Crypto altcoins (moved from mtf_ema, LONG_ONLY) ────
+    "BNB/USD",  "XRP/USD",  "SOL/USD",  "TRX/USD",  "DOGE/USD",
+    "ADA/USD",  "TON/USD",  "SHIB/USD", "AVAX/USD", "LINK/USD",
+    "MATIC/USD","LTC/USD",  "DOT/USD",  "BCH/USD",  "UNI/USD",
+    "ATOM/USD", "XLM/USD",  "HBAR/USD", "ICP/USD",  "APT/USD",
+    "NEAR/USD", "ARB/USD",  "OP/USD",   "SUI/USD",  "INJ/USD",
+    "CRO/USD",
 ]
+
+# ETF-only subset used for stock/latest batch fetching
+_ETF_SYMBOLS = [s for s in TARGET_SYMBOLS if "/" not in s]
+# Crypto altcoins within TARGET_SYMBOLS
+_CRYPTO_ALTCOINS = [s for s in TARGET_SYMBOLS if "/" in s]
 
 SHORT_ELIGIBLE_SYMBOLS = [
     "USO",   # Oil ETF — can trend down sharply
@@ -93,13 +106,16 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
 
     def prefetch_prices(self) -> dict[str, dict]:
         api_client = self.cache.api_client
-        logger.info(f"[TREND-NONFX] Batch-fetching prices via stock/latest for {len(TARGET_SYMBOLS)} ETFs")
+        logger.info(
+            f"[TREND-NONFX] Batch-fetching prices via stock/latest for "
+            f"{len(_ETF_SYMBOLS)} ETFs (crypto altcoins fetched individually via advance endpoint)"
+        )
         self._batch_prices = api_client.get_stock_latest_prices(
-            list(TARGET_SYMBOLS), batch_size=9
+            _ETF_SYMBOLS, batch_size=9
         )
         logger.info(
             f"[TREND-NONFX] Batch prefetch complete: "
-            f"{len(self._batch_prices)}/{len(TARGET_SYMBOLS)} symbols"
+            f"{len(self._batch_prices)}/{len(_ETF_SYMBOLS)} ETF symbols"
         )
         return self._batch_prices
 
@@ -128,6 +144,34 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
 
     def _get_advance_price(self, asset: str) -> Optional[dict]:
         from trading_engine.fcsapi_client import STOCK_INDEX_SYMBOLS
+
+        # Crypto pairs (e.g. BNB/USD) use advance endpoint — NOT stock/latest
+        if "/" in asset:
+            try:
+                api_client = self.cache.api_client
+                results = api_client.get_advance_data(
+                    [asset], period="1d", merge="latest,profile"
+                )
+                for r in results:
+                    if r.get("symbol") == asset:
+                        current = r.get("current", {})
+                        close_price = current.get("close")
+                        if close_price is not None:
+                            return {
+                                "close": float(close_price),
+                                "high": current.get("high"),
+                                "low": current.get("low"),
+                                "open": current.get("open"),
+                                "timestamp": current.get("timestamp", ""),
+                            }
+                logger.warning(
+                    f"[TREND-NONFX] {asset} | advance crypto returned no match"
+                )
+            except Exception as e:
+                logger.error(
+                    f"[TREND-NONFX] {asset} | advance crypto request failed: {e}"
+                )
+            return None
 
         if asset in self._batch_prices:
             quote = self._batch_prices[asset]

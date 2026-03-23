@@ -2184,54 +2184,43 @@ def get_recent_daily_closes(symbol: str, n: int = 20) -> list[dict]:
 
 _STRATEGY_ASSET_SEEDS = {
     "mtf_ema": [
-        ("SPX",      "forex",  "indices"),
-        ("NDX",      "forex",  "indices"),
-        ("RUT",      "forex",  "indices"),
-        ("XAU/USD",  "forex",  "commodities"),
-        ("XAG/USD",  "forex",  "commodities"),
-        ("OSX",      "forex",  "commodities"),
-        ("BTC/USD",  "crypto", "crypto"),
-        ("ETH/USD",  "crypto", "crypto"),
-        ("BNB/USD",  "crypto", "crypto"),
-        ("XRP/USD",  "crypto", "crypto"),
-        ("SOL/USD",  "crypto", "crypto"),
-        ("TRX/USD",  "crypto", "crypto"),
-        ("DOGE/USD", "crypto", "crypto"),
-        ("ADA/USD",  "crypto", "crypto"),
-        ("AVAX/USD", "crypto", "crypto"),
-        ("LINK/USD", "crypto", "crypto"),
-        ("MATIC/USD","crypto", "crypto"),
-        ("LTC/USD",  "crypto", "crypto"),
-        ("DOT/USD",  "crypto", "crypto"),
-        ("BCH/USD",  "crypto", "crypto"),
-        ("UNI/USD",  "crypto", "crypto"),
-        ("ATOM/USD", "crypto", "crypto"),
-        ("XLM/USD",  "crypto", "crypto"),
-        ("TON/USD",  "crypto", "crypto"),
-        ("SHIB/USD", "crypto", "crypto"),
-        ("HBAR/USD", "crypto", "crypto"),
-        ("NEAR/USD", "crypto", "crypto"),
-        ("ICP/USD",  "crypto", "crypto"),
-        ("CRO/USD",  "crypto", "crypto"),
-        ("APT/USD",  "crypto", "crypto"),
-        ("ARB/USD",  "crypto", "crypto"),
-        ("OP/USD",   "crypto", "crypto"),
-        ("SUI/USD",  "crypto", "crypto"),
-        ("INJ/USD",  "crypto", "crypto"),
-        ("EUR/USD",  "forex",  "forex"),
-        ("USD/JPY",  "forex",  "forex"),
-        ("GBP/USD",  "forex",  "forex"),
-        ("AUD/USD",  "forex",  "forex"),
+        ("SPX",     "forex",  "indices"),
+        ("NDX",     "forex",  "indices"),
+        ("RUT",     "forex",  "indices"),
+        ("XAU/USD", "forex",  "commodities"),
+        ("XAG/USD", "forex",  "commodities"),
+        ("OSX",     "forex",  "commodities"),
+        ("BTC/USD", "crypto", "crypto"),
+        ("ETH/USD", "crypto", "crypto"),
+        ("EUR/USD", "forex",  "forex"),
+        ("USD/JPY", "forex",  "forex"),
+        ("GBP/USD", "forex",  "forex"),
+        ("AUD/USD", "forex",  "forex"),
     ],
     "trend_non_forex": [
-        ("CORN",  "forex"), ("SOYB",  "forex"),
-        ("WEAT",  "forex"), ("CANE",  "forex"),
-        ("WOOD",  "forex"), ("USO",   "forex"),
-        ("UNG",   "forex"), ("UGA",   "forex"),
-        ("SGOL",  "forex"), ("SIVR",  "forex"),
-        ("CPER",  "forex"), ("PPLT",  "forex"),
-        ("PALL",  "forex"), ("DBB",   "forex"),
-        ("SLX",   "forex"),
+        # ── Commodity ETFs ──────────────────────────────
+        ("CORN",    "forex"), ("SOYB",    "forex"),
+        ("WEAT",    "forex"), ("CANE",    "forex"),
+        ("WOOD",    "forex"), ("USO",     "forex"),
+        ("UNG",     "forex"), ("UGA",     "forex"),
+        ("SGOL",    "forex"), ("SIVR",    "forex"),
+        ("CPER",    "forex"), ("PPLT",    "forex"),
+        ("PALL",    "forex"), ("DBB",     "forex"),
+        ("SLX",     "forex"),
+        # ── Crypto altcoins (LONG_ONLY) ─────────────────
+        ("BNB/USD",   "crypto"), ("XRP/USD",   "crypto"),
+        ("SOL/USD",   "crypto"), ("TRX/USD",   "crypto"),
+        ("DOGE/USD",  "crypto"), ("ADA/USD",   "crypto"),
+        ("TON/USD",   "crypto"), ("SHIB/USD",  "crypto"),
+        ("AVAX/USD",  "crypto"), ("LINK/USD",  "crypto"),
+        ("MATIC/USD", "crypto"), ("LTC/USD",   "crypto"),
+        ("DOT/USD",   "crypto"), ("BCH/USD",   "crypto"),
+        ("UNI/USD",   "crypto"), ("ATOM/USD",  "crypto"),
+        ("XLM/USD",   "crypto"), ("HBAR/USD",  "crypto"),
+        ("ICP/USD",   "crypto"), ("APT/USD",   "crypto"),
+        ("NEAR/USD",  "crypto"), ("ARB/USD",   "crypto"),
+        ("OP/USD",    "crypto"), ("SUI/USD",   "crypto"),
+        ("INJ/USD",   "crypto"), ("CRO/USD",   "crypto"),
     ],
     "trend_forex": [
         ("EUR/USD", "forex"), ("USD/JPY", "forex"),
@@ -2315,6 +2304,39 @@ def seed_strategy_assets():
                 logger.info(
                     f"[DB] Backfilled sub_category for "
                     f"{backfilled} mtf_ema asset(s)"
+                )
+
+            # One-time cleanup: soft-delete any mtf_ema rows for the 26 coins
+            # that were moved to trend_non_forex. is_active=0 prevents future
+            # evaluation under mtf_ema without deleting history.
+            COINS_MOVED_FROM_MTF = [
+                "BNB/USD",  "XRP/USD",  "SOL/USD",  "TRX/USD",  "DOGE/USD",
+                "ADA/USD",  "TON/USD",  "SHIB/USD", "AVAX/USD", "LINK/USD",
+                "MATIC/USD","LTC/USD",  "DOT/USD",  "BCH/USD",  "UNI/USD",
+                "ATOM/USD", "XLM/USD",  "HBAR/USD", "ICP/USD",  "APT/USD",
+                "NEAR/USD", "ARB/USD",  "OP/USD",   "SUI/USD",  "INJ/USD",
+                "CRO/USD",
+            ]
+            moved_rows = (
+                session.query(StrategyAsset)
+                .filter(
+                    StrategyAsset.strategy_name == "mtf_ema",
+                    StrategyAsset.symbol.in_(COINS_MOVED_FROM_MTF),
+                    StrategyAsset.is_active == 1,
+                )
+                .all()
+            )
+            for row in moved_rows:
+                row.is_active = 0
+                logger.info(
+                    f"[DB] seed_strategy_assets: deactivated "
+                    f"mtf_ema/{row.symbol} (moved to trend_non_forex)"
+                )
+            if moved_rows:
+                session.commit()
+                logger.info(
+                    f"[DB] seed_strategy_assets: deactivated "
+                    f"{len(moved_rows)} coin(s) from mtf_ema"
                 )
 
         except Exception as e:

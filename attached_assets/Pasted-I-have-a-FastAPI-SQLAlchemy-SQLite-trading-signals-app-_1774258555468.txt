@@ -1,0 +1,268 @@
+I have a FastAPI + SQLAlchemy (SQLite) trading signals app. I need to move a 
+specific list of crypto coins FROM the Multi-Timeframe EMA strategy (mtf_ema) 
+TO the Trend Non-Forex strategy (trend_non_forex). The coins BTC/USD and ETH/USD 
+must remain in mtf_ema and must NOT be moved.
+
+Read these files first before making any changes:
+- trading_engine/strategies/multi_timeframe.py
+- trading_engine/strategies/trend_non_forex.py
+- trading_engine/database.py
+- trading_engine/admin.py
+- trading_engine/strategy_runner.py
+- trading_engine/main.py
+
+---
+
+COINS TO MOVE from mtf_ema → trend_non_forex:
+  BNB/USD, XRP/USD, SOL/USD, TRX/USD, DOGE/USD, ADA/USD, TON/USD, SHIB/USD,
+  AVAX/USD, LINK/USD, MATIC/USD, LTC/USD, DOT/USD, BCH/USD, UNI/USD, ATOM/USD,
+  XLM/USD, HBAR/USD, ICP/USD, APT/USD, NEAR/USD, ARB/USD, OP/USD, SUI/USD,
+  INJ/USD, CRO/USD
+
+COINS THAT MUST STAY in mtf_ema (do not touch):
+  BTC/USD, ETH/USD
+
+Make ALL of the following changes in ONE pass:
+
+---
+
+1. trading_engine/strategies/multi_timeframe.py
+
+a) In TARGET_ASSETS, remove all 26 coins from the crypto list, keeping only
+   BTC/USD and ETH/USD:
+     "crypto": ["BTC/USD", "ETH/USD"],
+
+b) Update ALL_ASSETS to reflect the new TARGET_ASSETS (it is built from 
+   TARGET_ASSETS so this should update automatically if it uses a loop — 
+   verify and fix if it is a hardcoded list).
+
+c) In _STRATEGY_ASSET_SEEDS inside database.py (see step 3), the mtf_ema 
+   crypto entries for the 26 coins will be removed — _load_target_assets() 
+   reads from DB so it will automatically reflect the change once seeds are 
+   updated. No further changes needed in this file beyond step a and b.
+
+---
+
+2. trading_engine/strategies/trend_non_forex.py
+
+a) Add all 26 coins to TARGET_SYMBOLS. Keep all existing ETF symbols exactly 
+   as they are. Append the coins at the end:
+     TARGET_SYMBOLS = [
+         # existing ETF symbols — keep exactly as-is
+         "CORN", "SOYB", "WEAT", "CANE", "WOOD",
+         "USO", "UNG", "UGA",
+         "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+         "DBB", "SLX",
+         # crypto altcoins moved from mtf_ema
+         "BNB/USD", "XRP/USD", "SOL/USD", "TRX/USD", "DOGE/USD",
+         "ADA/USD", "TON/USD", "SHIB/USD", "AVAX/USD", "LINK/USD",
+         "MATIC/USD", "LTC/USD", "DOT/USD", "BCH/USD", "UNI/USD",
+         "ATOM/USD", "XLM/USD", "HBAR/USD", "ICP/USD", "APT/USD",
+         "NEAR/USD", "ARB/USD", "OP/USD", "SUI/USD", "INJ/USD",
+         "CRO/USD",
+     ]
+
+b) The 26 coins are LONG_ONLY (same as ETFs). Do NOT add them to 
+   SHORT_ELIGIBLE_SYMBOLS.
+
+c) In _get_advance_price(), the method currently calls 
+   api_client.get_stock_latest_prices() for ETF symbols. The 26 crypto coins 
+   use a different API endpoint. Add a check: if the asset ends with "/USD" 
+   (i.e. it is a crypto pair), fetch it using the crypto advance endpoint 
+   instead of stock/latest. Use this logic:
+
+     if "/" in asset:
+         # crypto pair — use advance endpoint via get_advance_data
+         try:
+             api_client = self.cache.api_client
+             results = api_client.get_advance_data(
+                 [asset], period="1d", merge="latest,profile"
+             )
+             for r in results:
+                 if r.get("symbol") == asset:
+                     current = r.get("current", {})
+                     close_price = current.get("close")
+                     if close_price is not None:
+                         return {
+                             "close": float(close_price),
+                             "high": current.get("high"),
+                             "low": current.get("low"),
+                             "open": current.get("open"),
+                             "timestamp": current.get("timestamp", ""),
+                         }
+             logger.warning(
+                 f"[TREND-NONFX] {asset} | advance crypto returned no match"
+             )
+         except Exception as e:
+             logger.error(
+                 f"[TREND-NONFX] {asset} | advance crypto request failed: {e}"
+             )
+         return None
+
+   Place this check at the TOP of _get_advance_price(), before the existing 
+   batch_prices cache check and stock/latest logic.
+
+d) In the evaluate() log line that prints the mode label, update the condition 
+   so crypto pairs also show LONG_ONLY:
+     mode_label = (
+         "LONG+SHORT" if asset in SHORT_ELIGIBLE_SYMBOLS
+         else "LONG_ONLY"
+     )
+   This is already correct — no change needed here unless it uses TARGET_SYMBOLS
+   directly. Verify and fix if needed.
+
+e) In _close_orphaned_signals(), the is_legacy check uses:
+     is_legacy = asset not in TARGET_SYMBOLS
+   Since TARGET_SYMBOLS now includes the 26 coins, this will correctly NOT flag 
+   them as legacy. No change needed here — just verify the logic still works.
+
+---
+
+3. trading_engine/database.py
+
+a) In _STRATEGY_ASSET_SEEDS, make these changes:
+
+   For mtf_ema — REMOVE all 26 coins from the crypto list, keep only:
+     ("BTC/USD", "crypto", "crypto"),
+     ("ETH/USD", "crypto", "crypto"),
+
+   For trend_non_forex — ADD all 26 coins as 2-tuples with asset_class="crypto".
+   Keep all existing ETF 2-tuples exactly as-is. Append at the end:
+     ("BNB/USD",   "crypto"),
+     ("XRP/USD",   "crypto"),
+     ("SOL/USD",   "crypto"),
+     ("TRX/USD",   "crypto"),
+     ("DOGE/USD",  "crypto"),
+     ("ADA/USD",   "crypto"),
+     ("TON/USD",   "crypto"),
+     ("SHIB/USD",  "crypto"),
+     ("AVAX/USD",  "crypto"),
+     ("LINK/USD",  "crypto"),
+     ("MATIC/USD", "crypto"),
+     ("LTC/USD",   "crypto"),
+     ("DOT/USD",   "crypto"),
+     ("BCH/USD",   "crypto"),
+     ("UNI/USD",   "crypto"),
+     ("ATOM/USD",  "crypto"),
+     ("XLM/USD",   "crypto"),
+     ("HBAR/USD",  "crypto"),
+     ("ICP/USD",   "crypto"),
+     ("APT/USD",   "crypto"),
+     ("NEAR/USD",  "crypto"),
+     ("ARB/USD",   "crypto"),
+     ("OP/USD",    "crypto"),
+     ("SUI/USD",   "crypto"),
+     ("INJ/USD",   "crypto"),
+     ("CRO/USD",   "crypto"),
+
+b) The seed loop is idempotent (skips existing rows) so running it on an 
+   existing DB will only INSERT the new trend_non_forex crypto rows and will 
+   not duplicate or overwrite anything. Verify the existing duplicate-check 
+   logic handles this correctly.
+
+c) Add a one-time cleanup inside seed_strategy_assets() after the main seed 
+   loop. Soft-delete (set is_active=0) any mtf_ema rows for the 26 coins that 
+   still exist in the DB from the old seeds:
+
+     COINS_MOVED_FROM_MTF = [
+         "BNB/USD", "XRP/USD", "SOL/USD", "TRX/USD", "DOGE/USD",
+         "ADA/USD", "TON/USD", "SHIB/USD", "AVAX/USD", "LINK/USD",
+         "MATIC/USD", "LTC/USD", "DOT/USD", "BCH/USD", "UNI/USD",
+         "ATOM/USD", "XLM/USD", "HBAR/USD", "ICP/USD", "APT/USD",
+         "NEAR/USD", "ARB/USD", "OP/USD", "SUI/USD", "INJ/USD",
+         "CRO/USD",
+     ]
+     moved = (
+         session.query(StrategyAsset)
+         .filter(
+             StrategyAsset.strategy_name == "mtf_ema",
+             StrategyAsset.symbol.in_(COINS_MOVED_FROM_MTF),
+             StrategyAsset.is_active == 1,
+         )
+         .all()
+     )
+     for row in moved:
+         row.is_active = 0
+         logger.info(
+             f"[DB] seed_strategy_assets: deactivated mtf_ema/{row.symbol} "
+             f"(moved to trend_non_forex)"
+         )
+     if moved:
+         session.commit()
+         logger.info(
+             f"[DB] seed_strategy_assets: deactivated {len(moved)} moved coin(s) "
+             f"from mtf_ema"
+         )
+
+---
+
+4. trading_engine/strategy_runner.py
+
+In STRATEGY_ASSET_CONFIG, update the assets lists:
+
+   "mtf_ema": keep only:
+     "SPX", "NDX", "RUT",
+     "XAU/USD", "XAG/USD", "OSX",
+     "BTC/USD", "ETH/USD",
+     "EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"
+
+   "trend_non_forex": add all 26 coins to the existing assets list. Keep all 
+   existing ETF symbols. Append:
+     "BNB/USD", "XRP/USD", "SOL/USD", "TRX/USD", "DOGE/USD",
+     "ADA/USD", "TON/USD", "SHIB/USD", "AVAX/USD", "LINK/USD",
+     "MATIC/USD", "LTC/USD", "DOT/USD", "BCH/USD", "UNI/USD",
+     "ATOM/USD", "XLM/USD", "HBAR/USD", "ICP/USD", "APT/USD",
+     "NEAR/USD", "ARB/USD", "OP/USD", "SUI/USD", "INJ/USD",
+     "CRO/USD"
+
+---
+
+5. trading_engine/main.py
+
+In _scheduled_trend_non_forex_evaluate(), the symbol list is loaded via 
+get_active_symbols() which reads from DB — so it will automatically include 
+the 26 new coins once the seeds are updated. No change needed here unless 
+the function hardcodes a symbol list. Verify and fix if it does.
+
+In _scheduled_mtf_ema_evaluate(), same check — verify it uses 
+get_all_mtf_assets() which reads from DB and will automatically exclude the 
+26 moved coins after the seed cleanup. Fix if hardcoded.
+
+---
+
+6. trading_engine/admin.py
+
+In STRATEGY_ASSET_CONFIG references inside _get_mtf_ema_data() and 
+_build_mtf_ema_html(), the MTF EMA asset list is built from 
+TARGET_ASSETS imported from multi_timeframe.py. Since TARGET_ASSETS is 
+updated in step 1, this will automatically reflect the change. Verify 
+_MTF_ALL_ASSETS and _MTF_TARGET_ASSETS imports still resolve correctly 
+after the TARGET_ASSETS change.
+
+In _get_trend_following_data() and _build_trend_following_html(), the 
+non-forex symbols are loaded from _TNF_TARGET_SYMBOLS imported from 
+trend_non_forex.py. Since TARGET_SYMBOLS is updated in step 2, the admin 
+panel will automatically show the 26 new coins. Verify the import alias 
+_TNF_TARGET_SYMBOLS still resolves correctly.
+
+In _build_signal_analysis_html(), the trend_nf table is built from 
+data["trend_nf"] which comes from _get_signal_analysis_data(). That 
+function loops over _TNF_TARGET_SYMBOLS. Since TARGET_SYMBOLS now includes 
+the 26 coins, they will automatically appear in the analysis table. 
+Verify this works and that the table does not break with the larger list.
+
+---
+
+CONSTRAINTS:
+- BTC/USD and ETH/USD must remain ONLY in mtf_ema. Do NOT add them to 
+  trend_non_forex.
+- Do NOT change any strategy entry/exit logic, indicator calculations, 
+  trailing stop rules, or timing windows.
+- Do NOT change SHORT_ELIGIBLE_SYMBOLS — the 26 coins are LONG_ONLY.
+- Do NOT remove any existing ETF symbols from trend_non_forex.
+- Do NOT touch sp500_momentum.py, trend_forex.py, or highest_lowest.py.
+- All DB changes must be idempotent (safe to run on existing DB multiple times).
+- The soft-delete of moved mtf_ema rows must not affect open signals or 
+  positions — it only prevents future evaluation for those coins under mtf_ema.
+- After changes, the app must start without errors and both strategy admin 
+  panels must display the correct asset lists.
