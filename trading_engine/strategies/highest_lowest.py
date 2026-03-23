@@ -407,15 +407,91 @@ class HighestLowestFXStrategy(BaseStrategy):
             },
         )
 
+    def _close_orphaned_signals(self, now_et: datetime) -> list[dict]:
+        """Close any OPEN signals that have no corresponding open_positions record.
+
+        This handles the case where a server restart clears open_positions but
+        leaves signals in OPEN status. Since we have no position tracking data,
+        we close immediately — the time_exit threshold has certainly passed for
+        any genuine orphan (all entries are intraday 9-10 AM only).
+        """
+        orphans = get_active_signals(strategy_name=STRATEGY_NAME)
+        if not orphans:
+            return []
+
+        positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
+        position_assets = {p["asset"] for p in positions}
+
+        closed = []
+        for sig in orphans:
+            asset = sig["asset"]
+            if asset in position_assets:
+                continue
+
+            sig_id = sig["id"]
+            entry_price = sig.get("entry_price", 0)
+            direction = sig.get("direction", "")
+            ts_raw = sig.get("signal_timestamp") or sig.get("created_at", "")
+
+            hours_open = None
+            try:
+                if isinstance(ts_raw, str):
+                    entry_time = datetime.strptime(str(ts_raw)[:19], "%Y-%m-%dT%H:%M:%S")
+                    entry_time = ET_ZONE.localize(entry_time)
+                    hours_open = (now_et - entry_time).total_seconds() / 3600
+            except (ValueError, TypeError):
+                pass
+
+            logger.warning(
+                f"[HLC-FX-EXIT] ORPHAN SIGNAL detected | id={sig_id} | {asset} {direction} | "
+                f"entry={entry_price:.5f} | "
+                f"hours_open={f'{hours_open:.1f}' if hours_open is not None else 'unknown'} | "
+                f"No open_positions record found — closing immediately"
+            )
+
+            advance_quote = self._get_advance_price(asset)
+            if advance_quote and advance_quote.get("close") is not None:
+                exit_price = float(advance_quote["close"])
+            else:
+                candles = self.cache.get_candles(asset, "1H", 5)
+                exit_price = candles[-1]["close"] if candles else entry_price
+
+            hours_str = f"{hours_open:.1f}h" if hours_open is not None else "unknown duration"
+            exit_reason = (
+                f"Orphaned signal close | No open_positions record (cleared on restart) | "
+                f"open for {hours_str} | time_exit threshold {TIME_EXIT_HOURS}h exceeded"
+            )
+            close_signal(sig_id, exit_reason, exit_price=exit_price)
+            closed.append({
+                "asset": asset, "direction": direction,
+                "entry_price": entry_price, "exit_price": exit_price,
+                "exit_reason": "orphaned_time_exit",
+            })
+            logger.info(
+                f"[HLC-FX-EXIT] ORPHAN SIGNAL closed | id={sig_id} | {asset} {direction} | "
+                f"exit_price={exit_price:.5f}"
+            )
+
+        return closed
+
     def check_exits(self) -> list[dict]:
         closed_signals = []
         positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
         logger.info(f"[HLC-FX-EXIT] ====== Checking exits | {len(positions)} open position(s) ======")
 
+        now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
+
+        # Safety net: close any OPEN signals with no position record
+        orphan_closes = self._close_orphaned_signals(now_et)
+        closed_signals.extend(orphan_closes)
+        if orphan_closes:
+            logger.warning(
+                f"[HLC-FX-EXIT] {len(orphan_closes)} orphaned signal(s) closed — "
+                f"open_positions was out of sync with signals table"
+            )
+
         if not positions:
             return closed_signals
-
-        now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
 
         for pos in positions:
             asset = pos["asset"]
