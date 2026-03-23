@@ -1,0 +1,255 @@
+Add all 26 client-requested altcoins to multi_timeframe.py
+using spot USDT instruments via FCSAPI crypto endpoint.
+Previously only 10 were added — this prompt adds the
+remaining 16. The strategy's MIN_D1_BARS and MIN_H4_BARS
+guards will automatically skip any coin without sufficient
+history on each evaluation cycle.
+
+Files to change: multi_timeframe.py, fcsapi_client.py,
+database.py, api_v1.py, admin.py
+No strategy logic changes — symbol lists only.
+
+═══════════════════════════════════════════════════════════
+SPOT INSTRUMENT MAPPING — ALL 26 COINS
+═══════════════════════════════════════════════════════════
+All coins use spot USDT pairs via FCSAPI crypto endpoint.
+No futures contracts. Mapping:
+
+  BNB/USD   → BNBUSDT     (already present)
+  XRP/USD   → XRPUSDT     (already present)
+  SOL/USD   → SOLUSDT     (already present)
+  TRX/USD   → TRXUSDT     (add)
+  DOGE/USD  → DOGEUSDT    (already present)
+  ADA/USD   → ADAUSDT     (already present)
+  TON/USD   → TONUSDT     (add)
+  SHIB/USD  → SHIBUSDT    (add)
+  AVAX/USD  → AVAXUSDT    (already present)
+  LINK/USD  → LINKUSDT    (already present)
+  MATIC/USD → MATICUSDT   (add)
+  LTC/USD   → LTCUSDT     (already in original map — add to MTF)
+  DOT/USD   → DOTUSDT     (already present)
+  BCH/USD   → BCHUSDT     (already present)
+  UNI/USD   → UNIUSDT     (add)
+  ATOM/USD  → ATOMUSDT    (already present)
+  XLM/USD   → XLMUSDT     (add)
+  HBAR/USD  → HBARUSDT    (add)
+  ICP/USD   → ICPUSDT     (add)
+  APT/USD   → APTUSDT     (add)
+  NEAR/USD  → NEARUSDT    (add)
+  ARB/USD   → ARBUSDT     (add)
+  OP/USD    → OPUSDT      (add)
+  SUI/USD   → SUIUSDT     (add)
+  INJ/USD   → INJUSDT     (add)
+  CRO/USD   → CROUSDT     (add)
+
+═══════════════════════════════════════════════════════════
+CHANGE 1 — multi_timeframe.py: full 26-coin crypto group
+═══════════════════════════════════════════════════════════
+
+FIND the crypto group in TARGET_ASSETS:
+
+  FIND:
+    "crypto": [
+        # Original
+        "BTC/USD", "ETH/USD",
+        # Tier 1 altcoins — sufficient D1+H4+H1 history
+        "BNB/USD", "XRP/USD", "SOL/USD", "ADA/USD",
+        "DOGE/USD", "AVAX/USD", "LINK/USD", "DOT/USD",
+        "BCH/USD", "ATOM/USD",
+    ],
+
+  REPLACE WITH:
+    "crypto": [
+        # ── Original ───────────────────────────────────
+        "BTC/USD",  "ETH/USD",
+        # ── Client list — all 26 coins (spot USDT) ─────
+        # Coins with 3+ years history (high confidence)
+        "BNB/USD",  "XRP/USD",  "SOL/USD",  "TRX/USD",
+        "DOGE/USD", "ADA/USD",  "AVAX/USD", "LINK/USD",
+        "MATIC/USD","LTC/USD",  "DOT/USD",  "BCH/USD",
+        "UNI/USD",  "ATOM/USD", "XLM/USD",
+        # Coins with 2-3 years history (medium confidence)
+        "TON/USD",  "SHIB/USD", "HBAR/USD", "NEAR/USD",
+        "ICP/USD",  "CRO/USD",
+        # Coins with 1-2 years history (auto-skip if
+        # insufficient bars — MIN_D1_BARS guard fires)
+        "APT/USD",  "ARB/USD",  "OP/USD",
+        "SUI/USD",  "INJ/USD",
+    ],
+
+Note: ALL_ASSETS is built dynamically from TARGET_ASSETS —
+no manual update needed.
+
+═══════════════════════════════════════════════════════════
+CHANGE 2 — fcsapi_client.py: complete spot symbol maps
+═══════════════════════════════════════════════════════════
+
+Step A: Add all missing coins to CRYPTO_SYMBOLS set.
+Verify existing entries and ADD only what is missing:
+
+  ADD to CRYPTO_SYMBOLS (if not already present):
+    "TRX/USD", "MATIC/USD", "LTC/USD", "UNI/USD",
+    "XLM/USD", "TON/USD",   "SHIB/USD","HBAR/USD",
+    "NEAR/USD","ICP/USD",   "CRO/USD", "APT/USD",
+    "ARB/USD", "OP/USD",    "SUI/USD", "INJ/USD",
+
+Step B: Add all missing coins to CRYPTO_SYMBOL_MAP.
+ADD only entries not already present:
+
+  "TRX/USD":   "TRXUSDT",
+  "MATIC/USD": "MATICUSDT",
+  "LTC/USD":   "LTCUSDT",
+  "UNI/USD":   "UNIUSDT",
+  "XLM/USD":   "XLMUSDT",
+  "TON/USD":   "TONUSDT",
+  "SHIB/USD":  "SHIBUSDT",
+  "HBAR/USD":  "HBARUSDT",
+  "NEAR/USD":  "NEARUSDT",
+  "ICP/USD":   "ICPUSDT",
+  "CRO/USD":   "CROUSDT",
+  "APT/USD":   "APTUSDT",
+  "ARB/USD":   "ARBUSDT",
+  "OP/USD":    "OPUSDT",
+  "SUI/USD":   "SUIUSDT",
+  "INJ/USD":   "INJUSDT",
+
+Step C: Add all missing coins to ADVANCE_SYMBOL_MAP.
+ADD only entries not already present — same mappings
+as CRYPTO_SYMBOL_MAP above.
+
+Step D: Verify get_asset_class() correctly routes all
+new symbols as "crypto" — this is handled by CRYPTO_SYMBOLS
+set membership. Since all new symbols are added to
+CRYPTO_SYMBOLS in Step A, routing is automatic.
+
+Step E: Verify get_v4_history_symbol() returns correct
+USDT pair for all new coins — this uses CRYPTO_SYMBOL_MAP
+which is updated in Step B. No logic change needed.
+
+═══════════════════════════════════════════════════════════
+CHANGE 3 — database.py: add all 16 missing coins
+           to _ASSET_CLASS_MAP
+═══════════════════════════════════════════════════════════
+
+In _ASSET_CLASS_MAP, ADD the 16 missing coins under crypto.
+Do not duplicate existing entries:
+
+  # ADD these if not already present:
+  "TRX/USD":   "crypto",
+  "MATIC/USD": "crypto",
+  "LTC/USD":   "crypto",
+  "UNI/USD":   "crypto",
+  "XLM/USD":   "crypto",
+  "TON/USD":   "crypto",
+  "SHIB/USD":  "crypto",
+  "HBAR/USD":  "crypto",
+  "NEAR/USD":  "crypto",
+  "ICP/USD":   "crypto",
+  "CRO/USD":   "crypto",
+  "APT/USD":   "crypto",
+  "ARB/USD":   "crypto",
+  "OP/USD":    "crypto",
+  "SUI/USD":   "crypto",
+  "INJ/USD":   "crypto",
+
+═══════════════════════════════════════════════════════════
+CHANGE 4 — api_v1.py: add all 16 missing coins
+           to CATEGORY_MAP
+═══════════════════════════════════════════════════════════
+
+In CATEGORY_MAP, ADD the 16 missing coins under "crypto".
+Do not duplicate existing entries:
+
+  "TRX/USD":   "crypto",
+  "MATIC/USD": "crypto",
+  "LTC/USD":   "crypto",
+  "UNI/USD":   "crypto",
+  "XLM/USD":   "crypto",
+  "TON/USD":   "crypto",
+  "SHIB/USD":  "crypto",
+  "HBAR/USD":  "crypto",
+  "NEAR/USD":  "crypto",
+  "ICP/USD":   "crypto",
+  "CRO/USD":   "crypto",
+  "APT/USD":   "crypto",
+  "ARB/USD":   "crypto",
+  "OP/USD":    "crypto",
+  "SUI/USD":   "crypto",
+  "INJ/USD":   "crypto",
+
+═══════════════════════════════════════════════════════════
+CHANGE 5 — admin.py: add all 16 missing coins
+           to _ADMIN_CLASS_MAP
+═══════════════════════════════════════════════════════════
+
+In _ADMIN_CLASS_MAP, ADD the 16 missing coins under "crypto".
+Do not duplicate existing entries:
+
+  "TRX/USD":   "crypto",
+  "MATIC/USD": "crypto",
+  "LTC/USD":   "crypto",
+  "UNI/USD":   "crypto",
+  "XLM/USD":   "crypto",
+  "TON/USD":   "crypto",
+  "SHIB/USD":  "crypto",
+  "HBAR/USD":  "crypto",
+  "NEAR/USD":  "crypto",
+  "ICP/USD":   "crypto",
+  "CRO/USD":   "crypto",
+  "APT/USD":   "crypto",
+  "ARB/USD":   "crypto",
+  "OP/USD":    "crypto",
+  "SUI/USD":   "crypto",
+  "INJ/USD":   "crypto",
+
+═══════════════════════════════════════════════════════════
+WHY MIN_BARS GUARDS MAKE MANUAL EXCLUSION UNNECESSARY
+═══════════════════════════════════════════════════════════
+multi_timeframe.py has these guards in _fetch_all_timeframes():
+
+  if d1 is None or len(d1.closes) < MIN_D1_BARS:   # 200 bars
+      return None   # ← skips this asset silently
+
+  if h4 is None or len(h4.closes) < MIN_H4_BARS:   # 210 bars
+      return None   # ← skips this asset silently
+
+This means:
+- SUI (launched early 2023) — ~800 D1 bars, ~9600 H4 bars
+  ✅ Sufficient — will evaluate normally
+- Any coin launched after ~Oct 2024 — insufficient D1 bars
+  ✅ Skipped silently with "INSUFFICIENT DATA" log
+- No coin with thin history can generate a bad signal
+- No crash, no error — just a clean skip and log message
+
+Adding all 26 coins is therefore safe regardless of age.
+The data guards are the correct place to enforce readiness,
+not the symbol list.
+
+═══════════════════════════════════════════════════════════
+DO NOT CHANGE
+═══════════════════════════════════════════════════════════
+- Any entry/exit logic in multi_timeframe.py
+- MIN_D1_BARS, MIN_H4_BARS, MIN_H1_BARS constants
+- trend_non_forex.py — ETFs only, unchanged
+- Any scheduler job in main.py
+- Any other function in any file
+
+═══════════════════════════════════════════════════════════
+VERIFICATION CHECKLIST (confirm internally before saving)
+═══════════════════════════════════════════════════════════
+[ ] TARGET_ASSETS "crypto" group has exactly 28 coins
+    (BTC + ETH + 26 client coins)
+[ ] ALL_ASSETS built dynamically — no manual update needed
+[ ] CRYPTO_SYMBOLS has all 28 crypto symbols
+[ ] CRYPTO_SYMBOL_MAP has all 28 → USDT spot mappings
+[ ] ADVANCE_SYMBOL_MAP has all 28 entries
+[ ] No futures contract symbols added anywhere
+    (no BTCUSD_PERP, no quarterly contract codes)
+[ ] All 16 new coins map to "crypto" in database.py
+[ ] All 16 new coins map to "crypto" in api_v1.py
+[ ] All 16 new coins map to "crypto" in admin.py
+[ ] No duplicate entries in any map
+[ ] Coins with insufficient history will log
+    "INSUFFICIENT DATA" and skip cleanly — no crash
+[ ] trend_non_forex.py completely unchanged
+[ ] All five files are syntactically valid Python

@@ -31,12 +31,21 @@ TARGET_ASSETS = {
     "indices":    ["SPX", "NDX", "RUT"],
     "commodities": ["XAU/USD", "XAG/USD", "OSX"],
     "crypto": [
-        # Original
-        "BTC/USD", "ETH/USD",
-        # Tier 1 altcoins — sufficient D1+H4+H1 history
-        "BNB/USD", "XRP/USD", "SOL/USD", "ADA/USD",
-        "DOGE/USD", "AVAX/USD", "LINK/USD", "DOT/USD",
-        "BCH/USD", "ATOM/USD",
+        # ── Original ───────────────────────────────────
+        "BTC/USD",  "ETH/USD",
+        # ── Client list — all 26 coins (spot USDT) ─────
+        # Coins with 3+ years history (high confidence)
+        "BNB/USD",  "XRP/USD",  "SOL/USD",  "TRX/USD",
+        "DOGE/USD", "ADA/USD",  "AVAX/USD", "LINK/USD",
+        "MATIC/USD","LTC/USD",  "DOT/USD",  "BCH/USD",
+        "UNI/USD",  "ATOM/USD", "XLM/USD",
+        # Coins with 2-3 years history (medium confidence)
+        "TON/USD",  "SHIB/USD", "HBAR/USD", "NEAR/USD",
+        "ICP/USD",  "CRO/USD",
+        # Coins with 1-2 years history (auto-skip if
+        # insufficient bars — MIN_D1_BARS guard fires)
+        "APT/USD",  "ARB/USD",  "OP/USD",
+        "SUI/USD",  "INJ/USD",
     ],
     "forex":      ["EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"],
 }
