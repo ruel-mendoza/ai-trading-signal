@@ -69,6 +69,23 @@ def _calculate_quantity(portfolio_value: float, atr: float, atr_mult: float = TR
     return round((portfolio_value * RISK_PCT_PER_TRADE) / stop_distance, 4)
 
 
+def get_active_symbols() -> list[str]:
+    """Return active symbols from DB.
+    Falls back to hardcoded TARGET_SYMBOLS if DB is empty.
+    """
+    try:
+        from trading_engine.database import get_strategy_assets
+        symbols = get_strategy_assets(STRATEGY_NAME)
+        if symbols:
+            return symbols
+    except Exception as e:
+        logger.error(
+            f"[TREND-NONFX] Failed to load assets from DB: "
+            f"{e} — using hardcoded fallback"
+        )
+    return list(TARGET_SYMBOLS)
+
+
 class NonForexTrendFollowingStrategy(BaseStrategy):
     def __init__(self, cache: CacheLayer):
         self.cache = cache

@@ -18,6 +18,8 @@ from trading_engine.database import (
     get_all_open_positions, get_open_position,
     get_recent_job_logs, get_scheduler_health_summary,
     create_partner_api_key, list_partner_api_keys, toggle_partner_api_key, delete_partner_api_key,
+    get_all_strategy_assets, get_strategy_assets_full,
+    add_strategy_asset, remove_strategy_asset, mark_asset_verified,
 )
 from trading_engine.indicators import IndicatorEngine
 
@@ -3124,6 +3126,7 @@ function showTab(tabName) {
     if (tabName === 'recovery') loadRecoveryLogs();
     if (tabName === 'users') loadRegistrationToggle();
     if (tabName === 'wordpress') { loadUserCmsConfigs(); }
+    if (tabName === 'assets') { loadAssets(); }
 }
 
 function showStrategyTab(strategyName) {
@@ -4109,6 +4112,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (tabName === 'system') { loadSystemStatus(); loadWatchdogStatus(); }
     if (tabName === 'users') loadRegistrationToggle();
     if (tabName === 'wordpress') { loadUserCmsConfigs(); }
+    if (tabName === 'assets') { loadAssets(); }
 });
 
 function copyApiUrl(path) {
@@ -4131,6 +4135,114 @@ function ucmsShowMsg(msg, isError) {
     el.style.background = isError ? '#7f1d1d' : '#14532d';
     el.style.color = isError ? '#fca5a5' : '#86efac';
     setTimeout(function() { el.style.display = 'none'; }, 5000);
+}
+
+async function loadAssets() {
+  var strategy = document.getElementById('filter-strategy-assets') ? document.getElementById('filter-strategy-assets').value : '';
+  var url = BASE + '/admin/api/strategy-assets';
+  if (strategy) url += '?strategy=' + strategy;
+  try {
+    document.getElementById('assets-loading').style.display = 'none';
+    document.getElementById('assets-content').style.display = 'block';
+    var res = await fetch(url);
+    var data = await res.json();
+    var assets = data.assets || [];
+    var tbody = document.getElementById('assets-rows');
+    if (!assets.length) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#64748b;">No assets found</td></tr>';
+      return;
+    }
+    var classColors = {
+      forex:  ['rgba(6,182,212,0.15)',  '#67e8f9'],
+      crypto: ['rgba(168,85,247,0.15)', '#c4b5fd'],
+      stocks: ['rgba(34,197,94,0.15)',  '#86efac'],
+    };
+    var strategyLabels = {
+      mtf_ema: 'MTF EMA', trend_non_forex: 'Trend Non-Forex',
+      trend_forex: 'Trend Forex', sp500_momentum: 'SP500 Momentum',
+      highest_lowest_fx: 'Highest/Lowest FX',
+    };
+    var rows = '';
+    assets.forEach(function(a) {
+      var cc = classColors[a.asset_class] || ['rgba(100,116,139,0.15)', '#94a3b8'];
+      var classBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.7rem;font-weight:600;text-transform:uppercase;background:' + cc[0] + ';color:' + cc[1] + ';">' + a.asset_class + '</span>';
+      var verifiedBadge = a.fcsapi_verified
+        ? '<span class="badge status-active" style="font-size:0.65rem;">\u2713 Verified</span>'
+        : '<span class="badge status-expired" style="font-size:0.65rem;">Unverified</span>';
+      var addedBy = a.added_by || '\u2014';
+      var createdAt = a.created_at ? a.created_at.slice(0, 10) : '\u2014';
+      var notes = a.notes ? '<span title="' + a.notes.replace(/"/g, '&quot;') + '" style="cursor:help;color:#64748b;">\ud83d\udcdd</span>' : '\u2014';
+      var removeBtn = '<button class="btn" style="font-size:12px;padding:4px 10px;background:rgba(239,68,68,0.12);color:#ef4444;" onclick="removeAsset(\'' + a.strategy_name + '\',\'' + a.symbol + '\')" data-testid="button-remove-asset-' + a.symbol.replace(/\//g,'-') + '">Remove</button>';
+      rows += '<tr data-testid="row-asset-' + a.symbol.replace(/\//g,'-') + '">'
+        + '<td style="font-weight:600;color:#f1f5f9;">' + a.symbol + '</td>'
+        + '<td>' + (strategyLabels[a.strategy_name] || a.strategy_name) + '</td>'
+        + '<td>' + classBadge + '</td>'
+        + '<td>' + verifiedBadge + '</td>'
+        + '<td style="font-size:12px;color:#94a3b8;">' + addedBy + '</td>'
+        + '<td style="font-size:12px;color:#94a3b8;">' + createdAt + '</td>'
+        + '<td>' + notes + '</td>'
+        + '<td>' + removeBtn + '</td>'
+        + '</tr>';
+    });
+    tbody.innerHTML = rows;
+  } catch(e) {
+    var loadEl = document.getElementById('assets-loading');
+    if (loadEl) loadEl.textContent = 'Failed to load assets: ' + e.message;
+  }
+}
+
+async function testAssetCoverage() {
+  var symbol = document.getElementById('new-asset-symbol').value.trim().toUpperCase();
+  var resultEl = document.getElementById('asset-test-result');
+  if (!symbol) { resultEl.innerHTML = '<span style="color:#ef4444;">Enter a symbol first.</span>'; return; }
+  resultEl.innerHTML = '<span style="color:#94a3b8;">Testing ' + symbol + ' against FCSAPI...</span>';
+  try {
+    var res = await fetch(BASE + '/admin/api/strategy-assets/test?symbol=' + encodeURIComponent(symbol));
+    var data = await res.json();
+    if (data.supported) {
+      resultEl.innerHTML = '<div class="result-success">\u2705 <strong>' + symbol + '</strong> is supported | API symbol: ' + data.api_symbol + ' | Class: ' + data.asset_class + ' | Sample close: ' + data.sample_close + ' | Candles returned: ' + data.candles_returned + '</div>';
+    } else {
+      resultEl.innerHTML = '<div class="result-error">\u274c <strong>' + symbol + '</strong> not supported on current plan | Reason: ' + data.reason + '</div>';
+    }
+  } catch(e) {
+    resultEl.innerHTML = '<span style="color:#ef4444;">Test failed: ' + e.message + '</span>';
+  }
+}
+
+async function addAsset() {
+  var symbol = document.getElementById('new-asset-symbol').value.trim().toUpperCase();
+  var strategy = document.getElementById('new-asset-strategy').value;
+  var assetClass = document.getElementById('new-asset-class').value;
+  var resultEl = document.getElementById('asset-add-result');
+  if (!symbol || !strategy || !assetClass) {
+    resultEl.innerHTML = '<span style="color:#ef4444;">Symbol, strategy and asset class are required.</span>'; return;
+  }
+  try {
+    var res = await fetch(BASE + '/admin/api/strategy-assets', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ symbol: symbol, strategy_name: strategy, asset_class: assetClass })
+    });
+    var data = await res.json();
+    if (data.success) {
+      resultEl.innerHTML = '<div class="result-success">' + symbol + ' added to ' + strategy + ' (id=' + data.id + '). Takes effect on next evaluation cycle.</div>';
+      document.getElementById('new-asset-symbol').value = '';
+      document.getElementById('asset-test-result').innerHTML = '';
+      loadAssets();
+    } else {
+      resultEl.innerHTML = '<div class="result-error">' + (data.error || 'Failed to add asset.') + '</div>';
+    }
+  } catch(e) {
+    resultEl.innerHTML = '<span style="color:#ef4444;">Error: ' + e.message + '</span>';
+  }
+}
+
+async function removeAsset(strategyName, symbol) {
+  if (!confirm('Remove ' + symbol + ' from ' + strategyName + '?\n\nThis will NOT close any open signals. The asset will be deactivated — it can be re-added at any time.')) return;
+  try {
+    var res = await fetch(BASE + '/admin/api/strategy-assets/' + encodeURIComponent(strategyName) + '/' + encodeURIComponent(symbol), { method: 'DELETE' });
+    var data = await res.json();
+    if (data.success) { loadAssets(); } else { alert(data.error || 'Failed to remove asset.'); }
+  } catch(e) { alert('Error: ' + e.message); }
 }
 
 async function loadUserCmsConfigs() {
@@ -4486,6 +4598,7 @@ def admin_dashboard(
         admin_system_links += _sidebar_link("scheduler", "Scheduler Health", svg_calendar, tab, "sidebar-scheduler")
         admin_system_links += _sidebar_link("system", "System Status", svg_shield, tab, "sidebar-system")
         admin_system_links += _sidebar_link("recovery", "Recovery Logs", svg_calendar, tab, "sidebar-recovery")
+        admin_system_links += _sidebar_link("assets", "Asset Management", svg_settings, tab, "sidebar-assets")
 
     admin_mobile_tabs = ""
     if is_admin:
@@ -4501,6 +4614,7 @@ def admin_dashboard(
         admin_mobile_tabs += _mobile_tab("scheduler", "Scheduler", tab)
         admin_mobile_tabs += _mobile_tab("system", "System", tab)
         admin_mobile_tabs += _mobile_tab("recovery", "Recovery", tab)
+        admin_mobile_tabs += _mobile_tab("assets", "Assets", tab)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -5472,6 +5586,91 @@ def admin_dashboard(
             </div>
         </div>
 
+        <div id="tab-assets" class="tab-content {'hidden' if tab != 'assets' else ''}">
+            <div class="section">
+                <h2>Asset Management</h2>
+                <p style="color:#94a3b8;margin-bottom:20px;">Add, remove, and verify assets per strategy. All changes take effect on the next scheduled evaluation cycle. Assets are tested against the live FCSAPI feed before being saved.</p>
+
+                <div class="settings-section" style="margin-bottom:24px;">
+                    <h3>Add New Asset</h3>
+                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:12px;align-items:end;margin-top:12px;flex-wrap:wrap;">
+                        <div>
+                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Symbol</label>
+                            <input type="text" id="new-asset-symbol" placeholder="e.g. SOL/USD or AAPL" data-testid="input-new-asset-symbol"
+                                   style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;font-size:14px;text-transform:uppercase;">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Strategy</label>
+                            <select id="new-asset-strategy" data-testid="select-new-asset-strategy"
+                                    style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;font-size:14px;cursor:pointer;">
+                                <option value="mtf_ema">MTF EMA</option>
+                                <option value="trend_non_forex">Trend Non-Forex</option>
+                                <option value="trend_forex">Trend Forex</option>
+                                <option value="sp500_momentum">SP500 Momentum</option>
+                                <option value="highest_lowest_fx">Highest/Lowest FX</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Asset Class</label>
+                            <select id="new-asset-class" data-testid="select-new-asset-class"
+                                    style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;font-size:14px;cursor:pointer;">
+                                <option value="forex">Forex</option>
+                                <option value="crypto">Crypto</option>
+                                <option value="stocks">Stocks</option>
+                            </select>
+                        </div>
+                        <div style="display:flex;gap:8px;">
+                            <button class="btn btn-secondary" onclick="testAssetCoverage()" data-testid="button-test-asset" style="white-space:nowrap;">Test FCSAPI</button>
+                            <button class="btn btn-primary" onclick="addAsset()" data-testid="button-add-asset" style="white-space:nowrap;">Add Asset</button>
+                        </div>
+                    </div>
+                    <div id="asset-test-result" style="margin-top:12px;font-size:13px;"></div>
+                    <div id="asset-add-result" style="margin-top:8px;font-size:13px;"></div>
+                </div>
+
+                <div id="assets-loading" style="text-align:center;padding:40px;color:#94a3b8;">Loading assets...</div>
+                <div id="assets-content" style="display:none;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                        <div style="font-weight:600;color:#f1f5f9;font-size:15px;">Active Assets</div>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <select id="filter-strategy-assets" onchange="loadAssets()"
+                                    style="padding:6px 10px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;font-size:13px;cursor:pointer;">
+                                <option value="">All Strategies</option>
+                                <option value="mtf_ema">MTF EMA</option>
+                                <option value="trend_non_forex">Trend Non-Forex</option>
+                                <option value="trend_forex">Trend Forex</option>
+                                <option value="sp500_momentum">SP500 Momentum</option>
+                                <option value="highest_lowest_fx">Highest/Lowest FX</option>
+                            </select>
+                            <button class="btn" onclick="loadAssets()" style="font-size:13px;padding:6px 14px;">Refresh</button>
+                        </div>
+                    </div>
+                    <div style="overflow-x:auto;">
+                        <table class="data-table" data-testid="table-strategy-assets">
+                            <thead>
+                                <tr>
+                                    <th>Symbol</th><th>Strategy</th><th>Asset Class</th>
+                                    <th>FCSAPI</th><th>Added By</th><th>Added</th>
+                                    <th>Notes</th><th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="assets-rows"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="timezone-note" style="margin-top:16px;">
+                    <strong>Important:</strong>
+                    <ul>
+                        <li>Changes take effect on the <strong>next scheduled evaluation cycle</strong> — not immediately.</li>
+                        <li>Removing an asset does <strong>not close open signals</strong> for that asset. Close them manually first via Force Close if needed.</li>
+                        <li>Always click <strong>Test FCSAPI</strong> before adding a new asset to confirm data is available on the current plan.</li>
+                        <li>Assets removed here are <strong>soft-deleted</strong> — they can be re-added at any time without losing signal history.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
         <div id="tab-wordpress" class="tab-content {'hidden' if tab != 'wordpress' else ''}">
             <div class="section">
                 <h2>WordPress Credentials</h2>
@@ -6331,6 +6530,127 @@ def api_create_user_cms_config(request: Request, body: dict = Body(...)):
         return JSONResponse(content={"status": "ok", "id": config_id})
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
+
+@router.get("/api/strategy-assets")
+def api_list_strategy_assets(
+    request: Request,
+    strategy: Optional[str] = Query(None),
+):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    assets = get_strategy_assets_full(strategy_name=strategy)
+    return JSONResponse(content={"assets": assets, "count": len(assets)})
+
+
+@router.get("/api/strategy-assets/test")
+def api_test_strategy_asset(
+    request: Request,
+    symbol: str = Query(...),
+):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine import engine_registry
+    engine = engine_registry.get_engine()
+    if engine is None:
+        return JSONResponse(
+            content={"supported": False, "reason": "Engine not available"},
+            status_code=503,
+        )
+    result = engine.cache.api_client.test_symbol_coverage(
+        symbol.upper().strip()
+    )
+    return JSONResponse(content=result)
+
+
+@router.post("/api/strategy-assets")
+def api_add_strategy_asset(
+    request: Request,
+    body: dict = Body(...),
+):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    user = _get_session_user(request)
+    symbol = body.get("symbol", "").strip().upper()
+    strategy_name = body.get("strategy_name", "").strip()
+    asset_class = body.get("asset_class", "forex").strip()
+    notes = body.get("notes", "")
+
+    VALID_STRATEGIES = {
+        "mtf_ema", "trend_non_forex", "trend_forex",
+        "sp500_momentum", "highest_lowest_fx",
+    }
+    VALID_CLASSES = {"forex", "crypto", "stocks"}
+
+    if not symbol:
+        return JSONResponse(
+            content={"success": False, "error": "Symbol is required"},
+            status_code=400,
+        )
+    if strategy_name not in VALID_STRATEGIES:
+        return JSONResponse(
+            content={"success": False,
+                     "error": f"Invalid strategy. Must be one of: {', '.join(VALID_STRATEGIES)}"},
+            status_code=400,
+        )
+    if asset_class not in VALID_CLASSES:
+        return JSONResponse(
+            content={"success": False,
+                     "error": f"Invalid asset_class. Must be one of: {', '.join(VALID_CLASSES)}"},
+            status_code=400,
+        )
+
+    asset_id = add_strategy_asset(
+        strategy_name=strategy_name,
+        symbol=symbol,
+        asset_class=asset_class,
+        added_by=user.get("username", "admin") if user else "admin",
+        notes=notes if notes else None,
+        fcsapi_verified=False,
+    )
+    if asset_id is None:
+        return JSONResponse(
+            content={"success": False,
+                     "error": f"{symbol} already exists in {strategy_name}"},
+            status_code=409,
+        )
+    logger.info(
+        f"[ADMIN] Added strategy asset: "
+        f"{strategy_name}/{symbol} ({asset_class}) "
+        f"by {user.get('username') if user else 'admin'}"
+    )
+    return JSONResponse(content={"success": True, "id": asset_id})
+
+
+@router.delete("/api/strategy-assets/{strategy_name}/{symbol}")
+def api_remove_strategy_asset(
+    request: Request,
+    strategy_name: str,
+    symbol: str,
+):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    user = _get_session_user(request)
+    decoded_symbol = symbol.replace("%2F", "/")
+    success = remove_strategy_asset(
+        strategy_name=strategy_name,
+        symbol=decoded_symbol,
+    )
+    if success:
+        logger.info(
+            f"[ADMIN] Removed strategy asset: "
+            f"{strategy_name}/{decoded_symbol} "
+            f"by {user.get('username') if user else 'admin'}"
+        )
+        return JSONResponse(content={"success": True})
+    return JSONResponse(
+        content={"success": False, "error": "Asset not found"},
+        status_code=404,
+    )
 
 
 @router.delete("/api/user-cms-configs/{config_id}")

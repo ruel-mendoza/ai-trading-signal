@@ -1,0 +1,1264 @@
+Implement full database-driven asset management for all strategies.
+Assets are loaded from the DB at runtime instead of hardcoded in
+strategy files. A new Asset Management tab in the admin panel allows
+adding, removing, and testing assets per strategy.
+
+All current hardcoded assets are seeded into the DB on first startup
+so nothing is lost. Strategy files keep their hardcoded lists as
+fallbacks only if the DB returns empty (safety net).
+
+Files changed: models.py, database.py, multi_timeframe.py,
+trend_non_forex.py, trend_forex.py, sp500_momentum.py,
+highest_lowest.py, main.py, admin.py, fcsapi_client.py
+══════════════════════════════════════════════════════════════
+CHANGE 1 — models.py: add StrategyAsset table
+══════════════════════════════════════════════════════════════
+
+Add this model to models.py after the existing model classes:
+
+  class StrategyAsset(Base):
+      __tablename__ = "strategy_assets"
+
+      id = Column(Integer, primary_key=True, autoincrement=True)
+      strategy_name = Column(Text, nullable=False)
+      symbol = Column(Text, nullable=False)
+      asset_class = Column(Text, nullable=False, server_default="forex")
+      is_active = Column(Integer, nullable=False, server_default="1")
+      fcsapi_verified = Column(Integer, nullable=False, server_default="0")
+      added_by = Column(Text, nullable=True)
+      notes = Column(Text, nullable=True)
+      created_at = Column(Text, server_default=func.now())
+      updated_at = Column(Text, server_default=func.now(),
+                          onupdate=func.now())
+
+      __table_args__ = (
+          UniqueConstraint(
+              "strategy_name", "symbol",
+              name="uq_strategy_asset"
+          ),
+          Index("idx_strategy_asset_strategy", "strategy_name"),
+          Index("idx_strategy_asset_symbol", "symbol"),
+          Index("idx_strategy_asset_active", "is_active"),
+      )
+
+══════════════════════════════════════════════════════════════
+CHANGE 2 — database.py: add StrategyAsset CRUD functions
+══════════════════════════════════════════════════════════════
+
+Add the StrategyAsset import to the models import block:
+  from trading_engine.models import (
+      ...
+      StrategyAsset,
+  )
+
+Add these functions to database.py after the existing
+signal/position functions:
+
+─────────────────────────────────────────────
+SEED DATA — all current hardcoded assets
+─────────────────────────────────────────────
+
+  # Complete seed data matching all current hardcoded lists
+  _STRATEGY_ASSET_SEEDS = {
+      "mtf_ema": [
+          # Indices
+          ("SPX",     "forex"),  ("NDX",     "forex"),
+          ("RUT",     "forex"),
+          # Commodities
+          ("XAU/USD", "forex"),  ("XAG/USD", "forex"),
+          ("OSX",     "forex"),
+          # Crypto — original
+          ("BTC/USD", "crypto"), ("ETH/USD", "crypto"),
+          # Crypto — Tier 1 altcoins
+          ("BNB/USD", "crypto"), ("XRP/USD", "crypto"),
+          ("SOL/USD", "crypto"), ("ADA/USD", "crypto"),
+          ("DOGE/USD","crypto"), ("AVAX/USD","crypto"),
+          ("LINK/USD","crypto"), ("DOT/USD", "crypto"),
+          ("BCH/USD", "crypto"), ("ATOM/USD","crypto"),
+          # Forex
+          ("EUR/USD", "forex"),  ("USD/JPY", "forex"),
+          ("GBP/USD", "forex"),  ("AUD/USD", "forex"),
+      ],
+      "trend_non_forex": [
+          ("CORN",  "forex"), ("SOYB",  "forex"),
+          ("WEAT",  "forex"), ("CANE",  "forex"),
+          ("WOOD",  "forex"), ("USO",   "forex"),
+          ("UNG",   "forex"), ("UGA",   "forex"),
+          ("SGOL",  "forex"), ("SIVR",  "forex"),
+          ("CPER",  "forex"), ("PPLT",  "forex"),
+          ("PALL",  "forex"), ("DBB",   "forex"),
+          ("SLX",   "forex"),
+      ],
+      "trend_forex": [
+          ("EUR/USD", "forex"), ("USD/JPY", "forex"),
+      ],
+      "sp500_momentum": [
+          ("SPX", "forex"),
+      ],
+      "highest_lowest_fx": [
+          ("EUR/USD", "forex"),
+      ],
+  }
+
+─────────────────────────────────────────────
+SEED FUNCTION
+─────────────────────────────────────────────
+
+  def seed_strategy_assets():
+      """Seed all hardcoded assets into strategy_assets table.
+      Idempotent — skips assets that already exist.
+      Called from init_db() on every startup.
+      """
+      with _get_session() as session:
+          try:
+              seeded = 0
+              for strategy_name, assets in _STRATEGY_ASSET_SEEDS.items():
+                  for symbol, asset_class in assets:
+                      existing = (
+                          session.query(StrategyAsset)
+                          .filter_by(
+                              strategy_name=strategy_name,
+                              symbol=symbol,
+                          )
+                          .first()
+                      )
+                      if not existing:
+                          session.add(StrategyAsset(
+                              strategy_name=strategy_name,
+                              symbol=symbol,
+                              asset_class=asset_class,
+                              is_active=1,
+                              fcsapi_verified=1,
+                              added_by="system_seed",
+                          ))
+                          seeded += 1
+              session.commit()
+              if seeded:
+                  logger.info(
+                      f"[DB] Seeded {seeded} strategy asset(s) "
+                      f"from hardcoded defaults"
+                  )
+              else:
+                  logger.info(
+                      "[DB] strategy_assets: all seeds already present"
+                  )
+          except Exception as e:
+              session.rollback()
+              logger.error(f"[DB] seed_strategy_assets failed: {e}")
+
+─────────────────────────────────────────────
+READ FUNCTIONS
+─────────────────────────────────────────────
+
+  def get_strategy_assets(
+      strategy_name: str,
+      active_only: bool = True,
+  ) -> list[str]:
+      """Return list of symbols for a strategy.
+      Returns active symbols only by default.
+      Falls back to empty list — callers handle fallback.
+      """
+      with _get_session() as session:
+          q = session.query(StrategyAsset).filter_by(
+              strategy_name=strategy_name
+          )
+          if active_only:
+              q = q.filter_by(is_active=1)
+          rows = q.order_by(StrategyAsset.symbol).all()
+          return [r.symbol for r in rows]
+
+  def get_all_strategy_assets() -> list[dict]:
+      """Return all strategy assets with full metadata
+      for the admin panel.
+      """
+      with _get_session() as session:
+          rows = (
+              session.query(StrategyAsset)
+              .order_by(
+                  StrategyAsset.strategy_name,
+                  StrategyAsset.asset_class,
+                  StrategyAsset.symbol,
+              )
+              .all()
+          )
+          return [_strategy_asset_to_dict(r) for r in rows]
+
+  def get_strategy_assets_full(
+      strategy_name: Optional[str] = None,
+  ) -> list[dict]:
+      """Return assets with full metadata, optionally
+      filtered by strategy.
+      """
+      with _get_session() as session:
+          q = session.query(StrategyAsset)
+          if strategy_name:
+              q = q.filter_by(strategy_name=strategy_name)
+          rows = q.order_by(
+              StrategyAsset.strategy_name,
+              StrategyAsset.asset_class,
+              StrategyAsset.symbol,
+          ).all()
+          return [_strategy_asset_to_dict(r) for r in rows]
+
+─────────────────────────────────────────────
+WRITE FUNCTIONS
+─────────────────────────────────────────────
+
+  def add_strategy_asset(
+      strategy_name: str,
+      symbol: str,
+      asset_class: str,
+      added_by: str = "admin",
+      notes: Optional[str] = None,
+      fcsapi_verified: bool = False,
+  ) -> Optional[int]:
+      """Add a new asset to a strategy.
+      Returns the new row id or None if duplicate.
+      """
+      with _get_session() as session:
+          try:
+              existing = (
+                  session.query(StrategyAsset)
+                  .filter_by(
+                      strategy_name=strategy_name,
+                      symbol=symbol,
+                  )
+                  .first()
+              )
+              if existing:
+                  # Reactivate if previously removed
+                  if not existing.is_active:
+                      existing.is_active = 1
+                      existing.added_by = added_by
+                      existing.notes = notes
+                      existing.fcsapi_verified = (
+                          1 if fcsapi_verified else 0
+                      )
+                      session.commit()
+                      logger.info(
+                          f"[DB] Reactivated strategy asset: "
+                          f"{strategy_name}/{symbol}"
+                      )
+                      return existing.id
+                  logger.warning(
+                      f"[DB] add_strategy_asset: "
+                      f"{strategy_name}/{symbol} already exists"
+                  )
+                  return None
+              obj = StrategyAsset(
+                  strategy_name=strategy_name,
+                  symbol=symbol,
+                  asset_class=asset_class,
+                  is_active=1,
+                  fcsapi_verified=1 if fcsapi_verified else 0,
+                  added_by=added_by,
+                  notes=notes,
+              )
+              session.add(obj)
+              session.commit()
+              logger.info(
+                  f"[DB] Added strategy asset: "
+                  f"{strategy_name}/{symbol} ({asset_class})"
+              )
+              return obj.id
+          except Exception as e:
+              session.rollback()
+              logger.error(
+                  f"[DB] add_strategy_asset failed: {e}"
+              )
+              return None
+
+  def remove_strategy_asset(
+      strategy_name: str,
+      symbol: str,
+  ) -> bool:
+      """Soft-delete: sets is_active=0.
+      Hard delete is intentionally not exposed via admin
+      to preserve signal history integrity.
+      """
+      with _get_session() as session:
+          try:
+              row = (
+                  session.query(StrategyAsset)
+                  .filter_by(
+                      strategy_name=strategy_name,
+                      symbol=symbol,
+                  )
+                  .first()
+              )
+              if not row:
+                  return False
+              row.is_active = 0
+              session.commit()
+              logger.info(
+                  f"[DB] Deactivated strategy asset: "
+                  f"{strategy_name}/{symbol}"
+              )
+              return True
+          except Exception as e:
+              session.rollback()
+              logger.error(
+                  f"[DB] remove_strategy_asset failed: {e}"
+              )
+              return False
+
+  def mark_asset_verified(
+      strategy_name: str,
+      symbol: str,
+      verified: bool = True,
+  ) -> bool:
+      """Mark an asset as FCSAPI-verified or unverified."""
+      with _get_session() as session:
+          try:
+              row = (
+                  session.query(StrategyAsset)
+                  .filter_by(
+                      strategy_name=strategy_name,
+                      symbol=symbol,
+                  )
+                  .first()
+              )
+              if not row:
+                  return False
+              row.fcsapi_verified = 1 if verified else 0
+              session.commit()
+              return True
+          except Exception as e:
+              session.rollback()
+              logger.error(
+                  f"[DB] mark_asset_verified failed: {e}"
+              )
+              return False
+
+  def _strategy_asset_to_dict(row: StrategyAsset) -> dict:
+      return {
+          "id": row.id,
+          "strategy_name": row.strategy_name,
+          "symbol": row.symbol,
+          "asset_class": row.asset_class,
+          "is_active": bool(row.is_active),
+          "fcsapi_verified": bool(row.fcsapi_verified),
+          "added_by": row.added_by,
+          "notes": row.notes,
+          "created_at": row.created_at,
+          "updated_at": row.updated_at,
+      }
+
+─────────────────────────────────────────────
+CALL SEED FROM init_db()
+─────────────────────────────────────────────
+
+In init_db(), after _backfill_asset_class() call, add:
+
+  seed_strategy_assets()
+
+══════════════════════════════════════════════════════════════
+CHANGE 3 — multi_timeframe.py: load assets from DB
+══════════════════════════════════════════════════════════════
+
+In multi_timeframe.py, keep TARGET_ASSETS as the hardcoded
+fallback. Add a function that loads from DB at runtime:
+
+  def _load_target_assets() -> dict[str, list[str]]:
+      """Load strategy assets from DB grouped by asset_class.
+      Falls back to hardcoded TARGET_ASSETS if DB is empty.
+      """
+      try:
+          from trading_engine.database import get_strategy_assets
+          symbols = get_strategy_assets(STRATEGY_NAME)
+          if not symbols:
+              logger.warning(
+                  "[MTF-EMA] No assets in DB — "
+                  "using hardcoded TARGET_ASSETS fallback"
+              )
+              return TARGET_ASSETS
+          # Rebuild grouped dict from flat DB list
+          from trading_engine.database import (
+              get_strategy_assets_full
+          )
+          rows = get_strategy_assets_full(STRATEGY_NAME)
+          grouped: dict[str, list[str]] = {}
+          for row in rows:
+              ac = row["asset_class"]
+              if ac not in grouped:
+                  grouped[ac] = []
+              grouped[ac].append(row["symbol"])
+          logger.info(
+              f"[MTF-EMA] Loaded {len(symbols)} assets "
+              f"from DB across {len(grouped)} groups"
+          )
+          return grouped
+      except Exception as e:
+          logger.error(
+              f"[MTF-EMA] Failed to load assets from DB: {e} "
+              f"— using hardcoded fallback"
+          )
+          return TARGET_ASSETS
+
+Update ALL_ASSETS to load dynamically:
+
+  def get_all_mtf_assets() -> list[str]:
+      """Return flat list of all active MTF EMA assets from DB."""
+      try:
+          from trading_engine.database import get_strategy_assets
+          symbols = get_strategy_assets(STRATEGY_NAME)
+          if symbols:
+              return symbols
+      except Exception:
+          pass
+      # Fallback to hardcoded
+      result = []
+      for group in TARGET_ASSETS.values():
+          result.extend(group)
+      return result
+
+  # Module-level ALL_ASSETS kept for backward compatibility
+  # but strategies and scheduler should call get_all_mtf_assets()
+  ALL_ASSETS = []
+  for group in TARGET_ASSETS.values():
+      ALL_ASSETS.extend(group)
+
+══════════════════════════════════════════════════════════════
+CHANGE 4 — trend_non_forex.py: load assets from DB
+══════════════════════════════════════════════════════════════
+
+Add equivalent function in trend_non_forex.py:
+
+  def get_active_symbols() -> list[str]:
+      """Return active symbols from DB.
+      Falls back to hardcoded TARGET_SYMBOLS if DB is empty.
+      """
+      try:
+          from trading_engine.database import get_strategy_assets
+          symbols = get_strategy_assets(STRATEGY_NAME)
+          if symbols:
+              return symbols
+      except Exception as e:
+          logger.error(
+              f"[TREND-NONFX] Failed to load assets from DB: "
+              f"{e} — using hardcoded fallback"
+          )
+      return list(TARGET_SYMBOLS)
+
+══════════════════════════════════════════════════════════════
+CHANGE 5 — trend_forex.py: load assets from DB
+══════════════════════════════════════════════════════════════
+
+Add to trend_forex.py:
+
+  def get_active_symbols() -> list[str]:
+      """Return active forex trend symbols from DB.
+      Falls back to hardcoded TARGET_SYMBOLS.
+      """
+      try:
+          from trading_engine.database import get_strategy_assets
+          symbols = get_strategy_assets(STRATEGY_NAME)
+          if symbols:
+              return symbols
+      except Exception as e:
+          logger.error(
+              f"[TREND-FOREX] Failed to load assets from DB: "
+              f"{e} — using hardcoded fallback"
+          )
+      return list(TARGET_SYMBOLS)
+
+══════════════════════════════════════════════════════════════
+CHANGE 6 — main.py: use DB-loaded assets in schedulers
+══════════════════════════════════════════════════════════════
+
+In main.py, update each strategy's scheduler function to
+load assets from DB instead of importing hardcoded lists:
+
+In _scheduled_mtf_ema_evaluate():
+
+  FIND:
+    from trading_engine.strategies.multi_timeframe import (
+        ALL_ASSETS as MTF_EMA_ASSETS
+    )
+
+  REPLACE WITH:
+    from trading_engine.strategies.multi_timeframe import (
+        get_all_mtf_assets
+    )
+    MTF_EMA_ASSETS = get_all_mtf_assets()
+    logger.info(
+        f"[SCHEDULER] mtf_ema | "
+        f"Loaded {len(MTF_EMA_ASSETS)} assets from DB"
+    )
+
+In _scheduled_trend_non_forex_evaluate():
+
+  FIND:
+    from trading_engine.strategies.trend_non_forex import (
+        TARGET_SYMBOLS as TREND_NON_FOREX_SYMBOLS
+    )
+
+  REPLACE WITH:
+    from trading_engine.strategies.trend_non_forex import (
+        get_active_symbols as _get_tnf_symbols
+    )
+    TREND_NON_FOREX_SYMBOLS = _get_tnf_symbols()
+    logger.info(
+        f"[SCHEDULER] trend_non_forex | "
+        f"Loaded {len(TREND_NON_FOREX_SYMBOLS)} assets from DB"
+    )
+
+In _scheduled_trend_forex_evaluate():
+
+  FIND:
+    from trading_engine.strategies.trend_forex import (
+        TARGET_SYMBOLS as TREND_FOREX_SYMBOLS
+    )
+
+  REPLACE WITH:
+    from trading_engine.strategies.trend_forex import (
+        get_active_symbols as _get_tf_symbols
+    )
+    TREND_FOREX_SYMBOLS = _get_tf_symbols()
+    logger.info(
+        f"[SCHEDULER] trend_forex | "
+        f"Loaded {len(TREND_FOREX_SYMBOLS)} assets from DB"
+    )
+
+══════════════════════════════════════════════════════════════
+CHANGE 7 — fcsapi_client.py: add symbol test function
+══════════════════════════════════════════════════════════════
+
+Add a test function to FCSAPIClient that the admin panel
+calls before saving a new asset:
+
+  def test_symbol_coverage(
+      self, symbol: str
+  ) -> dict:
+      """Test whether FCSAPI supports a given symbol.
+      Returns status, detected asset class, and sample price.
+      Used by admin Asset Management panel before adding assets.
+      """
+      from trading_engine.fcsapi_client import (
+          get_asset_class, get_v4_base_url,
+          get_v4_history_symbol, is_symbol_supported,
+      )
+
+      if not is_symbol_supported(symbol):
+          return {
+              "supported": False,
+              "symbol": symbol,
+              "reason": "Symbol is in UNSUPPORTED_SYMBOLS list",
+          }
+
+      asset_class = get_asset_class(symbol)
+      base_url = get_v4_base_url(symbol)
+      api_symbol = get_v4_history_symbol(symbol)
+
+      try:
+          params = {
+              "symbol": api_symbol,
+              "period": "1d",
+              "length": "2",
+          }
+          if asset_class == "stock":
+              params["type"] = "index"
+          elif asset_class == "etf":
+              params["type"] = "fund"
+              params["exchange"] = "AMEX"
+          elif asset_class == "commodity":
+              params["type"] = "commodity"
+
+          data = self._get(
+              "history", params, base_url=base_url
+          )
+
+          if (
+              data.get("status") is not False
+              and data.get("response")
+          ):
+              candles = data["response"]
+              sample = (
+                  list(candles.values())[0]
+                  if isinstance(candles, dict)
+                  else candles[0]
+                  if isinstance(candles, list)
+                  else {}
+              )
+              return {
+                  "supported": True,
+                  "symbol": symbol,
+                  "api_symbol": api_symbol,
+                  "asset_class": asset_class,
+                  "base_url": base_url,
+                  "sample_close": sample.get("c"),
+                  "sample_time": sample.get(
+                      "tm", sample.get("o_time", "")
+                  ),
+                  "candles_returned": (
+                      len(candles)
+                      if isinstance(candles, (dict, list))
+                      else 0
+                  ),
+              }
+          else:
+              return {
+                  "supported": False,
+                  "symbol": symbol,
+                  "api_symbol": api_symbol,
+                  "asset_class": asset_class,
+                  "reason": data.get(
+                      "msg", "No data returned"
+                  ),
+              }
+      except Exception as e:
+          return {
+              "supported": False,
+              "symbol": symbol,
+              "reason": str(e),
+          }
+
+══════════════════════════════════════════════════════════════
+CHANGE 8 — admin.py: add Asset Management tab
+══════════════════════════════════════════════════════════════
+
+─────────────────────────────────────────────
+ADD IMPORTS
+─────────────────────────────────────────────
+
+Add to admin.py imports:
+
+  from trading_engine.database import (
+      ...
+      get_all_strategy_assets,
+      get_strategy_assets_full,
+      add_strategy_asset,
+      remove_strategy_asset,
+      mark_asset_verified,
+  )
+
+─────────────────────────────────────────────
+ADD SIDEBAR LINK
+─────────────────────────────────────────────
+
+In admin_dashboard(), in the sidebar nav, add a new
+link in the System group:
+
+  _sidebar_link(
+      "assets", "Asset Management",
+      svg_settings, tab, "sidebar-assets"
+  )
+
+Also add to mobile tab bar:
+  _mobile_tab("assets", "Assets", tab)
+
+─────────────────────────────────────────────
+ADD TAB HTML
+─────────────────────────────────────────────
+
+Add a new tab div inside the main content area after
+the existing tab divs:
+
+  <div id="tab-assets"
+       class="tab-content {'hidden' if tab != 'assets' else ''}">
+    <div class="section">
+      <h2>Asset Management</h2>
+      <p style="color:#94a3b8;margin-bottom:20px;">
+        Add, remove, and verify assets per strategy.
+        All changes take effect on the next scheduled
+        evaluation cycle. Assets are tested against the
+        live FCSAPI feed before being saved.
+      </p>
+
+      <!-- Add New Asset Form -->
+      <div class="settings-section" style="margin-bottom:24px;">
+        <h3>Add New Asset</h3>
+        <div style="display:grid;grid-template-columns:
+             1fr 1fr 1fr auto;gap:12px;align-items:end;
+             margin-top:12px;flex-wrap:wrap;">
+          <div>
+            <label style="display:block;font-size:13px;
+                   color:#94a3b8;margin-bottom:4px;">
+              Symbol
+            </label>
+            <input type="text" id="new-asset-symbol"
+                   placeholder="e.g. SOL/USD or AAPL"
+                   data-testid="input-new-asset-symbol"
+                   style="width:100%;padding:8px 12px;
+                   background:#0f172a;border:1px solid #334155;
+                   border-radius:6px;color:#f1f5f9;
+                   font-size:14px;text-transform:uppercase;">
+          </div>
+          <div>
+            <label style="display:block;font-size:13px;
+                   color:#94a3b8;margin-bottom:4px;">
+              Strategy
+            </label>
+            <select id="new-asset-strategy"
+                    data-testid="select-new-asset-strategy"
+                    style="width:100%;padding:8px 12px;
+                    background:#0f172a;border:1px solid #334155;
+                    border-radius:6px;color:#f1f5f9;
+                    font-size:14px;cursor:pointer;">
+              <option value="mtf_ema">MTF EMA</option>
+              <option value="trend_non_forex">
+                Trend Non-Forex
+              </option>
+              <option value="trend_forex">Trend Forex</option>
+              <option value="sp500_momentum">
+                SP500 Momentum
+              </option>
+              <option value="highest_lowest_fx">
+                Highest/Lowest FX
+              </option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:13px;
+                   color:#94a3b8;margin-bottom:4px;">
+              Asset Class
+            </label>
+            <select id="new-asset-class"
+                    data-testid="select-new-asset-class"
+                    style="width:100%;padding:8px 12px;
+                    background:#0f172a;border:1px solid #334155;
+                    border-radius:6px;color:#f1f5f9;
+                    font-size:14px;cursor:pointer;">
+              <option value="forex">Forex</option>
+              <option value="crypto">Crypto</option>
+              <option value="stocks">Stocks</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-secondary"
+                    onclick="testAssetCoverage()"
+                    data-testid="button-test-asset"
+                    style="white-space:nowrap;">
+              Test FCSAPI
+            </button>
+            <button class="btn btn-primary"
+                    onclick="addAsset()"
+                    data-testid="button-add-asset"
+                    style="white-space:nowrap;">
+              Add Asset
+            </button>
+          </div>
+        </div>
+        <div id="asset-test-result"
+             style="margin-top:12px;font-size:13px;">
+        </div>
+        <div id="asset-add-result"
+             style="margin-top:8px;font-size:13px;">
+        </div>
+      </div>
+
+      <!-- Active Assets Table -->
+      <div id="assets-loading"
+           style="text-align:center;padding:40px;
+           color:#94a3b8;">
+        Loading assets...
+      </div>
+      <div id="assets-content" style="display:none;">
+        <div style="display:flex;align-items:center;
+             justify-content:space-between;margin-bottom:12px;">
+          <div style="font-weight:600;color:#f1f5f9;
+               font-size:15px;">
+            Active Assets
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <select id="filter-strategy-assets"
+                    onchange="loadAssets()"
+                    style="padding:6px 10px;
+                    background:#0f172a;
+                    border:1px solid #334155;
+                    border-radius:6px;color:#f1f5f9;
+                    font-size:13px;cursor:pointer;">
+              <option value="">All Strategies</option>
+              <option value="mtf_ema">MTF EMA</option>
+              <option value="trend_non_forex">
+                Trend Non-Forex
+              </option>
+              <option value="trend_forex">Trend Forex</option>
+              <option value="sp500_momentum">
+                SP500 Momentum
+              </option>
+              <option value="highest_lowest_fx">
+                Highest/Lowest FX
+              </option>
+            </select>
+            <button class="btn"
+                    onclick="loadAssets()"
+                    style="font-size:13px;padding:6px 14px;">
+              Refresh
+            </button>
+          </div>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="data-table"
+                 data-testid="table-strategy-assets">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Strategy</th>
+                <th>Asset Class</th>
+                <th>FCSAPI</th>
+                <th>Added By</th>
+                <th>Added</th>
+                <th>Notes</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="assets-rows">
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Warning note -->
+      <div class="timezone-note" style="margin-top:16px;">
+        <strong>Important:</strong>
+        <ul>
+          <li>Changes take effect on the
+            <strong>next scheduled evaluation cycle</strong>
+            — not immediately.</li>
+          <li>Removing an asset does
+            <strong>not close open signals</strong>
+            for that asset. Close them manually first
+            via Force Close if needed.</li>
+          <li>Always click
+            <strong>Test FCSAPI</strong> before adding
+            a new asset to confirm data is available
+            on the current plan.</li>
+          <li>Assets removed here are
+            <strong>soft-deleted</strong> — they can
+            be re-added at any time without losing
+            signal history.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+─────────────────────────────────────────────
+ADD JAVASCRIPT
+─────────────────────────────────────────────
+
+Add these functions to ADMIN_JS in admin.py:
+
+  async function loadAssets() {
+    var strategy = document.getElementById(
+      'filter-strategy-assets'
+    ).value;
+    var url = BASE + '/admin/api/strategy-assets';
+    if (strategy) url += '?strategy=' + strategy;
+    try {
+      document.getElementById('assets-loading')
+              .style.display = 'none';
+      document.getElementById('assets-content')
+              .style.display = 'block';
+      var res = await fetch(url);
+      var data = await res.json();
+      var assets = data.assets || [];
+      var tbody = document.getElementById('assets-rows');
+      if (!assets.length) {
+        tbody.innerHTML =
+          '<tr><td colspan="8" style="text-align:center;' +
+          'color:#64748b;">No assets found</td></tr>';
+        return;
+      }
+      var classColors = {
+        forex:  ['rgba(6,182,212,0.15)',  '#67e8f9'],
+        crypto: ['rgba(168,85,247,0.15)', '#c4b5fd'],
+        stocks: ['rgba(34,197,94,0.15)',  '#86efac'],
+      };
+      var strategyLabels = {
+        mtf_ema:          'MTF EMA',
+        trend_non_forex:  'Trend Non-Forex',
+        trend_forex:      'Trend Forex',
+        sp500_momentum:   'SP500 Momentum',
+        highest_lowest_fx:'Highest/Lowest FX',
+      };
+      var rows = '';
+      assets.forEach(function(a) {
+        var cc = classColors[a.asset_class] ||
+                 ['rgba(100,116,139,0.15)', '#94a3b8'];
+        var classBadge =
+          '<span style="display:inline-block;' +
+          'padding:2px 8px;border-radius:4px;' +
+          'font-size:0.7rem;font-weight:600;' +
+          'text-transform:uppercase;' +
+          'background:' + cc[0] + ';color:' + cc[1] + ';">' +
+          a.asset_class + '</span>';
+        var verifiedBadge = a.fcsapi_verified
+          ? '<span class="badge status-active"' +
+            ' style="font-size:0.65rem;">✓ Verified</span>'
+          : '<span class="badge status-expired"' +
+            ' style="font-size:0.65rem;">Unverified</span>';
+        var addedBy = a.added_by || '—';
+        var createdAt = a.created_at
+          ? a.created_at.slice(0, 10) : '—';
+        var notes = a.notes
+          ? '<span title="' +
+            a.notes.replace(/"/g, '&quot;') +
+            '" style="cursor:help;color:#64748b;">' +
+            '📝</span>' : '—';
+        var isSeed = a.added_by === 'system_seed';
+        var removeBtn = isSeed
+          ? '<button class="btn" ' +
+            'style="font-size:12px;padding:4px 10px;' +
+            'background:rgba(239,68,68,0.12);' +
+            'color:#ef4444;" ' +
+            'onclick="removeAsset(\'' +
+            a.strategy_name + '\',\'' + a.symbol +
+            '\')" data-testid="button-remove-asset-' +
+            a.symbol.replace(/\//g,'-') + '">' +
+            'Remove</button>'
+          : '<button class="btn" ' +
+            'style="font-size:12px;padding:4px 10px;' +
+            'background:rgba(239,68,68,0.12);' +
+            'color:#ef4444;" ' +
+            'onclick="removeAsset(\'' +
+            a.strategy_name + '\',\'' + a.symbol +
+            '\')" data-testid="button-remove-asset-' +
+            a.symbol.replace(/\//g,'-') + '">' +
+            'Remove</button>';
+        rows +=
+          '<tr data-testid="row-asset-' +
+          a.symbol.replace(/\//g,'-') + '">' +
+          '<td style="font-weight:600;color:#f1f5f9;">' +
+          a.symbol + '</td>' +
+          '<td>' +
+          (strategyLabels[a.strategy_name] ||
+           a.strategy_name) +
+          '</td>' +
+          '<td>' + classBadge + '</td>' +
+          '<td>' + verifiedBadge + '</td>' +
+          '<td style="font-size:12px;color:#94a3b8;">' +
+          addedBy + '</td>' +
+          '<td style="font-size:12px;color:#94a3b8;">' +
+          createdAt + '</td>' +
+          '<td>' + notes + '</td>' +
+          '<td>' + removeBtn + '</td>' +
+          '</tr>';
+      });
+      tbody.innerHTML = rows;
+    } catch(e) {
+      document.getElementById('assets-loading')
+        .textContent = 'Failed to load assets: ' + e.message;
+    }
+  }
+
+  async function testAssetCoverage() {
+    var symbol = document.getElementById(
+      'new-asset-symbol'
+    ).value.trim().toUpperCase();
+    var resultEl = document.getElementById(
+      'asset-test-result'
+    );
+    if (!symbol) {
+      resultEl.innerHTML =
+        '<span style="color:#ef4444;">Enter a symbol first.</span>';
+      return;
+    }
+    resultEl.innerHTML =
+      '<span style="color:#94a3b8;">Testing ' +
+      symbol + ' against FCSAPI...</span>';
+    try {
+      var res = await fetch(
+        BASE + '/admin/api/strategy-assets/test?' +
+        'symbol=' + encodeURIComponent(symbol)
+      );
+      var data = await res.json();
+      if (data.supported) {
+        resultEl.innerHTML =
+          '<div class="result-success">' +
+          '✅ <strong>' + symbol + '</strong> is supported | ' +
+          'API symbol: ' + data.api_symbol + ' | ' +
+          'Class: ' + data.asset_class + ' | ' +
+          'Sample close: ' + data.sample_close + ' | ' +
+          'Candles returned: ' + data.candles_returned +
+          '</div>';
+      } else {
+        resultEl.innerHTML =
+          '<div class="result-error">' +
+          '❌ <strong>' + symbol +
+          '</strong> not supported on current plan | ' +
+          'Reason: ' + data.reason +
+          '</div>';
+      }
+    } catch(e) {
+      resultEl.innerHTML =
+        '<span style="color:#ef4444;">Test failed: ' +
+        e.message + '</span>';
+    }
+  }
+
+  async function addAsset() {
+    var symbol = document.getElementById(
+      'new-asset-symbol'
+    ).value.trim().toUpperCase();
+    var strategy = document.getElementById(
+      'new-asset-strategy'
+    ).value;
+    var assetClass = document.getElementById(
+      'new-asset-class'
+    ).value;
+    var resultEl = document.getElementById(
+      'asset-add-result'
+    );
+    if (!symbol || !strategy || !assetClass) {
+      resultEl.innerHTML =
+        '<span style="color:#ef4444;">' +
+        'Symbol, strategy and asset class are required.' +
+        '</span>';
+      return;
+    }
+    try {
+      var res = await fetch(
+        BASE + '/admin/api/strategy-assets',
+        {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            symbol: symbol,
+            strategy_name: strategy,
+            asset_class: assetClass,
+          })
+        }
+      );
+      var data = await res.json();
+      if (data.success) {
+        resultEl.innerHTML =
+          '<div class="result-success">' +
+          symbol + ' added to ' + strategy +
+          ' (id=' + data.id + '). ' +
+          'Takes effect on next evaluation cycle.' +
+          '</div>';
+        document.getElementById(
+          'new-asset-symbol'
+        ).value = '';
+        document.getElementById(
+          'asset-test-result'
+        ).innerHTML = '';
+        loadAssets();
+      } else {
+        resultEl.innerHTML =
+          '<div class="result-error">' +
+          (data.error || 'Failed to add asset.') +
+          '</div>';
+      }
+    } catch(e) {
+      resultEl.innerHTML =
+        '<span style="color:#ef4444;">' +
+        'Error: ' + e.message + '</span>';
+    }
+  }
+
+  async function removeAsset(strategyName, symbol) {
+    if (!confirm(
+      'Remove ' + symbol + ' from ' +
+      strategyName + '?\n\n' +
+      'This will NOT close any open signals. ' +
+      'The asset will be deactivated — ' +
+      'it can be re-added at any time.'
+    )) return;
+    try {
+      var res = await fetch(
+        BASE + '/admin/api/strategy-assets/' +
+        encodeURIComponent(strategyName) + '/' +
+        encodeURIComponent(symbol),
+        { method: 'DELETE' }
+      );
+      var data = await res.json();
+      if (data.success) {
+        loadAssets();
+      } else {
+        alert(data.error || 'Failed to remove asset.');
+      }
+    } catch(e) {
+      alert('Error: ' + e.message);
+    }
+  }
+
+Also add loadAssets() call to showTab() in ADMIN_JS:
+
+  FIND:
+    if (tabName === 'wordpress') { loadUserCmsConfigs(); }
+
+  ADD AFTER:
+    if (tabName === 'assets') { loadAssets(); }
+
+─────────────────────────────────────────────
+ADD API ROUTES
+─────────────────────────────────────────────
+
+Add these routes to admin.py router:
+
+  @router.get("/api/strategy-assets")
+  def api_list_strategy_assets(
+      request: Request,
+      strategy: Optional[str] = Query(None),
+  ):
+      guard = _admin_role_guard(request)
+      if guard:
+          return guard
+      assets = get_strategy_assets_full(
+          strategy_name=strategy
+      )
+      return JSONResponse(content={
+          "assets": assets,
+          "count": len(assets),
+      })
+
+  @router.get("/api/strategy-assets/test")
+  def api_test_strategy_asset(
+      request: Request,
+      symbol: str = Query(...),
+  ):
+      guard = _admin_role_guard(request)
+      if guard:
+          return guard
+      from trading_engine import engine_registry
+      engine = engine_registry.get_engine()
+      if engine is None:
+          return JSONResponse(
+              content={"supported": False,
+                       "reason": "Engine not available"},
+              status_code=503,
+          )
+      result = engine.cache.api_client.test_symbol_coverage(
+          symbol.upper().strip()
+      )
+      return JSONResponse(content=result)
+
+  @router.post("/api/strategy-assets")
+  def api_add_strategy_asset(
+      request: Request,
+      body: dict = Body(...),
+  ):
+      guard = _admin_role_guard(request)
+      if guard:
+          return guard
+      user = _get_session_user(request)
+      symbol = body.get("symbol", "").strip().upper()
+      strategy_name = body.get("strategy_name", "").strip()
+      asset_class = body.get("asset_class", "forex").strip()
+      notes = body.get("notes", "")
+
+      VALID_STRATEGIES = {
+          "mtf_ema", "trend_non_forex", "trend_forex",
+          "sp500_momentum", "highest_lowest_fx",
+      }
+      VALID_CLASSES = {"forex", "crypto", "stocks"}
+
+      if not symbol:
+          return JSONResponse(
+              content={"success": False,
+                       "error": "Symbol is required"},
+              status_code=400,
+          )
+      if strategy_name not in VALID_STRATEGIES:
+          return JSONResponse(
+              content={"success": False,
+                       "error": f"Invalid strategy. "
+                       f"Must be one of: "
+                       f"{', '.join(VALID_STRATEGIES)}"},
+              status_code=400,
+          )
+      if asset_class not in VALID_CLASSES:
+          return JSONResponse(
+              content={"success": False,
+                       "error": f"Invalid asset_class. "
+                       f"Must be one of: "
+                       f"{', '.join(VALID_CLASSES)}"},
+              status_code=400,
+          )
+
+      asset_id = add_strategy_asset(
+          strategy_name=strategy_name,
+          symbol=symbol,
+          asset_class=asset_class,
+          added_by=user.get("username", "admin"),
+          notes=notes if notes else None,
+          fcsapi_verified=False,
+      )
+      if asset_id is None:
+          return JSONResponse(
+              content={"success": False,
+                       "error": f"{symbol} already exists "
+                       f"in {strategy_name}"},
+              status_code=409,
+          )
+      logger.info(
+          f"[ADMIN] Added strategy asset: "
+          f"{strategy_name}/{symbol} ({asset_class}) "
+          f"by {user.get('username')}"
+      )
+      return JSONResponse(
+          content={"success": True, "id": asset_id}
+      )
+
+  @router.delete(
+      "/api/strategy-assets/{strategy_name}/{symbol}"
+  )
+  def api_remove_strategy_asset(
+      request: Request,
+      strategy_name: str,
+      symbol: str,
+  ):
+      guard = _admin_role_guard(request)
+      if guard:
+          return guard
+      user = _get_session_user(request)
+      decoded_symbol = symbol.replace("%2F", "/")
+      success = remove_strategy_asset(
+          strategy_name=strategy_name,
+          symbol=decoded_symbol,
+      )
+      if success:
+          logger.info(
+              f"[ADMIN] Removed strategy asset: "
+              f"{strategy_name}/{decoded_symbol} "
+              f"by {user.get('username')}"
+          )
+          return JSONResponse(
+              content={"success": True}
+          )
+      return JSONResponse(
+          content={"success": False,
+                   "error": "Asset not found"},
+          status_code=404,
+      )
+
+══════════════════════════════════════════════════════════════
+DO NOT CHANGE
+══════════════════════════════════════════════════════════════
+- Hardcoded TARGET_ASSETS / TARGET_SYMBOLS lists in strategy
+  files — keep as fallbacks
+- Entry and exit logic in any strategy file
+- Signal generation logic
+- Any existing admin routes
+- The scheduler timing
+
+══════════════════════════════════════════════════════════════
+VERIFICATION CHECKLIST
+══════════════════════════════════════════════════════════════
+[ ] StrategyAsset model added to models.py with UniqueConstraint
+[ ] _STRATEGY_ASSET_SEEDS covers all 5 strategies and all
+    current hardcoded assets including 10 altcoins in mtf_ema
+[ ] seed_strategy_assets() is idempotent — safe to run every
+    startup without duplicating rows
+[ ] seed_strategy_assets() called from init_db()
+[ ] get_strategy_assets() returns flat symbol list
+[ ] add_strategy_asset() reactivates soft-deleted assets
+[ ] remove_strategy_asset() is soft-delete only
+[ ] get_all_mtf_assets() falls back to hardcoded if DB empty
+[ ] get_active_symbols() in trend_non_forex falls back if empty
+[ ] get_active_symbols() in trend_forex falls back if empty
+[ ] main.py schedulers load assets from DB via get_active_symbols
+[ ] test_symbol_coverage() returns supported/unsupported dict
+[ ] Asset Management tab visible in admin sidebar
+[ ] Test FCSAPI button calls test endpoint before add
+[ ] Add Asset button POSTs to /admin/api/strategy-assets
+[ ] Remove button calls DELETE with strategy+symbol
+[ ] Strategy filter dropdown filters asset table
+[ ] Seeded assets show added_by = "system_seed"
+[ ] Admin-added assets show username in added_by column
+[ ] Verified badge shows green for seeded assets
+[ ] Unverified badge shows amber for manually added assets
+    that have not been tested yet
+[ ] All five files are syntactically valid Python

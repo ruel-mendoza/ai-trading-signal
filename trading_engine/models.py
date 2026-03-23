@@ -315,3 +315,28 @@ class RecoveryNotification(Base):
         Index("idx_recovery_notif_strategy", "strategy_name"),
         Index("idx_recovery_notif_status", "status"),
     )
+
+
+class StrategyAsset(Base):
+    __tablename__ = "strategy_assets"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    strategy_name = Column(Text, nullable=False)
+    symbol = Column(Text, nullable=False)
+    asset_class = Column(Text, nullable=False, server_default="forex")
+    is_active = Column(Integer, nullable=False, server_default="1")
+    fcsapi_verified = Column(Integer, nullable=False, server_default="0")
+    added_by = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(Text, server_default=func.now())
+    updated_at = Column(Text, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "strategy_name", "symbol",
+            name="uq_strategy_asset"
+        ),
+        Index("idx_strategy_asset_strategy", "strategy_name"),
+        Index("idx_strategy_asset_symbol", "symbol"),
+        Index("idx_strategy_asset_active", "is_active"),
+    )

@@ -726,5 +726,73 @@ class FCSAPIClient:
         )
         return all_results
 
+    def test_symbol_coverage(self, symbol: str) -> dict:
+        """Test whether FCSAPI supports a given symbol.
+        Returns status, detected asset class, and sample price.
+        Used by admin Asset Management panel before adding assets.
+        """
+        if not is_symbol_supported(symbol):
+            return {
+                "supported": False,
+                "symbol": symbol,
+                "reason": "Symbol is in UNSUPPORTED_SYMBOLS list",
+            }
+
+        asset_class = get_asset_class(symbol)
+        base_url = get_v4_base_url(symbol)
+        api_symbol = get_v4_history_symbol(symbol)
+
+        try:
+            params = {
+                "symbol": api_symbol,
+                "period": "1d",
+                "length": "2",
+            }
+            if asset_class == "stock":
+                params["type"] = "index"
+            elif asset_class == "etf":
+                params["type"] = "fund"
+                params["exchange"] = "AMEX"
+            elif asset_class == "commodity":
+                params["type"] = "commodity"
+
+            data = self._get("history", params, base_url=base_url)
+
+            if data.get("status") is not False and data.get("response"):
+                candles = data["response"]
+                sample = (
+                    list(candles.values())[0]
+                    if isinstance(candles, dict)
+                    else candles[0]
+                    if isinstance(candles, list)
+                    else {}
+                )
+                return {
+                    "supported": True,
+                    "symbol": symbol,
+                    "api_symbol": api_symbol,
+                    "asset_class": asset_class,
+                    "base_url": base_url,
+                    "sample_close": sample.get("c"),
+                    "sample_time": sample.get("tm", sample.get("o_time", "")),
+                    "candles_returned": (
+                        len(candles) if isinstance(candles, (dict, list)) else 0
+                    ),
+                }
+            else:
+                return {
+                    "supported": False,
+                    "symbol": symbol,
+                    "api_symbol": api_symbol,
+                    "asset_class": asset_class,
+                    "reason": data.get("msg", "No data returned"),
+                }
+        except Exception as e:
+            return {
+                "supported": False,
+                "symbol": symbol,
+                "reason": str(e),
+            }
+
     def close(self):
         self.session.close()

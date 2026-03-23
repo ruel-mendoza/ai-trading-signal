@@ -59,6 +59,7 @@ from trading_engine.models import (
     StrategyExecutionLog,
     RecoveryNotification,
     HistoricalDailyClose,
+    StrategyAsset,
     VALID_TIMEFRAMES,
 )
 
@@ -586,6 +587,7 @@ def init_db():
 
     _migrate_schema()
     _backfill_asset_class()
+    seed_strategy_assets()
 
     with _get_session() as session:
         _seed_default_admin(session)
@@ -2173,3 +2175,276 @@ def get_recent_daily_closes(symbol: str, n: int = 20) -> list[dict]:
             }
             for r in rows
         ]
+
+
+# ─────────────────────────────────────────────────────────────
+# Strategy Asset Management
+# ─────────────────────────────────────────────────────────────
+
+_STRATEGY_ASSET_SEEDS = {
+    "mtf_ema": [
+        ("SPX",      "forex"),  ("NDX",      "forex"),
+        ("RUT",      "forex"),
+        ("XAU/USD",  "forex"),  ("XAG/USD",  "forex"),
+        ("OSX",      "forex"),
+        ("BTC/USD",  "crypto"), ("ETH/USD",  "crypto"),
+        ("BNB/USD",  "crypto"), ("XRP/USD",  "crypto"),
+        ("SOL/USD",  "crypto"), ("TRX/USD",  "crypto"),
+        ("DOGE/USD", "crypto"), ("ADA/USD",  "crypto"),
+        ("AVAX/USD", "crypto"), ("LINK/USD", "crypto"),
+        ("MATIC/USD","crypto"), ("LTC/USD",  "crypto"),
+        ("DOT/USD",  "crypto"), ("BCH/USD",  "crypto"),
+        ("UNI/USD",  "crypto"), ("ATOM/USD", "crypto"),
+        ("XLM/USD",  "crypto"), ("TON/USD",  "crypto"),
+        ("SHIB/USD", "crypto"), ("HBAR/USD", "crypto"),
+        ("NEAR/USD", "crypto"), ("ICP/USD",  "crypto"),
+        ("CRO/USD",  "crypto"), ("APT/USD",  "crypto"),
+        ("ARB/USD",  "crypto"), ("OP/USD",   "crypto"),
+        ("SUI/USD",  "crypto"), ("INJ/USD",  "crypto"),
+        ("EUR/USD",  "forex"),  ("USD/JPY",  "forex"),
+        ("GBP/USD",  "forex"),  ("AUD/USD",  "forex"),
+    ],
+    "trend_non_forex": [
+        ("CORN",  "forex"), ("SOYB",  "forex"),
+        ("WEAT",  "forex"), ("CANE",  "forex"),
+        ("WOOD",  "forex"), ("USO",   "forex"),
+        ("UNG",   "forex"), ("UGA",   "forex"),
+        ("SGOL",  "forex"), ("SIVR",  "forex"),
+        ("CPER",  "forex"), ("PPLT",  "forex"),
+        ("PALL",  "forex"), ("DBB",   "forex"),
+        ("SLX",   "forex"),
+    ],
+    "trend_forex": [
+        ("EUR/USD", "forex"), ("USD/JPY", "forex"),
+    ],
+    "sp500_momentum": [
+        ("SPX", "forex"),
+    ],
+    "highest_lowest_fx": [
+        ("EUR/USD", "forex"),
+    ],
+}
+
+
+def seed_strategy_assets():
+    """Seed all hardcoded assets into strategy_assets table.
+    Idempotent — skips assets that already exist.
+    Called from init_db() on every startup.
+    """
+    with _get_session() as session:
+        try:
+            seeded = 0
+            for strategy_name, assets in _STRATEGY_ASSET_SEEDS.items():
+                for symbol, asset_class in assets:
+                    existing = (
+                        session.query(StrategyAsset)
+                        .filter_by(
+                            strategy_name=strategy_name,
+                            symbol=symbol,
+                        )
+                        .first()
+                    )
+                    if not existing:
+                        session.add(StrategyAsset(
+                            strategy_name=strategy_name,
+                            symbol=symbol,
+                            asset_class=asset_class,
+                            is_active=1,
+                            fcsapi_verified=1,
+                            added_by="system_seed",
+                        ))
+                        seeded += 1
+            session.commit()
+            if seeded:
+                logger.info(
+                    f"[DB] Seeded {seeded} strategy asset(s) "
+                    f"from hardcoded defaults"
+                )
+            else:
+                logger.info(
+                    "[DB] strategy_assets: all seeds already present"
+                )
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] seed_strategy_assets failed: {e}")
+
+
+def _strategy_asset_to_dict(row: StrategyAsset) -> dict:
+    return {
+        "id": row.id,
+        "strategy_name": row.strategy_name,
+        "symbol": row.symbol,
+        "asset_class": row.asset_class,
+        "is_active": bool(row.is_active),
+        "fcsapi_verified": bool(row.fcsapi_verified),
+        "added_by": row.added_by,
+        "notes": row.notes,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+def get_strategy_assets(
+    strategy_name: str,
+    active_only: bool = True,
+) -> list[str]:
+    """Return list of symbols for a strategy.
+    Returns active symbols only by default.
+    Falls back to empty list — callers handle fallback.
+    """
+    with _get_session() as session:
+        q = session.query(StrategyAsset).filter_by(
+            strategy_name=strategy_name
+        )
+        if active_only:
+            q = q.filter_by(is_active=1)
+        rows = q.order_by(StrategyAsset.symbol).all()
+        return [r.symbol for r in rows]
+
+
+def get_all_strategy_assets() -> list[dict]:
+    """Return all strategy assets with full metadata for the admin panel."""
+    with _get_session() as session:
+        rows = (
+            session.query(StrategyAsset)
+            .order_by(
+                StrategyAsset.strategy_name,
+                StrategyAsset.asset_class,
+                StrategyAsset.symbol,
+            )
+            .all()
+        )
+        return [_strategy_asset_to_dict(r) for r in rows]
+
+
+def get_strategy_assets_full(
+    strategy_name: Optional[str] = None,
+) -> list[dict]:
+    """Return assets with full metadata, optionally filtered by strategy."""
+    with _get_session() as session:
+        q = session.query(StrategyAsset)
+        if strategy_name:
+            q = q.filter_by(strategy_name=strategy_name)
+        rows = q.order_by(
+            StrategyAsset.strategy_name,
+            StrategyAsset.asset_class,
+            StrategyAsset.symbol,
+        ).all()
+        return [_strategy_asset_to_dict(r) for r in rows]
+
+
+def add_strategy_asset(
+    strategy_name: str,
+    symbol: str,
+    asset_class: str,
+    added_by: str = "admin",
+    notes: Optional[str] = None,
+    fcsapi_verified: bool = False,
+) -> Optional[int]:
+    """Add a new asset to a strategy.
+    Returns the new row id or None if duplicate.
+    """
+    with _get_session() as session:
+        try:
+            existing = (
+                session.query(StrategyAsset)
+                .filter_by(
+                    strategy_name=strategy_name,
+                    symbol=symbol,
+                )
+                .first()
+            )
+            if existing:
+                if not existing.is_active:
+                    existing.is_active = 1
+                    existing.added_by = added_by
+                    existing.notes = notes
+                    existing.fcsapi_verified = 1 if fcsapi_verified else 0
+                    session.commit()
+                    logger.info(
+                        f"[DB] Reactivated strategy asset: "
+                        f"{strategy_name}/{symbol}"
+                    )
+                    return existing.id
+                logger.warning(
+                    f"[DB] add_strategy_asset: "
+                    f"{strategy_name}/{symbol} already exists"
+                )
+                return None
+            obj = StrategyAsset(
+                strategy_name=strategy_name,
+                symbol=symbol,
+                asset_class=asset_class,
+                is_active=1,
+                fcsapi_verified=1 if fcsapi_verified else 0,
+                added_by=added_by,
+                notes=notes,
+            )
+            session.add(obj)
+            session.commit()
+            logger.info(
+                f"[DB] Added strategy asset: "
+                f"{strategy_name}/{symbol} ({asset_class})"
+            )
+            return obj.id
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] add_strategy_asset failed: {e}")
+            return None
+
+
+def remove_strategy_asset(
+    strategy_name: str,
+    symbol: str,
+) -> bool:
+    """Soft-delete: sets is_active=0."""
+    with _get_session() as session:
+        try:
+            row = (
+                session.query(StrategyAsset)
+                .filter_by(
+                    strategy_name=strategy_name,
+                    symbol=symbol,
+                )
+                .first()
+            )
+            if not row:
+                return False
+            row.is_active = 0
+            session.commit()
+            logger.info(
+                f"[DB] Deactivated strategy asset: "
+                f"{strategy_name}/{symbol}"
+            )
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] remove_strategy_asset failed: {e}")
+            return False
+
+
+def mark_asset_verified(
+    strategy_name: str,
+    symbol: str,
+    verified: bool = True,
+) -> bool:
+    """Mark an asset as FCSAPI-verified or unverified."""
+    with _get_session() as session:
+        try:
+            row = (
+                session.query(StrategyAsset)
+                .filter_by(
+                    strategy_name=strategy_name,
+                    symbol=symbol,
+                )
+                .first()
+            )
+            if not row:
+                return False
+            row.fcsapi_verified = 1 if verified else 0
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] mark_asset_verified failed: {e}")
+            return False

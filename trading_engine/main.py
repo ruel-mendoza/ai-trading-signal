@@ -170,7 +170,15 @@ def _watchdog_thread():
 
 def _scheduled_trend_forex_evaluate():
     from trading_engine.database import get_open_position
-    from trading_engine.strategies.trend_forex import TIMEFRAME as TF_TIMEFRAME
+    from trading_engine.strategies.trend_forex import (
+        TIMEFRAME as TF_TIMEFRAME,
+        get_active_symbols as _get_tf_symbols,
+    )
+    TREND_FOREX_SYMBOLS = _get_tf_symbols()
+    logger.info(
+        f"[SCHEDULER] trend_forex | "
+        f"Loaded {len(TREND_FOREX_SYMBOLS)} assets from DB"
+    )
 
     et = _get_et_context()
     log_id = create_job_log("trend_forex_daily", "trend_forex")
@@ -239,7 +247,15 @@ def _scheduled_trend_forex_evaluate():
 
 def _scheduled_trend_non_forex_evaluate():
     from trading_engine.database import get_open_position
-    from trading_engine.strategies.trend_non_forex import TIMEFRAME as TNF_TIMEFRAME
+    from trading_engine.strategies.trend_non_forex import (
+        TIMEFRAME as TNF_TIMEFRAME,
+        get_active_symbols as _get_tnf_symbols,
+    )
+    TREND_NON_FOREX_SYMBOLS = _get_tnf_symbols()
+    logger.info(
+        f"[SCHEDULER] trend_non_forex | "
+        f"Loaded {len(TREND_NON_FOREX_SYMBOLS)} assets from DB"
+    )
 
     et = _get_et_context()
     log_id = create_job_log("trend_non_forex_daily", "trend_non_forex")
@@ -512,7 +528,15 @@ def _scheduled_sp500_momentum_30m():
 
 def _scheduled_mtf_ema_evaluate():
     from trading_engine.database import get_open_position as db_get_open_pos
-    from trading_engine.strategies.multi_timeframe import PRIMARY_TIMEFRAME
+    from trading_engine.strategies.multi_timeframe import (
+        PRIMARY_TIMEFRAME,
+        get_all_mtf_assets,
+    )
+    MTF_EMA_ASSETS = get_all_mtf_assets()
+    logger.info(
+        f"[SCHEDULER] mtf_ema | "
+        f"Loaded {len(MTF_EMA_ASSETS)} assets from DB"
+    )
 
     et = _get_et_context()
     log_id = create_job_log("mtf_ema_hourly", "mtf_ema")

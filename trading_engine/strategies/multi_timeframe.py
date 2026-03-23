@@ -54,6 +54,57 @@ ALL_ASSETS = []
 for group in TARGET_ASSETS.values():
     ALL_ASSETS.extend(group)
 
+
+def _load_target_assets() -> dict[str, list[str]]:
+    """Load strategy assets from DB grouped by asset_class.
+    Falls back to hardcoded TARGET_ASSETS if DB is empty.
+    """
+    try:
+        from trading_engine.database import (
+            get_strategy_assets,
+            get_strategy_assets_full,
+        )
+        symbols = get_strategy_assets(STRATEGY_NAME)
+        if not symbols:
+            logger.warning(
+                "[MTF-EMA] No assets in DB — "
+                "using hardcoded TARGET_ASSETS fallback"
+            )
+            return TARGET_ASSETS
+        rows = get_strategy_assets_full(STRATEGY_NAME)
+        grouped: dict[str, list[str]] = {}
+        for row in rows:
+            ac = row["asset_class"]
+            if ac not in grouped:
+                grouped[ac] = []
+            grouped[ac].append(row["symbol"])
+        logger.info(
+            f"[MTF-EMA] Loaded {len(symbols)} assets "
+            f"from DB across {len(grouped)} groups"
+        )
+        return grouped
+    except Exception as e:
+        logger.error(
+            f"[MTF-EMA] Failed to load assets from DB: {e} "
+            f"— using hardcoded fallback"
+        )
+        return TARGET_ASSETS
+
+
+def get_all_mtf_assets() -> list[str]:
+    """Return flat list of all active MTF EMA assets from DB."""
+    try:
+        from trading_engine.database import get_strategy_assets
+        symbols = get_strategy_assets(STRATEGY_NAME)
+        if symbols:
+            return symbols
+    except Exception:
+        pass
+    result = []
+    for group in TARGET_ASSETS.values():
+        result.extend(group)
+    return result
+
 FOREX_ASSETS = {"EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"}
 
 TIMEFRAME_D1 = "D1"
