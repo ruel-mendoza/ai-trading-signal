@@ -56,37 +56,30 @@ for group in TARGET_ASSETS.values():
 
 
 def _load_target_assets() -> dict[str, list[str]]:
-    """Load strategy assets from DB grouped by asset_class.
+    """Load strategy assets from DB grouped by sub_category (falling back to
+    asset_class when sub_category is NULL/empty).
     Falls back to hardcoded TARGET_ASSETS if DB is empty.
     """
     try:
-        from trading_engine.database import (
-            get_strategy_assets,
-            get_strategy_assets_full,
-        )
-        symbols = get_strategy_assets(STRATEGY_NAME)
-        if not symbols:
+        from trading_engine.database import get_strategy_assets_full
+        rows = get_strategy_assets_full(STRATEGY_NAME)
+        if not rows:
             logger.warning(
-                "[MTF-EMA] No assets in DB — "
-                "using hardcoded TARGET_ASSETS fallback"
+                "[MTF-EMA] No assets in DB — using hardcoded fallback"
             )
             return TARGET_ASSETS
-        rows = get_strategy_assets_full(STRATEGY_NAME)
         grouped: dict[str, list[str]] = {}
         for row in rows:
-            ac = row["asset_class"]
-            if ac not in grouped:
-                grouped[ac] = []
-            grouped[ac].append(row["symbol"])
+            group_key = row.get("sub_category") or row["asset_class"]
+            grouped.setdefault(group_key, []).append(row["symbol"])
         logger.info(
-            f"[MTF-EMA] Loaded {len(symbols)} assets "
-            f"from DB across {len(grouped)} groups"
+            f"[MTF-EMA] Loaded {sum(len(v) for v in grouped.values())} assets "
+            f"across groups: {list(grouped.keys())}"
         )
         return grouped
     except Exception as e:
         logger.error(
-            f"[MTF-EMA] Failed to load assets from DB: {e} "
-            f"— using hardcoded fallback"
+            f"[MTF-EMA] Failed to load assets from DB: {e} — using fallback"
         )
         return TARGET_ASSETS
 

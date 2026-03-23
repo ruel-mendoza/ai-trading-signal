@@ -4113,6 +4113,15 @@ document.addEventListener('DOMContentLoaded', function() {
     if (tabName === 'users') loadRegistrationToggle();
     if (tabName === 'wordpress') { loadUserCmsConfigs(); }
     if (tabName === 'assets') { loadAssets(); }
+
+    var strategySelect = document.getElementById('new-asset-strategy');
+    if (strategySelect && !strategySelect._subCatListenerAdded) {
+        strategySelect.addEventListener('change', function() {
+            var w = document.getElementById('sub-category-wrapper');
+            if (w) w.style.display = this.value === 'mtf_ema' ? 'block' : 'none';
+        });
+        strategySelect._subCatListenerAdded = true;
+    }
 });
 
 function copyApiUrl(path) {
@@ -4149,7 +4158,7 @@ async function loadAssets() {
     var assets = data.assets || [];
     var tbody = document.getElementById('assets-rows');
     if (!assets.length) {
-      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#64748b;">No assets found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#64748b;">No assets found</td></tr>';
       return;
     }
     var classColors = {
@@ -4172,11 +4181,15 @@ async function loadAssets() {
       var addedBy = a.added_by || '\u2014';
       var createdAt = a.created_at ? a.created_at.slice(0, 10) : '\u2014';
       var notes = a.notes ? '<span title="' + a.notes.replace(/"/g, '&quot;') + '" style="cursor:help;color:#64748b;">&#x1F4DD;</span>' : '\u2014';
+      var subCatLabel = a.sub_category
+        ? a.sub_category.charAt(0).toUpperCase() + a.sub_category.slice(1)
+        : '\u2014';
       var removeBtn = '<button class="btn" style="font-size:12px;padding:4px 10px;background:rgba(239,68,68,0.12);color:#ef4444;" onclick="removeAsset(this)" data-strategy="' + a.strategy_name + '" data-symbol="' + a.symbol + '" data-testid="button-remove-asset-' + a.symbol.replace(/\//g,'-') + '">Remove</button>';
       rows += '<tr data-testid="row-asset-' + a.symbol.replace(/\//g,'-') + '">'
         + '<td style="font-weight:600;color:#f1f5f9;">' + a.symbol + '</td>'
         + '<td>' + (strategyLabels[a.strategy_name] || a.strategy_name) + '</td>'
         + '<td>' + classBadge + '</td>'
+        + '<td style="font-size:13px;color:#94a3b8;">' + subCatLabel + '</td>'
         + '<td>' + verifiedBadge + '</td>'
         + '<td style="font-size:12px;color:#94a3b8;">' + addedBy + '</td>'
         + '<td style="font-size:12px;color:#94a3b8;">' + createdAt + '</td>'
@@ -4213,6 +4226,8 @@ async function addAsset() {
   var symbol = document.getElementById('new-asset-symbol').value.trim().toUpperCase();
   var strategy = document.getElementById('new-asset-strategy').value;
   var assetClass = document.getElementById('new-asset-class').value;
+  var subCategoryEl = document.getElementById('new-asset-sub-category');
+  var subCategory = subCategoryEl ? (subCategoryEl.value || null) : null;
   var resultEl = document.getElementById('asset-add-result');
   if (!symbol || !strategy || !assetClass) {
     resultEl.innerHTML = '<span style="color:#ef4444;">Symbol, strategy and asset class are required.</span>'; return;
@@ -4220,7 +4235,7 @@ async function addAsset() {
   try {
     var res = await fetch(BASE + '/admin/api/strategy-assets', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ symbol: symbol, strategy_name: strategy, asset_class: assetClass })
+      body: JSON.stringify({ symbol: symbol, strategy_name: strategy, asset_class: assetClass, sub_category: subCategory })
     });
     var data = await res.json();
     if (data.success) {
@@ -5621,7 +5636,18 @@ def admin_dashboard(
                                 <option value="stocks">Stocks</option>
                             </select>
                         </div>
-                        <div style="display:flex;gap:8px;">
+                        <div id="sub-category-wrapper" style="display:none;">
+                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Sub-Category <span style="color:#64748b;font-size:11px;">(MTF EMA only)</span></label>
+                            <select id="new-asset-sub-category" data-testid="select-new-asset-sub-category"
+                                    style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;color:#f1f5f9;font-size:14px;border-radius:6px;cursor:pointer;">
+                                <option value="">— select sub-category —</option>
+                                <option value="indices">Indices</option>
+                                <option value="commodities">Commodities</option>
+                                <option value="crypto">Crypto</option>
+                                <option value="forex">Forex</option>
+                            </select>
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:flex-end;">
                             <button class="btn btn-secondary" onclick="testAssetCoverage()" data-testid="button-test-asset" style="white-space:nowrap;">Test FCSAPI</button>
                             <button class="btn btn-primary" onclick="addAsset()" data-testid="button-add-asset" style="white-space:nowrap;">Add Asset</button>
                         </div>
@@ -5652,7 +5678,7 @@ def admin_dashboard(
                             <thead>
                                 <tr>
                                     <th>Symbol</th><th>Strategy</th><th>Asset Class</th>
-                                    <th>FCSAPI</th><th>Added By</th><th>Added</th>
+                                    <th>Sub-Category</th><th>FCSAPI</th><th>Added By</th><th>Added</th>
                                     <th>Notes</th><th>Actions</th>
                                 </tr>
                             </thead>
@@ -6580,12 +6606,14 @@ def api_add_strategy_asset(
     strategy_name = body.get("strategy_name", "").strip()
     asset_class = body.get("asset_class", "forex").strip()
     notes = body.get("notes", "")
+    sub_category = body.get("sub_category", "").strip() or None
 
     VALID_STRATEGIES = {
         "mtf_ema", "trend_non_forex", "trend_forex",
         "sp500_momentum", "highest_lowest_fx",
     }
     VALID_CLASSES = {"forex", "crypto", "stocks"}
+    VALID_SUB_CATEGORIES = {"indices", "commodities", "crypto", "forex"}
 
     if not symbol:
         return JSONResponse(
@@ -6604,11 +6632,20 @@ def api_add_strategy_asset(
                      "error": f"Invalid asset_class. Must be one of: {', '.join(VALID_CLASSES)}"},
             status_code=400,
         )
+    if strategy_name == "mtf_ema" and sub_category \
+            and sub_category not in VALID_SUB_CATEGORIES:
+        return JSONResponse(
+            content={"success": False,
+                     "error": "Invalid sub_category for mtf_ema. "
+                              "Must be one of: indices, commodities, crypto, forex"},
+            status_code=400,
+        )
 
     asset_id = add_strategy_asset(
         strategy_name=strategy_name,
         symbol=symbol,
         asset_class=asset_class,
+        sub_category=sub_category,
         added_by=user.get("username", "admin") if user else "admin",
         notes=notes if notes else None,
         fcsapi_verified=False,

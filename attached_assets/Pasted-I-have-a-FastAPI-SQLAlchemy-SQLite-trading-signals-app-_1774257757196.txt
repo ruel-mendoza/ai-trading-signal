@@ -1,0 +1,174 @@
+I have a FastAPI + SQLAlchemy (SQLite) trading signals app. I need to add a 
+sub_category field to the strategy_assets table so that mtf_ema assets can be 
+assigned a specific sub-category (indices, commodities, crypto, forex) in addition 
+to the existing asset_class field (forex, crypto, stocks). Only mtf_ema uses 
+sub_category — all other strategies ignore it.
+
+Read these files first before making any changes:
+- trading_engine/models.py
+- trading_engine/database.py
+- trading_engine/admin.py
+- trading_engine/strategies/multi_timeframe.py
+
+Make ALL of the following changes in ONE pass:
+
+---
+
+1. trading_engine/models.py
+Add this column to the StrategyAsset class after the asset_class column:
+  sub_category = Column(Text, nullable=True)
+
+---
+
+2. trading_engine/database.py
+
+a) In _migrate_schema(), add this entry to the migrations list:
+  ("strategy_assets", "sub_category", "TEXT")
+
+b) In _strategy_asset_to_dict(), add to the returned dict:
+  "sub_category": row.sub_category,
+
+c) Change add_strategy_asset() signature to accept sub_category:
+  def add_strategy_asset(
+      strategy_name, symbol, asset_class,
+      sub_category=None,   # NEW
+      added_by="admin", notes=None, fcsapi_verified=False
+  )
+  Pass sub_category=sub_category when constructing the StrategyAsset object.
+  Also set it when reactivating a soft-deleted row:
+    existing.sub_category = sub_category
+
+d) Update _STRATEGY_ASSET_SEEDS so mtf_ema entries are 3-tuples 
+   (symbol, asset_class, sub_category). All other strategies stay as 2-tuples.
+   Use these sub_category values for mtf_ema:
+     SPX, NDX, RUT                          → sub_category="indices"
+     XAU/USD, XAG/USD, OSX                  → sub_category="commodities"
+     BTC/USD, ETH/USD, BNB/USD, XRP/USD,
+     SOL/USD, TRX/USD, DOGE/USD, ADA/USD,
+     AVAX/USD, LINK/USD, MATIC/USD, LTC/USD,
+     DOT/USD, BCH/USD, UNI/USD, ATOM/USD,
+     XLM/USD, TON/USD, SHIB/USD, HBAR/USD,
+     NEAR/USD, ICP/USD, CRO/USD, APT/USD,
+     ARB/USD, OP/USD, SUI/USD, INJ/USD       → sub_category="crypto"
+     EUR/USD, USD/JPY, GBP/USD, AUD/USD      → sub_category="forex"
+
+e) Update the seed loop in seed_strategy_assets() to handle both 2-tuple and 
+   3-tuple entries like this:
+     symbol     = entry[0]
+     asset_class = entry[1]
+     sub_cat    = entry[2] if len(entry) > 2 else None
+   Pass sub_category=sub_cat when calling session.add(StrategyAsset(...)).
+
+f) Also add a one-time backfill inside seed_strategy_assets() after the main 
+   seed loop. For every existing mtf_ema row where sub_category IS NULL, look 
+   up the correct sub_category from _STRATEGY_ASSET_SEEDS and update it. 
+   Commit after the backfill. This handles databases that already have the rows.
+
+---
+
+3. trading_engine/admin.py
+
+a) In api_add_strategy_asset(), read sub_category from the request body:
+     sub_category = body.get("sub_category", "").strip() or None
+   Validate it only when strategy_name == "mtf_ema":
+     VALID_SUB_CATEGORIES = {"indices", "commodities", "crypto", "forex"}
+     if strategy_name == "mtf_ema" and sub_category \
+        and sub_category not in VALID_SUB_CATEGORIES:
+         return JSONResponse(
+             content={"success": False,
+                      "error": "Invalid sub_category for mtf_ema. "
+                               "Must be one of: indices, commodities, crypto, forex"},
+             status_code=400,
+         )
+   Pass sub_category=sub_category to add_strategy_asset().
+
+b) In the Assets Management tab HTML (inside admin_dashboard()), update the 
+   "Add New Asset" form section. After the asset-class <select>, add:
+     <div id="sub-category-wrapper" style="display:none;">
+       <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">
+         Sub-Category <span style="color:#64748b;font-size:11px;">(MTF EMA only)</span>
+       </label>
+       <select id="new-asset-sub-category"
+               data-testid="select-new-asset-sub-category"
+               style="width:100%;padding:8px 12px;background:#0f172a;
+                      border:1px solid #334155;color:#f1f5f9;
+                      font-size:14px;border-radius:6px;cursor:pointer;">
+         <option value="">— select sub-category —</option>
+         <option value="indices">Indices</option>
+         <option value="commodities">Commodities</option>
+         <option value="crypto">Crypto</option>
+         <option value="forex">Forex</option>
+       </select>
+     </div>
+
+c) In ADMIN_JS, add a change listener so the sub-category wrapper shows only 
+   when mtf_ema is selected:
+     document.getElementById('new-asset-strategy')
+       .addEventListener('change', function() {
+         var w = document.getElementById('sub-category-wrapper');
+         if (w) w.style.display = this.value === 'mtf_ema' ? 'block' : 'none';
+       });
+
+d) In the addAsset() JS function, read sub_category and include it in the 
+   POST body:
+     var subCategory = document.getElementById('new-asset-sub-category')
+                         ? document.getElementById('new-asset-sub-category').value || null
+                         : null;
+     // in fetch body:
+     body: JSON.stringify({
+       symbol, strategy_name: strategy, asset_class: assetClass,
+       sub_category: subCategory
+     })
+
+e) In loadAssets() JS, add a Sub-Category column to the assets table.
+   In the table header row add: '<th>Sub-Category</th>'
+   In the row generation loop add after the asset_class badge cell:
+     var subCatLabel = a.sub_category
+       ? a.sub_category.charAt(0).toUpperCase() + a.sub_category.slice(1)
+       : '\u2014';
+     rows += '<td style="font-size:13px;color:#94a3b8;">' + subCatLabel + '</td>';
+   Update the colspan on the empty-state row from 8 to 9.
+
+---
+
+4. trading_engine/strategies/multi_timeframe.py
+
+Update _load_target_assets() so it groups by sub_category when set, 
+falling back to asset_class when sub_category is NULL or empty:
+
+  def _load_target_assets() -> dict[str, list[str]]:
+      try:
+          from trading_engine.database import get_strategy_assets_full
+          rows = get_strategy_assets_full(STRATEGY_NAME)
+          if not rows:
+              logger.warning("[MTF-EMA] No assets in DB — using hardcoded fallback")
+              return TARGET_ASSETS
+          grouped: dict[str, list[str]] = {}
+          for row in rows:
+              group_key = row.get("sub_category") or row["asset_class"]
+              grouped.setdefault(group_key, []).append(row["symbol"])
+          logger.info(
+              f"[MTF-EMA] Loaded {sum(len(v) for v in grouped.values())} assets "
+              f"across groups: {list(grouped.keys())}"
+          )
+          return grouped
+      except Exception as e:
+          logger.error(f"[MTF-EMA] Failed to load assets from DB: {e} — using fallback")
+          return TARGET_ASSETS
+
+Also update get_all_mtf_assets() — no change needed there, it returns a flat 
+list of symbols and does not depend on grouping.
+
+---
+
+CONSTRAINTS:
+- Do NOT rename or remove any existing columns, functions, or API endpoints.
+- Do NOT change any strategy logic, indicator calculations, or exit rules.
+- Do NOT touch any other strategy files (sp500_momentum.py, trend_forex.py, 
+  trend_non_forex.py, highest_lowest.py).
+- The migration in _migrate_schema() must be idempotent (safe to run on a DB 
+  that already has the column — the existing try/except pattern handles this).
+- The seed backfill must also be idempotent.
+- All existing data-testid attributes must remain unchanged.
+- After your changes, the app must start without errors and the admin Assets 
+  Management tab must display the new Sub-Category column.

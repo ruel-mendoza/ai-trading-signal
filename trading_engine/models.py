@@ -324,6 +324,7 @@ class StrategyAsset(Base):
     strategy_name = Column(Text, nullable=False)
     symbol = Column(Text, nullable=False)
     asset_class = Column(Text, nullable=False, server_default="forex")
+    sub_category = Column(Text, nullable=True)
     is_active = Column(Integer, nullable=False, server_default="1")
     fcsapi_verified = Column(Integer, nullable=False, server_default="0")
     added_by = Column(Text, nullable=True)

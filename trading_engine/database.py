@@ -209,6 +209,7 @@ def _migrate_schema():
         ("admin_users", "full_name", "TEXT"),
         ("open_positions", "n_period_high_close", "REAL"),
         ("open_positions", "n_period_low_close", "REAL"),
+        ("strategy_assets", "sub_category", "TEXT"),
     ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:
@@ -2183,26 +2184,44 @@ def get_recent_daily_closes(symbol: str, n: int = 20) -> list[dict]:
 
 _STRATEGY_ASSET_SEEDS = {
     "mtf_ema": [
-        ("SPX",      "forex"),  ("NDX",      "forex"),
-        ("RUT",      "forex"),
-        ("XAU/USD",  "forex"),  ("XAG/USD",  "forex"),
-        ("OSX",      "forex"),
-        ("BTC/USD",  "crypto"), ("ETH/USD",  "crypto"),
-        ("BNB/USD",  "crypto"), ("XRP/USD",  "crypto"),
-        ("SOL/USD",  "crypto"), ("TRX/USD",  "crypto"),
-        ("DOGE/USD", "crypto"), ("ADA/USD",  "crypto"),
-        ("AVAX/USD", "crypto"), ("LINK/USD", "crypto"),
-        ("MATIC/USD","crypto"), ("LTC/USD",  "crypto"),
-        ("DOT/USD",  "crypto"), ("BCH/USD",  "crypto"),
-        ("UNI/USD",  "crypto"), ("ATOM/USD", "crypto"),
-        ("XLM/USD",  "crypto"), ("TON/USD",  "crypto"),
-        ("SHIB/USD", "crypto"), ("HBAR/USD", "crypto"),
-        ("NEAR/USD", "crypto"), ("ICP/USD",  "crypto"),
-        ("CRO/USD",  "crypto"), ("APT/USD",  "crypto"),
-        ("ARB/USD",  "crypto"), ("OP/USD",   "crypto"),
-        ("SUI/USD",  "crypto"), ("INJ/USD",  "crypto"),
-        ("EUR/USD",  "forex"),  ("USD/JPY",  "forex"),
-        ("GBP/USD",  "forex"),  ("AUD/USD",  "forex"),
+        ("SPX",      "forex",  "indices"),
+        ("NDX",      "forex",  "indices"),
+        ("RUT",      "forex",  "indices"),
+        ("XAU/USD",  "forex",  "commodities"),
+        ("XAG/USD",  "forex",  "commodities"),
+        ("OSX",      "forex",  "commodities"),
+        ("BTC/USD",  "crypto", "crypto"),
+        ("ETH/USD",  "crypto", "crypto"),
+        ("BNB/USD",  "crypto", "crypto"),
+        ("XRP/USD",  "crypto", "crypto"),
+        ("SOL/USD",  "crypto", "crypto"),
+        ("TRX/USD",  "crypto", "crypto"),
+        ("DOGE/USD", "crypto", "crypto"),
+        ("ADA/USD",  "crypto", "crypto"),
+        ("AVAX/USD", "crypto", "crypto"),
+        ("LINK/USD", "crypto", "crypto"),
+        ("MATIC/USD","crypto", "crypto"),
+        ("LTC/USD",  "crypto", "crypto"),
+        ("DOT/USD",  "crypto", "crypto"),
+        ("BCH/USD",  "crypto", "crypto"),
+        ("UNI/USD",  "crypto", "crypto"),
+        ("ATOM/USD", "crypto", "crypto"),
+        ("XLM/USD",  "crypto", "crypto"),
+        ("TON/USD",  "crypto", "crypto"),
+        ("SHIB/USD", "crypto", "crypto"),
+        ("HBAR/USD", "crypto", "crypto"),
+        ("NEAR/USD", "crypto", "crypto"),
+        ("ICP/USD",  "crypto", "crypto"),
+        ("CRO/USD",  "crypto", "crypto"),
+        ("APT/USD",  "crypto", "crypto"),
+        ("ARB/USD",  "crypto", "crypto"),
+        ("OP/USD",   "crypto", "crypto"),
+        ("SUI/USD",  "crypto", "crypto"),
+        ("INJ/USD",  "crypto", "crypto"),
+        ("EUR/USD",  "forex",  "forex"),
+        ("USD/JPY",  "forex",  "forex"),
+        ("GBP/USD",  "forex",  "forex"),
+        ("AUD/USD",  "forex",  "forex"),
     ],
     "trend_non_forex": [
         ("CORN",  "forex"), ("SOYB",  "forex"),
@@ -2231,11 +2250,22 @@ def seed_strategy_assets():
     Idempotent — skips assets that already exist.
     Called from init_db() on every startup.
     """
+    # Build a fast lookup: (strategy, symbol) → sub_category
+    _sub_cat_lookup: dict[tuple[str, str], Optional[str]] = {}
+    for _strat, _entries in _STRATEGY_ASSET_SEEDS.items():
+        for _entry in _entries:
+            _sym = _entry[0]
+            _sub = _entry[2] if len(_entry) > 2 else None
+            _sub_cat_lookup[(_strat, _sym)] = _sub
+
     with _get_session() as session:
         try:
             seeded = 0
             for strategy_name, assets in _STRATEGY_ASSET_SEEDS.items():
-                for symbol, asset_class in assets:
+                for entry in assets:
+                    symbol     = entry[0]
+                    asset_class = entry[1]
+                    sub_cat    = entry[2] if len(entry) > 2 else None
                     existing = (
                         session.query(StrategyAsset)
                         .filter_by(
@@ -2249,6 +2279,7 @@ def seed_strategy_assets():
                             strategy_name=strategy_name,
                             symbol=symbol,
                             asset_class=asset_class,
+                            sub_category=sub_cat,
                             is_active=1,
                             fcsapi_verified=1,
                             added_by="system_seed",
@@ -2264,6 +2295,28 @@ def seed_strategy_assets():
                 logger.info(
                     "[DB] strategy_assets: all seeds already present"
                 )
+
+            # One-time backfill: populate sub_category for any existing
+            # mtf_ema rows where the column is still NULL.
+            backfilled = 0
+            mtf_rows = (
+                session.query(StrategyAsset)
+                .filter_by(strategy_name="mtf_ema")
+                .filter(StrategyAsset.sub_category == None)  # noqa: E711
+                .all()
+            )
+            for row in mtf_rows:
+                correct = _sub_cat_lookup.get(("mtf_ema", row.symbol))
+                if correct:
+                    row.sub_category = correct
+                    backfilled += 1
+            if backfilled:
+                session.commit()
+                logger.info(
+                    f"[DB] Backfilled sub_category for "
+                    f"{backfilled} mtf_ema asset(s)"
+                )
+
         except Exception as e:
             session.rollback()
             logger.error(f"[DB] seed_strategy_assets failed: {e}")
@@ -2275,6 +2328,7 @@ def _strategy_asset_to_dict(row: StrategyAsset) -> dict:
         "strategy_name": row.strategy_name,
         "symbol": row.symbol,
         "asset_class": row.asset_class,
+        "sub_category": row.sub_category,
         "is_active": bool(row.is_active),
         "fcsapi_verified": bool(row.fcsapi_verified),
         "added_by": row.added_by,
@@ -2337,6 +2391,7 @@ def add_strategy_asset(
     strategy_name: str,
     symbol: str,
     asset_class: str,
+    sub_category: Optional[str] = None,
     added_by: str = "admin",
     notes: Optional[str] = None,
     fcsapi_verified: bool = False,
@@ -2360,6 +2415,7 @@ def add_strategy_asset(
                     existing.added_by = added_by
                     existing.notes = notes
                     existing.fcsapi_verified = 1 if fcsapi_verified else 0
+                    existing.sub_category = sub_category
                     session.commit()
                     logger.info(
                         f"[DB] Reactivated strategy asset: "
@@ -2375,6 +2431,7 @@ def add_strategy_asset(
                 strategy_name=strategy_name,
                 symbol=symbol,
                 asset_class=asset_class,
+                sub_category=sub_category,
                 is_active=1,
                 fcsapi_verified=1 if fcsapi_verified else 0,
                 added_by=added_by,
