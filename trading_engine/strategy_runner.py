@@ -77,7 +77,7 @@ STRATEGY_ASSET_CONFIG: dict[str, dict] = {
             "DBB", "SLX",
             "BNB/USD", "XRP/USD", "SOL/USD", "TRX/USD", "DOGE/USD",
             "ADA/USD", "TON/USD", "SHIB/USD", "AVAX/USD", "LINK/USD",
-            "MATIC/USD", "LTC/USD", "DOT/USD", "BCH/USD", "UNI/USD",
+            "LTC/USD", "DOT/USD", "BCH/USD", "UNI/USD",
             "ATOM/USD", "XLM/USD", "HBAR/USD", "ICP/USD", "APT/USD",
             "NEAR/USD", "ARB/USD", "OP/USD", "SUI/USD", "INJ/USD",
             "CRO/USD",

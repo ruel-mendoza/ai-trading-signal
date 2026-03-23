@@ -94,7 +94,7 @@ _ASSET_CLASS_MAP: dict[str, str] = {
     # Altcoins — Tier 1
     "SOL/USD":  "crypto", "DOGE/USD": "crypto",
     "ADA/USD":  "crypto", "AVAX/USD": "crypto",
-    "LINK/USD": "crypto", "MATIC/USD":"crypto",
+    "LINK/USD": "crypto",
     "DOT/USD":  "crypto", "BCH/USD":  "crypto",
     "XLM/USD":  "crypto", "ATOM/USD": "crypto",
     "UNI/USD":  "crypto",
@@ -2223,7 +2223,7 @@ _STRATEGY_ASSET_SEEDS = {
         ("DOGE/USD",  "crypto"), ("ADA/USD",   "crypto"),
         ("TON/USD",   "crypto"), ("SHIB/USD",  "crypto"),
         ("AVAX/USD",  "crypto"), ("LINK/USD",  "crypto"),
-        ("MATIC/USD", "crypto"), ("LTC/USD",   "crypto"),
+        ("LTC/USD",   "crypto"),
         ("DOT/USD",   "crypto"), ("BCH/USD",   "crypto"),
         ("UNI/USD",   "crypto"), ("ATOM/USD",  "crypto"),
         ("XLM/USD",   "crypto"), ("HBAR/USD",  "crypto"),
@@ -2330,7 +2330,7 @@ def seed_strategy_assets():
             COINS_MOVED_FROM_MTF = [
                 "BNB/USD",  "XRP/USD",  "SOL/USD",  "TRX/USD",  "DOGE/USD",
                 "ADA/USD",  "TON/USD",  "SHIB/USD", "AVAX/USD", "LINK/USD",
-                "MATIC/USD","LTC/USD",  "DOT/USD",  "BCH/USD",  "UNI/USD",
+                "LTC/USD",  "DOT/USD",  "BCH/USD",  "UNI/USD",
                 "ATOM/USD", "XLM/USD",  "HBAR/USD", "ICP/USD",  "APT/USD",
                 "NEAR/USD", "ARB/USD",  "OP/USD",   "SUI/USD",  "INJ/USD",
                 "CRO/USD",

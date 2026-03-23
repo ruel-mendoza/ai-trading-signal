@@ -142,7 +142,7 @@ _ADMIN_CLASS_MAP: dict[str, str] = {
     # Altcoins — Tier 1
     "SOL/USD":  "crypto", "DOGE/USD": "crypto",
     "ADA/USD":  "crypto", "AVAX/USD": "crypto",
-    "LINK/USD": "crypto", "MATIC/USD":"crypto",
+    "LINK/USD": "crypto",
     "DOT/USD":  "crypto", "BCH/USD":  "crypto",
     "XLM/USD":  "crypto", "ATOM/USD": "crypto",
     "UNI/USD":  "crypto",
