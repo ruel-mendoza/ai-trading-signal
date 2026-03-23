@@ -102,6 +102,35 @@ def _nth_weekday(year: int, month: int, weekday: int, n: int) -> datetime:
     return datetime(year, month, day)
 
 
+_ADMIN_CLASS_MAP: dict[str, str] = {
+    "EUR/USD": "forex",    "GBP/USD": "forex",    "USD/JPY": "forex",
+    "USD/CAD": "forex",    "AUD/USD": "forex",    "NZD/USD": "forex",
+    "USD/CHF": "forex",    "EUR/GBP": "forex",
+    "BTC/USD": "crypto",   "ETH/USD": "crypto",   "LTC/USD": "crypto",
+    "XRP/USD": "crypto",   "BNB/USD": "crypto",
+    "XAU/USD": "commodities", "XAG/USD": "commodities",
+    "XPT/USD": "commodities", "XPD/USD": "commodities",
+    "OSX": "commodities",  "USO": "commodities",
+    "UNG": "commodities",  "UGA": "commodities",
+    "DBB": "commodities",  "SLX": "commodities",
+    "SGOL": "commodities", "SIVR": "commodities",
+    "CPER": "commodities", "PPLT": "commodities", "PALL": "commodities",
+    "CORN": "commodities", "SOYB": "commodities", "WEAT": "commodities",
+    "CANE": "commodities", "WOOD": "commodities",
+    "SPX": "indices",      "NDX": "indices",      "RUT": "indices",
+    "DJI": "indices",
+}
+
+_CLASS_COLORS: dict[str, tuple[str, str]] = {
+    "forex":       ("rgba(59,130,246,0.15)",  "#60a5fa"),
+    "crypto":      ("rgba(168,85,247,0.15)",  "#c4b5fd"),
+    "commodities": ("rgba(245,158,11,0.15)",  "#fcd34d"),
+    "indices":     ("rgba(34,197,94,0.15)",   "#86efac"),
+    "stocks":      ("rgba(239,68,68,0.15)",   "#fca5a5"),
+    "other":       ("rgba(100,116,139,0.15)", "#94a3b8"),
+}
+
+
 def _signals_to_table_rows(signals: list[dict]) -> str:
     """Render signal rows to HTML table rows with Python-side deduplication.
 
@@ -111,7 +140,7 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
     A warning badge is shown when multiple OPEN rows share the same asset (cross-strategy dup).
     """
     if not signals:
-        return '<tr><td colspan="8" style="text-align:center;padding:24px;color:#94a3b8;">No signals found</td></tr>'
+        return '<tr><td colspan="9" style="text-align:center;padding:24px;color:#94a3b8;">No signals found</td></tr>'
 
     from datetime import datetime as dt_cls
 
@@ -207,9 +236,20 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
         else:
             status_badge = f'<span class="badge {status_class}">{status}</span>'
 
+        ac_raw = s.get("asset_class") or _ADMIN_CLASS_MAP.get(s.get("asset", ""), "other")
+        ac_bg, ac_color = _CLASS_COLORS.get(ac_raw, _CLASS_COLORS["other"])
+        ac_badge = (
+            f'<span style="display:inline-block;padding:2px 8px;'
+            f'border-radius:4px;font-size:0.7rem;font-weight:600;'
+            f'text-transform:uppercase;letter-spacing:0.03em;'
+            f'background:{ac_bg};color:{ac_color};">'
+            f'{ac_raw}</span>'
+        )
+
         rows.append(f"""
         <tr>
             <td>{s.get("asset", "")}</td>
+            <td>{ac_badge}</td>
             <td><span class="badge {dir_class}">{direction}</span></td>
             <td>{entry_str}</td>
             <td>{sl_str}</td>
@@ -4251,6 +4291,7 @@ def admin_dashboard(
     strategy_name: Optional[str] = Query(None, alias="strategy"),
     status: Optional[str] = Query(None),
     asset: Optional[str] = Query(None, alias="symbol"),
+    asset_class: Optional[str] = Query(None, alias="asset_class"),
     tab: str = Query("signals"),
 ):
     user = _get_session_user(request)
@@ -4259,11 +4300,19 @@ def admin_dashboard(
         return RedirectResponse(url=base_path + "/admin/login", status_code=302)
 
     signals = get_all_signals(strategy_name=strategy_name, asset=asset, status=status, limit=200, max_age_days=92)
+    # Filter by asset_class in Python (DB column added via migration)
+    if asset_class:
+        signals = [
+            s for s in signals
+            if (s.get("asset_class") or "other") == asset_class
+        ]
     active_signals = get_active_signals()
     usage_stats = get_api_usage_stats()
     market_times = _get_market_times()
 
     active_count = len(active_signals)
+    if asset_class:
+        active_count = sum(1 for s in signals if s.get("status") == "OPEN")
     total_count = len(signals)
 
     signal_rows = _signals_to_table_rows(signals)
@@ -4325,6 +4374,20 @@ def admin_dashboard(
         label = s if s else "All Statuses"
         selected = "selected" if s == (status or "") else ""
         status_options += f'<option value="{s}" {selected}>{label}</option>'
+
+    ASSET_CLASS_CHOICES = [
+        ("",            "All Asset Classes"),
+        ("forex",       "Forex"),
+        ("crypto",      "Crypto"),
+        ("commodities", "Commodities"),
+        ("indices",     "Indices"),
+        ("stocks",      "Stocks"),
+        ("other",       "Other"),
+    ]
+    asset_class_options = ""
+    for v, label in ASSET_CLASS_CHOICES:
+        selected = "selected" if v == (asset_class or "") else ""
+        asset_class_options += f'<option value="{v}" {selected}>{label}</option>'
 
     alert_badge = ""
     if usage_stats["alert_level"]:
@@ -4462,7 +4525,12 @@ def admin_dashboard(
                         <input type="hidden" name="tab" value="signals">
                         <select name="strategy" onchange="this.form.submit()">{strategy_options}</select>
                         <select name="status" onchange="this.form.submit()">{status_options}</select>
-                        <input type="text" name="symbol" placeholder="Asset (e.g. EUR/USD)" value="{asset or ''}" style="width:160px;">
+                        <select name="asset_class" onchange="this.form.submit()"
+                                data-testid="filter-asset-class">
+                            {asset_class_options}
+                        </select>
+                        <input type="text" name="symbol" placeholder="Asset (e.g. EUR/USD)"
+                               value="{asset or ''}" style="width:160px;">
                         <button type="submit" class="btn btn-primary">Filter</button>
                     </form>
                 </div>
@@ -4478,6 +4546,7 @@ def admin_dashboard(
                         <thead>
                             <tr>
                                 <th>Asset</th>
+                                <th>Class</th>
                                 <th>Direction</th>
                                 <th>Entry Price</th>
                                 <th>Stop Loss</th>
