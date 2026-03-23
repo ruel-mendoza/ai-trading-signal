@@ -1,0 +1,86 @@
+In trading_engine/admin.py make these two changes only. 
+Do not change anything else in the file.
+
+---
+
+1. In ADMIN_JS, find the removeAsset() function and replace only the 
+   fetch call inside it. Change from DELETE with symbol in URL path 
+   to POST with symbol in request body:
+
+   FIND this pattern inside removeAsset():
+     var res = await fetch(
+         BASE + '/admin/api/strategy-assets/' 
+         + encodeURIComponent(strategyName) 
+         + '/' 
+         + encodeURIComponent(symbol), 
+         { method: 'DELETE' }
+     );
+
+   REPLACE WITH:
+     var res = await fetch(
+         BASE + '/admin/api/strategy-assets/remove',
+         {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({
+                 strategy_name: strategyName,
+                 symbol: symbol
+             })
+         }
+     );
+
+   Do not change any other line inside removeAsset().
+
+---
+
+2. Add this new endpoint in admin.py immediately after the existing 
+   api_remove_strategy_asset DELETE endpoint. Do not remove or modify 
+   the existing DELETE endpoint:
+
+   @router.post("/api/strategy-assets/remove")
+   def api_remove_strategy_asset_by_body(
+       request: Request,
+       body: dict = Body(...),
+   ):
+       guard = _admin_role_guard(request)
+       if guard:
+           return guard
+       user = _get_session_user(request)
+       strategy_name = body.get("strategy_name", "").strip()
+       symbol = body.get("symbol", "").strip()
+       if not strategy_name or not symbol:
+           return JSONResponse(
+               content={
+                   "success": False,
+                   "error": "strategy_name and symbol are required",
+               },
+               status_code=400,
+           )
+       success = remove_strategy_asset(
+           strategy_name=strategy_name,
+           symbol=symbol,
+       )
+       if success:
+           logger.info(
+               f"[ADMIN] Removed strategy asset: "
+               f"{strategy_name}/{symbol} "
+               f"by {user.get('username') if user else 'admin'}"
+           )
+           return JSONResponse(content={"success": True})
+       return JSONResponse(
+           content={"success": False, "error": "Asset not found"},
+           status_code=404,
+       )
+
+---
+
+CONSTRAINTS:
+- Do NOT remove the existing DELETE endpoint 
+  api_remove_strategy_asset — keep it exactly as-is.
+- Do NOT change any other function in admin.py.
+- Do NOT change any other JS function in ADMIN_JS.
+- Do NOT change any imports — Body is already imported in admin.py.
+- Do NOT change any strategy files or database files.
+- The fix must work for all symbol formats including forex pairs 
+  with slash (EUR/USD), crypto pairs (MATIC/USD), and plain ETF 
+  symbols (CORN, USO) without any URL encoding issues.
