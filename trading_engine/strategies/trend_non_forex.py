@@ -26,48 +26,11 @@ logger = logging.getLogger("trading_engine.strategy.trend_non_forex")
 
 STRATEGY_NAME = "trend_non_forex"
 TARGET_SYMBOLS = [
-    # ── Commodity ETFs (existing — unchanged) ──────────
     "CORN", "SOYB", "WEAT", "CANE", "WOOD",
     "USO", "UNG", "UGA",
     "SGOL", "SIVR", "CPER", "PPLT", "PALL",
     "DBB", "SLX",
-    # ── Altcoins — Tier 1 (high confidence) ────────────
-    "BNB/USD", "XRP/USD", "SOL/USD", "DOGE/USD",
-    "ADA/USD", "LTC/USD", "AVAX/USD", "LINK/USD",
-    "MATIC/USD", "DOT/USD", "BCH/USD", "XLM/USD",
-    "ATOM/USD", "UNI/USD",
-    # ── Altcoins — Tier 2 (medium confidence) ──────────
-    "TON/USD", "SHIB/USD", "HBAR/USD", "NEAR/USD",
-    "ICP/USD", "CRO/USD",
-    # ── Altcoins — Tier 3 (low confidence) ─────────────
-    "APT/USD", "ARB/USD", "OP/USD", "SUI/USD",
-    "INJ/USD", "TRX/USD",
 ]
-
-# Crypto assets within TARGET_SYMBOLS — routed via crypto
-# price endpoint instead of stock/latest ETF endpoint
-CRYPTO_ALTCOINS = {
-    "BNB/USD", "XRP/USD", "SOL/USD", "DOGE/USD",
-    "ADA/USD", "LTC/USD", "AVAX/USD", "LINK/USD",
-    "MATIC/USD", "DOT/USD", "BCH/USD", "XLM/USD",
-    "ATOM/USD", "UNI/USD", "TON/USD", "SHIB/USD",
-    "HBAR/USD", "NEAR/USD", "ICP/USD", "CRO/USD",
-    "APT/USD", "ARB/USD", "OP/USD", "SUI/USD",
-    "INJ/USD", "TRX/USD",
-}
-
-# Tier classification for logging and graceful skip
-ALTCOIN_TIER: dict[str, int] = {
-    "BNB/USD": 1, "XRP/USD": 1, "SOL/USD": 1,
-    "DOGE/USD": 1, "ADA/USD": 1, "LTC/USD": 1,
-    "AVAX/USD": 1, "LINK/USD": 1, "MATIC/USD": 1,
-    "DOT/USD": 1, "BCH/USD": 1, "XLM/USD": 1,
-    "ATOM/USD": 1, "UNI/USD": 1,
-    "TON/USD": 2, "SHIB/USD": 2, "HBAR/USD": 2,
-    "NEAR/USD": 2, "ICP/USD": 2, "CRO/USD": 2,
-    "APT/USD": 3, "ARB/USD": 3, "OP/USD": 3,
-    "SUI/USD": 3, "INJ/USD": 3, "TRX/USD": 3,
-}
 
 SHORT_ELIGIBLE_SYMBOLS = [
     "USO",   # Oil ETF — can trend down sharply
@@ -113,14 +76,13 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
 
     def prefetch_prices(self) -> dict[str, dict]:
         api_client = self.cache.api_client
-        etf_symbols = [s for s in TARGET_SYMBOLS if s not in CRYPTO_ALTCOINS]
-        logger.info(f"[TREND-NONFX] Batch-fetching prices via stock/latest for {len(etf_symbols)} ETFs")
-        self._batch_prices = api_client.get_stock_latest_prices(etf_symbols, batch_size=9)
+        logger.info(f"[TREND-NONFX] Batch-fetching prices via stock/latest for {len(TARGET_SYMBOLS)} ETFs")
+        self._batch_prices = api_client.get_stock_latest_prices(
+            list(TARGET_SYMBOLS), batch_size=9
+        )
         logger.info(
-            f"[TREND-NONFX] Batch prefetch: "
-            f"{len(etf_symbols)} ETFs via stock/latest | "
-            f"{len(CRYPTO_ALTCOINS)} altcoins fetched "
-            f"individually via crypto endpoint"
+            f"[TREND-NONFX] Batch prefetch complete: "
+            f"{len(self._batch_prices)}/{len(TARGET_SYMBOLS)} symbols"
         )
         return self._batch_prices
 
@@ -157,58 +119,6 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                 f"timestamp={quote.get('timestamp', '')}"
             )
             return quote
-
-        # ── Crypto altcoin routing ──────────────────────────
-        if asset in CRYPTO_ALTCOINS:
-            tier = ALTCOIN_TIER.get(asset, 1)
-            logger.info(
-                f"[TREND-NONFX] {asset} | "
-                f"Crypto altcoin (Tier {tier}) — "
-                f"fetching via advance crypto endpoint"
-            )
-            try:
-                api_client = self.cache.api_client
-                results = api_client.get_advance_data(
-                    [asset], period="1d", merge="latest,profile"
-                )
-                for result in results:
-                    if result.get("symbol") == asset:
-                        current = result.get("current", {})
-                        close_price = current.get("close")
-                        if close_price is not None:
-                            logger.info(
-                                f"[TREND-NONFX] {asset} | "
-                                f"Crypto advance price: "
-                                f"close={close_price}"
-                            )
-                            return {
-                                "close": float(close_price),
-                                "high":  current.get("high"),
-                                "low":   current.get("low"),
-                                "open":  current.get("open"),
-                                "timestamp": current.get("timestamp", ""),
-                            }
-                # Tier 3 graceful skip — no data is not a crash
-                if tier == 3:
-                    logger.warning(
-                        f"[TREND-NONFX] {asset} | "
-                        f"Tier 3 altcoin — no data returned from "
-                        f"crypto endpoint. FCSAPI may not support "
-                        f"this coin on the current plan. Skipping."
-                    )
-                else:
-                    logger.warning(
-                        f"[TREND-NONFX] {asset} | "
-                        f"Tier {tier} altcoin — no matching result "
-                        f"in advance response. Skipping."
-                    )
-            except Exception as e:
-                logger.error(
-                    f"[TREND-NONFX] {asset} | "
-                    f"Crypto advance request failed: {e}",
-                    exc_info=True,
-                )
-            return None
 
         # Index symbols (SPX, NDX, RUT, DJI) must use the advance endpoint with type=index,
         # NOT stock/latest with type=fund&exchange=AMEX which returns wrong fund data.
@@ -290,16 +200,11 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
         df: pd.DataFrame,
         open_position_data: Optional[dict],
     ) -> SignalResult:
-        if asset in CRYPTO_ALTCOINS:
-            tier = ALTCOIN_TIER.get(asset, 1)
-            mode_label = f"CRYPTO_LONG_ONLY (Tier {tier})"
-        elif asset in SHORT_ELIGIBLE_SYMBOLS:
-            mode_label = "LONG+SHORT"
-        else:
-            mode_label = "LONG_ONLY"
-        logger.info(
-            f"[TREND-NONFX] ====== Evaluating {asset} ({mode_label}) ======"
+        mode_label = (
+            "LONG+SHORT" if asset in SHORT_ELIGIBLE_SYMBOLS
+            else "LONG_ONLY"
         )
+        logger.info(f"[TREND-NONFX] ====== Evaluating {asset} ({mode_label}) ======")
 
         if asset not in TARGET_SYMBOLS:
             logger.info(f"[TREND-NONFX] {asset} | Not a target ETF asset - skipping")

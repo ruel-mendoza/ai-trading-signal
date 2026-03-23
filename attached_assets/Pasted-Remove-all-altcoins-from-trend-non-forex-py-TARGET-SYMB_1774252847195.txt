@@ -1,0 +1,242 @@
+Remove all altcoins from trend_non_forex.py TARGET_SYMBOLS
+and CRYPTO_ALTCOINS. Altcoins are covered exclusively by
+multi_timeframe.py. trend_non_forex.py returns to covering
+commodity ETFs only.
+
+Also update admin.py to remove altcoin-related additions
+from the Trend Non-Forex tab that were added in the
+previous prompt.
+
+Files to change: trend_non_forex.py, admin.py
+Do not change: multi_timeframe.py, fcsapi_client.py,
+database.py, api_v1.py, or any other file.
+
+─────────────────────────────────────────────
+CHANGE 1 — trend_non_forex.py: restore TARGET_SYMBOLS
+           to ETFs only
+─────────────────────────────────────────────
+
+FIND the expanded TARGET_SYMBOLS and REPLACE WITH the
+original ETF-only list:
+
+  TARGET_SYMBOLS = [
+      "CORN", "SOYB", "WEAT", "CANE", "WOOD",
+      "USO", "UNG", "UGA",
+      "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+      "DBB", "SLX",
+  ]
+
+─────────────────────────────────────────────
+CHANGE 2 — trend_non_forex.py: remove CRYPTO_ALTCOINS
+           and ALTCOIN_TIER
+─────────────────────────────────────────────
+
+Remove these two module-level additions entirely:
+
+  REMOVE:
+    CRYPTO_ALTCOINS = {
+        "BNB/USD", "XRP/USD", ... (all altcoin entries)
+    }
+
+  REMOVE:
+    ALTCOIN_TIER: dict[str, int] = {
+        "BNB/USD": 1, ... (all tier entries)
+    }
+
+─────────────────────────────────────────────
+CHANGE 3 — trend_non_forex.py: restore prefetch_prices()
+─────────────────────────────────────────────
+
+FIND the updated prefetch_prices() that excludes altcoins:
+
+  FIND:
+    etf_symbols = [s for s in TARGET_SYMBOLS
+                   if s not in CRYPTO_ALTCOINS]
+    self._batch_prices = api_client.get_stock_latest_prices(
+        etf_symbols, batch_size=9
+    )
+    logger.info(
+        f"[TREND-NONFX] Batch prefetch: "
+        f"{len(etf_symbols)} ETFs via stock/latest | "
+        f"{len(CRYPTO_ALTCOINS)} altcoins fetched "
+        f"individually via crypto endpoint"
+    )
+
+  REPLACE WITH the original simple version:
+    self._batch_prices = api_client.get_stock_latest_prices(
+        list(TARGET_SYMBOLS), batch_size=9
+    )
+    logger.info(
+        f"[TREND-NONFX] Batch prefetch complete: "
+        f"{len(self._batch_prices)}/{len(TARGET_SYMBOLS)} symbols"
+    )
+
+─────────────────────────────────────────────
+CHANGE 4 — trend_non_forex.py: restore _get_advance_price()
+─────────────────────────────────────────────
+
+In _get_advance_price(), remove the crypto altcoin
+routing branch that was added. It sits between the
+batch cache check and the stock index check.
+
+  FIND and REMOVE this entire block:
+    # ── Crypto altcoin routing ──────────────────────────
+    if asset in CRYPTO_ALTCOINS:
+        tier = ALTCOIN_TIER.get(asset, 1)
+        logger.info(...)
+        try:
+            api_client = self.cache.api_client
+            results = api_client.get_advance_data(...)
+            for result in results:
+                ...
+            if tier == 3:
+                logger.warning(...)
+            else:
+                logger.warning(...)
+        except Exception as e:
+            logger.error(...)
+        return None
+
+  After removal, _get_advance_price() should flow
+  directly from the batch cache check to the stock
+  index check — exactly as it was before the altcoin
+  prompt.
+
+─────────────────────────────────────────────
+CHANGE 5 — trend_non_forex.py: restore evaluate()
+           mode_label logic
+─────────────────────────────────────────────
+
+FIND the updated mode_label block:
+
+  FIND:
+    if asset in CRYPTO_ALTCOINS:
+        tier = ALTCOIN_TIER.get(asset, 1)
+        mode_label = f"CRYPTO_LONG_ONLY (Tier {tier})"
+    elif asset in SHORT_ELIGIBLE_SYMBOLS:
+        mode_label = "LONG+SHORT"
+    else:
+        mode_label = "LONG_ONLY"
+
+  REPLACE WITH the original:
+    mode_label = (
+        "LONG+SHORT" if asset in SHORT_ELIGIBLE_SYMBOLS
+        else "LONG_ONLY"
+    )
+
+─────────────────────────────────────────────
+CHANGE 6 — admin.py: remove altcoin imports from
+           Trend Non-Forex functions
+─────────────────────────────────────────────
+
+In admin.py, find the imports added for altcoin support:
+
+  FIND and REMOVE (if present at module level):
+    from trading_engine.strategies.trend_non_forex import (
+        CRYPTO_ALTCOINS as _TNF_CRYPTO_ALTCOINS,
+    )
+
+  Or if added as a defensive try/except:
+    try:
+        from trading_engine.strategies.trend_non_forex import (
+            CRYPTO_ALTCOINS as _TNF_CRYPTO_ALTCOINS,
+        )
+    except ImportError:
+        _TNF_CRYPTO_ALTCOINS = set()
+
+  REPLACE the defensive import with:
+    _TNF_CRYPTO_ALTCOINS: set = set()
+
+  This keeps any references to _TNF_CRYPTO_ALTCOINS
+  in the HTML build functions working without error
+  while returning an empty set (no crypto in the
+  strategy anymore).
+
+─────────────────────────────────────────────
+CHANGE 7 — admin.py: restore strategy rules count
+           in _build_trend_following_html()
+─────────────────────────────────────────────
+
+Find the dynamic count that was added:
+
+  FIND:
+    f"{len([s for s in _TNF_TARGET_SYMBOLS if s not in _TNF_CRYPTO_ALTCOINS])} ETFs + {len(_TNF_CRYPTO_ALTCOINS)} altcoins"
+
+  REPLACE WITH:
+    f"{len(list(_TNF_TARGET_SYMBOLS))} ETFs"
+
+─────────────────────────────────────────────
+CHANGE 8 — admin.py: remove crypto badge from
+           Trend Non-Forex asset cards
+─────────────────────────────────────────────
+
+In _build_trend_following_html(), inside _build_symbol_cards(),
+find the crypto badge that was added:
+
+  FIND and REMOVE:
+    crypto_badge = (
+        ' <span style="display:inline-block;padding:1px 6px;'
+        'border-radius:4px;font-size:0.65rem;font-weight:600;'
+        'background:rgba(168,85,247,0.15);color:#c4b5fd;'
+        'text-transform:uppercase;letter-spacing:0.03em;'
+        'vertical-align:middle;">crypto</span>'
+        if sym.get("is_crypto") else ""
+    )
+
+  And remove the crypto_badge reference from the card header:
+
+  FIND:
+    <div class="stat-label">{sym["symbol"]}{crypto_badge}{badges}</div>
+
+  REPLACE WITH:
+    <div class="stat-label">{sym["symbol"]}{badges}</div>
+
+─────────────────────────────────────────────
+CHANGE 9 — admin.py: remove is_crypto from sym_info
+─────────────────────────────────────────────
+
+In _get_trend_following_data(), inside _compute_symbol_data(),
+find and remove the is_crypto field:
+
+  FIND:
+    "is_crypto": symbol in _TNF_CRYPTO_ALTCOINS,
+
+  REMOVE that line from the sym_info dict.
+
+─────────────────────────────────────────────
+FINAL STATE AFTER ALL CHANGES
+─────────────────────────────────────────────
+trend_non_forex.py:
+  TARGET_SYMBOLS = 15 ETFs only (original list)
+  No CRYPTO_ALTCOINS, no ALTCOIN_TIER
+  prefetch_prices() batches all TARGET_SYMBOLS via stock/latest
+  _get_advance_price() has no crypto branch
+  evaluate() mode_label is simple LONG_ONLY / LONG+SHORT
+
+multi_timeframe.py:
+  crypto group = BTC/USD, ETH/USD + 10 Tier 1 altcoins
+  Unchanged from previous prompt
+
+admin.py:
+  Trend Non-Forex tab shows 15 ETF cards only
+  No crypto badges on ETF cards
+  _TNF_CRYPTO_ALTCOINS = empty set (safe fallback)
+
+─────────────────────────────────────────────
+VERIFICATION CHECKLIST (confirm internally before saving)
+─────────────────────────────────────────────
+[ ] TARGET_SYMBOLS in trend_non_forex.py has exactly 15 entries
+[ ] CRYPTO_ALTCOINS removed from trend_non_forex.py
+[ ] ALTCOIN_TIER removed from trend_non_forex.py
+[ ] prefetch_prices() batches full TARGET_SYMBOLS list
+[ ] _get_advance_price() has no CRYPTO_ALTCOINS branch
+[ ] evaluate() mode_label is original two-branch logic
+[ ] _TNF_CRYPTO_ALTCOINS in admin.py is empty set fallback
+[ ] Trend Non-Forex admin cards show 15 ETF cards only
+[ ] No crypto badge rendered on any card
+[ ] is_crypto field removed from sym_info
+[ ] Strategy rules count shows "15 ETFs" not altcoin count
+[ ] multi_timeframe.py is completely unchanged
+[ ] fcsapi_client.py is completely unchanged
+[ ] trend_non_forex.py is syntactically valid Python
+[ ] admin.py is syntactically valid Python
