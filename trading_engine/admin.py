@@ -5610,7 +5610,7 @@ def admin_dashboard(
 
                 <div class="settings-section" style="margin-bottom:24px;">
                     <h3>Add New Asset</h3>
-                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:12px;align-items:end;margin-top:12px;flex-wrap:wrap;">
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;align-items:end;margin-top:12px;">
                         <div>
                             <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Symbol</label>
                             <input type="text" id="new-asset-symbol" placeholder="e.g. SOL/USD or AAPL" data-testid="input-new-asset-symbol"
@@ -5636,7 +5636,7 @@ def admin_dashboard(
                                 <option value="stocks">Stocks</option>
                             </select>
                         </div>
-                        <div id="sub-category-wrapper" style="display:none;">
+                        <div id="sub-category-wrapper">
                             <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Sub-Category <span style="color:#64748b;font-size:11px;">(MTF EMA only)</span></label>
                             <select id="new-asset-sub-category" data-testid="select-new-asset-sub-category"
                                     style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;color:#f1f5f9;font-size:14px;border-radius:6px;cursor:pointer;">
