@@ -40,30 +40,37 @@ for group in TARGET_ASSETS.values():
 
 
 def _load_target_assets() -> dict[str, list[str]]:
-    """Load strategy assets from DB grouped by sub_category (falling back to
-    asset_class when sub_category is NULL/empty).
+    """Load strategy assets from DB grouped by sub_category.
     Falls back to hardcoded TARGET_ASSETS if DB is empty.
     """
     try:
         from trading_engine.database import get_strategy_assets_full
         rows = get_strategy_assets_full(STRATEGY_NAME)
-        if not rows:
-            logger.warning(
-                "[MTF-EMA] No assets in DB — using hardcoded fallback"
+        if rows:
+            grouped: dict[str, list[str]] = {}
+            for row in rows:
+                group_key = (
+                    row.get("sub_category") or row["asset_class"]
+                )
+                grouped.setdefault(group_key, []).append(
+                    row["symbol"]
+                )
+            logger.info(
+                f"[MTF-EMA] Loaded "
+                f"{sum(len(v) for v in grouped.values())} "
+                f"assets from DB across groups: "
+                f"{list(grouped.keys())}"
             )
-            return TARGET_ASSETS
-        grouped: dict[str, list[str]] = {}
-        for row in rows:
-            group_key = row.get("sub_category") or row["asset_class"]
-            grouped.setdefault(group_key, []).append(row["symbol"])
-        logger.info(
-            f"[MTF-EMA] Loaded {sum(len(v) for v in grouped.values())} assets "
-            f"across groups: {list(grouped.keys())}"
+            return grouped
+        logger.warning(
+            "[MTF-EMA] DB returned no assets — "
+            "using hardcoded TARGET_ASSETS fallback"
         )
-        return grouped
+        return TARGET_ASSETS
     except Exception as e:
         logger.error(
-            f"[MTF-EMA] Failed to load assets from DB: {e} — using fallback"
+            f"[MTF-EMA] Failed to load from DB: {e} "
+            f"— using hardcoded fallback"
         )
         return TARGET_ASSETS
 
@@ -72,11 +79,18 @@ def get_all_mtf_assets() -> list[str]:
     """Return flat list of all active MTF EMA assets from DB."""
     try:
         from trading_engine.database import get_strategy_assets
-        symbols = get_strategy_assets(STRATEGY_NAME)
+        symbols = get_strategy_assets(
+            STRATEGY_NAME, active_only=True
+        )
         if symbols:
             return symbols
-    except Exception:
-        pass
+        logger.warning(
+            "[MTF-EMA] DB empty — using hardcoded fallback"
+        )
+    except Exception as e:
+        logger.error(
+            f"[MTF-EMA] DB load failed: {e} — fallback"
+        )
     result = []
     for group in TARGET_ASSETS.values():
         result.extend(group)

@@ -1,0 +1,479 @@
+I have a FastAPI + SQLAlchemy (SQLite) trading signals app. I need to 
+permanently fix duplicate assets in the strategy_assets table by updating 
+BOTH the hardcoded seeds AND the DB rows, and ensure the app always 
+prioritizes DB data over hardcoded fallbacks when the DB is not empty.
+
+Read these files first before making any changes:
+- trading_engine/database.py
+- trading_engine/strategies/multi_timeframe.py
+- trading_engine/strategies/trend_non_forex.py
+- trading_engine/strategies/trend_forex.py
+- trading_engine/strategy_runner.py
+- trading_engine/main.py
+
+---
+
+PART 1 — FIX HARDCODED SEEDS IN database.py
+
+Update _STRATEGY_ASSET_SEEDS so it exactly matches the intended 
+final state. Replace the entire _STRATEGY_ASSET_SEEDS dict with 
+this exact definition — do not add or remove any entry not listed:
+
+_STRATEGY_ASSET_SEEDS = {
+    "mtf_ema": [
+        # Indices
+        ("SPX",     "forex",  "indices"),
+        ("NDX",     "forex",  "indices"),
+        ("RUT",     "forex",  "indices"),
+        # Commodities
+        ("XAU/USD", "forex",  "commodities"),
+        ("XAG/USD", "forex",  "commodities"),
+        ("OSX",     "forex",  "commodities"),
+        # Crypto — BTC and ETH only
+        ("BTC/USD", "crypto", "crypto"),
+        ("ETH/USD", "crypto", "crypto"),
+        # Forex — GBP and AUD only
+        ("GBP/USD", "forex",  "forex"),
+        ("AUD/USD", "forex",  "forex"),
+    ],
+    "trend_non_forex": [
+        # ETFs — keep exactly as-is
+        ("CORN",  "forex"), ("SOYB",  "forex"),
+        ("WEAT",  "forex"), ("CANE",  "forex"),
+        ("WOOD",  "forex"), ("USO",   "forex"),
+        ("UNG",   "forex"), ("UGA",   "forex"),
+        ("SGOL",  "forex"), ("SIVR",  "forex"),
+        ("CPER",  "forex"), ("PPLT",  "forex"),
+        ("PALL",  "forex"), ("DBB",   "forex"),
+        ("SLX",   "forex"),
+        # 26 crypto altcoins
+        ("BNB/USD",   "crypto"), ("XRP/USD",   "crypto"),
+        ("SOL/USD",   "crypto"), ("TRX/USD",   "crypto"),
+        ("DOGE/USD",  "crypto"), ("ADA/USD",   "crypto"),
+        ("TON/USD",   "crypto"), ("SHIB/USD",  "crypto"),
+        ("AVAX/USD",  "crypto"), ("LINK/USD",  "crypto"),
+        ("MATIC/USD", "crypto"), ("LTC/USD",   "crypto"),
+        ("DOT/USD",   "crypto"), ("BCH/USD",   "crypto"),
+        ("UNI/USD",   "crypto"), ("ATOM/USD",  "crypto"),
+        ("XLM/USD",   "crypto"), ("HBAR/USD",  "crypto"),
+        ("ICP/USD",   "crypto"), ("APT/USD",   "crypto"),
+        ("NEAR/USD",  "crypto"), ("ARB/USD",   "crypto"),
+        ("OP/USD",    "crypto"), ("SUI/USD",   "crypto"),
+        ("INJ/USD",   "crypto"), ("CRO/USD",   "crypto"),
+    ],
+    "trend_forex": [
+        ("EUR/USD", "forex"),
+        ("USD/JPY", "forex"),
+    ],
+    "sp500_momentum": [
+        ("SPX", "forex"),
+    ],
+    "highest_lowest_fx": [
+        ("EUR/USD", "forex"),
+    ],
+}
+
+---
+
+PART 2 — FIX seed_strategy_assets() IN database.py
+
+Replace the entire seed_strategy_assets() function with this 
+corrected implementation. This version:
+  - Only inserts rows that do not exist yet
+  - Never reactivates rows marked as admin_removed
+  - Only reactivates rows that were system_seed and went inactive
+  - Runs a cleanup pass to deactivate any DB rows that are no 
+    longer in the seeds AND were added by system_seed
+  - Deactivates all known duplicate symbols from mtf_ema
+
+def seed_strategy_assets():
+    """Seed all hardcoded assets into strategy_assets table.
+    
+    Rules:
+    - INSERT new rows that do not exist at all
+    - REACTIVATE rows only if is_active=0 AND added_by=system_seed
+    - NEVER reactivate rows where added_by=admin_removed
+    - DEACTIVATE rows in DB that are no longer in seeds AND 
+      added_by=system_seed (stale seeds cleanup)
+    - DEACTIVATE known duplicate symbols from mtf_ema
+    
+    Idempotent — safe to run multiple times.
+    """
+    with _get_session() as session:
+        try:
+            seeded = 0
+            reactivated = 0
+
+            for strategy_name, assets in _STRATEGY_ASSET_SEEDS.items():
+                for entry in assets:
+                    symbol      = entry[0]
+                    asset_class = entry[1]
+                    sub_cat     = entry[2] if len(entry) > 2 else None
+
+                    existing = (
+                        session.query(StrategyAsset)
+                        .filter_by(
+                            strategy_name=strategy_name,
+                            symbol=symbol,
+                        )
+                        .first()
+                    )
+
+                    if not existing:
+                        # Row does not exist — insert it
+                        session.add(StrategyAsset(
+                            strategy_name=strategy_name,
+                            symbol=symbol,
+                            asset_class=asset_class,
+                            sub_category=sub_cat,
+                            is_active=1,
+                            fcsapi_verified=1,
+                            added_by="system_seed",
+                        ))
+                        seeded += 1
+                    elif (
+                        not existing.is_active
+                        and existing.added_by == "system_seed"
+                    ):
+                        # Row exists, is inactive, and was system 
+                        # seeded — safe to reactivate
+                        existing.is_active = 1
+                        existing.sub_category = sub_cat
+                        reactivated += 1
+                        logger.info(
+                            f"[DB] seed_strategy_assets: reactivated "
+                            f"{strategy_name}/{symbol} (system_seed)"
+                        )
+                    # If added_by=admin_removed — do nothing, 
+                    # respect the admin decision
+
+            session.commit()
+            if seeded:
+                logger.info(
+                    f"[DB] seed_strategy_assets: inserted "
+                    f"{seeded} new asset(s)"
+                )
+            if reactivated:
+                logger.info(
+                    f"[DB] seed_strategy_assets: reactivated "
+                    f"{reactivated} asset(s)"
+                )
+            if not seeded and not reactivated:
+                logger.info(
+                    "[DB] seed_strategy_assets: "
+                    "all seeds already present and active"
+                )
+
+            # ── Stale seed cleanup ──
+            # Deactivate any system_seed rows in DB that are no 
+            # longer in _STRATEGY_ASSET_SEEDS for that strategy
+            for strategy_name, assets in _STRATEGY_ASSET_SEEDS.items():
+                seed_symbols = {entry[0] for entry in assets}
+                stale_rows = (
+                    session.query(StrategyAsset)
+                    .filter(
+                        StrategyAsset.strategy_name == strategy_name,
+                        StrategyAsset.symbol.notin_(seed_symbols),
+                        StrategyAsset.is_active == 1,
+                        StrategyAsset.added_by == "system_seed",
+                    )
+                    .all()
+                )
+                for row in stale_rows:
+                    row.is_active = 0
+                    row.added_by = "admin_removed"
+                    logger.info(
+                        f"[DB] seed_strategy_assets: deactivated "
+                        f"stale seed {strategy_name}/{row.symbol} "
+                        f"(no longer in _STRATEGY_ASSET_SEEDS)"
+                    )
+                if stale_rows:
+                    session.commit()
+                    logger.info(
+                        f"[DB] seed_strategy_assets: deactivated "
+                        f"{len(stale_rows)} stale seed(s) "
+                        f"from {strategy_name}"
+                    )
+
+            # ── MTF EMA duplicate cleanup ──
+            # Explicitly deactivate all known duplicate symbols 
+            # from mtf_ema that belong to other strategies
+            MTF_REMOVE = [
+                "ADA/USD",  "APT/USD",  "ARB/USD",  "ATOM/USD",
+                "AVAX/USD", "BCH/USD",  "BNB/USD",  "CRO/USD",
+                "DOGE/USD", "DOT/USD",  "HBAR/USD", "ICP/USD",
+                "INJ/USD",  "LINK/USD", "LTC/USD",  "MATIC/USD",
+                "NEAR/USD", "OP/USD",   "SHIB/USD", "SOL/USD",
+                "SUI/USD",  "TON/USD",  "TRX/USD",  "UNI/USD",
+                "XLM/USD",  "XRP/USD",  "EUR/USD",  "USD/JPY",
+            ]
+            mtf_dupes = (
+                session.query(StrategyAsset)
+                .filter(
+                    StrategyAsset.strategy_name == "mtf_ema",
+                    StrategyAsset.symbol.in_(MTF_REMOVE),
+                    StrategyAsset.is_active == 1,
+                )
+                .all()
+            )
+            for row in mtf_dupes:
+                row.is_active = 0
+                row.added_by = "admin_removed"
+                logger.info(
+                    f"[DB] seed_strategy_assets: deactivated "
+                    f"mtf_ema/{row.symbol} (duplicate — "
+                    f"belongs to another strategy)"
+                )
+            if mtf_dupes:
+                session.commit()
+                logger.info(
+                    f"[DB] seed_strategy_assets: deactivated "
+                    f"{len(mtf_dupes)} duplicate(s) from mtf_ema"
+                )
+
+        except Exception as e:
+            session.rollback()
+            logger.error(
+                f"[DB] seed_strategy_assets failed: {e}"
+            )
+
+---
+
+PART 3 — FIX remove_strategy_asset() IN database.py
+
+Update remove_strategy_asset() to always mark removed rows as 
+admin_removed so they are never re-seeded on restart:
+
+def remove_strategy_asset(
+    strategy_name: str,
+    symbol: str,
+) -> bool:
+    with _get_session() as session:
+        try:
+            row = (
+                session.query(StrategyAsset)
+                .filter_by(
+                    strategy_name=strategy_name,
+                    symbol=symbol,
+                )
+                .first()
+            )
+            if not row:
+                logger.warning(
+                    f"[DB] remove_strategy_asset: "
+                    f"not found: {strategy_name}/{symbol}"
+                )
+                return False
+            row.is_active = 0
+            row.added_by = "admin_removed"
+            session.commit()
+            logger.info(
+                f"[DB] Deactivated strategy asset: "
+                f"{strategy_name}/{symbol} (admin_removed)"
+            )
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(
+                f"[DB] remove_strategy_asset failed: {e}"
+            )
+            return False
+
+---
+
+PART 4 — FIX DB-FIRST LOGIC IN STRATEGY FILES
+
+Update each strategy's asset loading function to always prefer DB 
+data over hardcoded fallback. Only use hardcoded fallback when DB 
+returns empty. This means: if DB has rows (even just one) use DB, 
+never mix DB and hardcoded.
+
+a) trading_engine/strategies/multi_timeframe.py
+
+Update _load_target_assets() and get_all_mtf_assets():
+
+  def _load_target_assets() -> dict[str, list[str]]:
+      try:
+          from trading_engine.database import get_strategy_assets_full
+          rows = get_strategy_assets_full(STRATEGY_NAME)
+          if rows:
+              # DB has data — use it exclusively
+              grouped: dict[str, list[str]] = {}
+              for row in rows:
+                  group_key = (
+                      row.get("sub_category") or row["asset_class"]
+                  )
+                  grouped.setdefault(group_key, []).append(
+                      row["symbol"]
+                  )
+              logger.info(
+                  f"[MTF-EMA] Loaded {sum(len(v) for v in grouped.values())} "
+                  f"assets from DB across groups: {list(grouped.keys())}"
+              )
+              return grouped
+          # DB is empty — use hardcoded fallback
+          logger.warning(
+              "[MTF-EMA] DB returned no assets — "
+              "using hardcoded TARGET_ASSETS fallback"
+          )
+          return TARGET_ASSETS
+      except Exception as e:
+          logger.error(
+              f"[MTF-EMA] Failed to load from DB: {e} "
+              f"— using hardcoded fallback"
+          )
+          return TARGET_ASSETS
+
+  def get_all_mtf_assets() -> list[str]:
+      try:
+          from trading_engine.database import get_strategy_assets
+          symbols = get_strategy_assets(
+              STRATEGY_NAME, active_only=True
+          )
+          if symbols:
+              # DB has data — use it exclusively
+              return symbols
+          # DB is empty — use hardcoded fallback
+          logger.warning(
+              "[MTF-EMA] DB empty — using hardcoded fallback"
+          )
+      except Exception as e:
+          logger.error(
+              f"[MTF-EMA] DB load failed: {e} — fallback"
+          )
+      result = []
+      for group in TARGET_ASSETS.values():
+          result.extend(group)
+      return result
+
+b) trading_engine/strategies/trend_non_forex.py
+
+Update get_active_symbols():
+
+  def get_active_symbols() -> list[str]:
+      try:
+          from trading_engine.database import get_strategy_assets
+          symbols = get_strategy_assets(
+              STRATEGY_NAME, active_only=True
+          )
+          if symbols:
+              # DB has data — use it exclusively
+              return symbols
+          # DB is empty — use hardcoded fallback
+          logger.warning(
+              "[TREND-NONFX] DB empty — using hardcoded fallback"
+          )
+      except Exception as e:
+          logger.error(
+              f"[TREND-NONFX] DB load failed: {e} — fallback"
+          )
+      return list(TARGET_SYMBOLS)
+
+c) trading_engine/strategies/trend_forex.py
+
+Update get_active_symbols():
+
+  def get_active_symbols() -> list[str]:
+      try:
+          from trading_engine.database import get_strategy_assets
+          symbols = get_strategy_assets(
+              STRATEGY_NAME, active_only=True
+          )
+          if symbols:
+              # DB has data — use it exclusively
+              return symbols
+          # DB is empty — use hardcoded fallback
+          logger.warning(
+              "[TREND-FOREX] DB empty — using hardcoded fallback"
+          )
+      except Exception as e:
+          logger.error(
+              f"[TREND-FOREX] DB load failed: {e} — fallback"
+          )
+      return list(TARGET_SYMBOLS)
+
+---
+
+PART 5 — FIX get_strategy_assets() IN database.py
+
+Verify get_strategy_assets() filters by is_active=1 when 
+active_only=True. If it does not, fix it:
+
+def get_strategy_assets(
+    strategy_name: str,
+    active_only: bool = True,
+) -> list[str]:
+    with _get_session() as session:
+        q = session.query(StrategyAsset).filter_by(
+            strategy_name=strategy_name
+        )
+        if active_only:
+            q = q.filter_by(is_active=1)
+        rows = q.order_by(StrategyAsset.symbol).all()
+        return [r.symbol for r in rows]
+
+---
+
+PART 6 — FIX TARGET_ASSETS IN multi_timeframe.py
+
+Update TARGET_ASSETS hardcoded fallback to match the cleaned seeds.
+Only used when DB is empty:
+
+TARGET_ASSETS = {
+    "indices":     ["SPX", "NDX", "RUT"],
+    "commodities": ["XAU/USD", "XAG/USD", "OSX"],
+    "crypto":      ["BTC/USD", "ETH/USD"],
+    "forex":       ["GBP/USD", "AUD/USD"],
+}
+
+ALL_ASSETS = []
+for group in TARGET_ASSETS.values():
+    ALL_ASSETS.extend(group)
+
+---
+
+PART 7 — FIX STRATEGY_ASSET_CONFIG IN strategy_runner.py
+
+Update the mtf_ema assets list to match cleaned seeds.
+Do NOT change any other strategy config:
+
+"mtf_ema": {
+    "assets": [
+        "SPX", "NDX", "RUT",
+        "XAU/USD", "XAG/USD", "OSX",
+        "BTC/USD", "ETH/USD",
+        "GBP/USD", "AUD/USD",
+    ],
+    "timeframe": "1H",
+},
+
+---
+
+CONSTRAINTS:
+- BTC/USD and ETH/USD must remain in mtf_ema.
+- GBP/USD and AUD/USD must remain in mtf_ema.
+- SPX, NDX, RUT, XAU/USD, XAG/USD, OSX must remain in mtf_ema.
+- All 26 crypto coins must remain in trend_non_forex.
+- All 15 ETF symbols must remain in trend_non_forex.
+- EUR/USD and USD/JPY must remain in trend_forex only.
+- SPX must remain in sp500_momentum.
+- EUR/USD must remain in highest_lowest_fx.
+- Do NOT change any strategy entry/exit logic, indicator 
+  calculations, trailing stop rules, or timing windows.
+- Do NOT change any imports in any file.
+- Do NOT change models.py.
+- Do NOT change admin.py.
+- All changes must be idempotent — safe to run on existing DB 
+  multiple times.
+- The stale seed cleanup must ONLY deactivate rows where 
+  added_by=system_seed — never touch rows where 
+  added_by=admin or any other value.
+- After changes the Asset Management tab must show NO duplicates:
+    mtf_ema: exactly 10 assets
+    trend_non_forex: exactly 41 assets (15 ETFs + 26 crypto)
+    trend_forex: exactly 2 assets (EUR/USD, USD/JPY)
+    sp500_momentum: exactly 1 asset (SPX)
+    highest_lowest_fx: exactly 1 asset (EUR/USD)
+- If DB is empty on first run use hardcoded seeds to populate it.
+- If DB is not empty always use DB data exclusively — never mix 
+  DB and hardcoded lists.

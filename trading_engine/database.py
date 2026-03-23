@@ -2223,7 +2223,7 @@ _STRATEGY_ASSET_SEEDS = {
         ("DOGE/USD",  "crypto"), ("ADA/USD",   "crypto"),
         ("TON/USD",   "crypto"), ("SHIB/USD",  "crypto"),
         ("AVAX/USD",  "crypto"), ("LINK/USD",  "crypto"),
-        ("LTC/USD",   "crypto"),
+        ("MATIC/USD", "crypto"), ("LTC/USD",   "crypto"),
         ("DOT/USD",   "crypto"), ("BCH/USD",   "crypto"),
         ("UNI/USD",   "crypto"), ("ATOM/USD",  "crypto"),
         ("XLM/USD",   "crypto"), ("HBAR/USD",  "crypto"),
@@ -2246,25 +2246,28 @@ _STRATEGY_ASSET_SEEDS = {
 
 def seed_strategy_assets():
     """Seed all hardcoded assets into strategy_assets table.
-    Idempotent — skips assets that already exist.
-    Called from init_db() on every startup.
-    """
-    # Build a fast lookup: (strategy, symbol) → sub_category
-    _sub_cat_lookup: dict[tuple[str, str], Optional[str]] = {}
-    for _strat, _entries in _STRATEGY_ASSET_SEEDS.items():
-        for _entry in _entries:
-            _sym = _entry[0]
-            _sub = _entry[2] if len(_entry) > 2 else None
-            _sub_cat_lookup[(_strat, _sym)] = _sub
 
+    Rules:
+    - INSERT new rows that do not exist at all
+    - REACTIVATE rows only if is_active=0 AND added_by=system_seed
+    - NEVER reactivate rows where added_by=admin_removed
+    - DEACTIVATE rows in DB that are no longer in seeds AND
+      added_by=system_seed (stale seeds cleanup)
+    - DEACTIVATE known duplicate symbols from mtf_ema
+
+    Idempotent — safe to run multiple times.
+    """
     with _get_session() as session:
         try:
             seeded = 0
+            reactivated = 0
+
             for strategy_name, assets in _STRATEGY_ASSET_SEEDS.items():
                 for entry in assets:
-                    symbol     = entry[0]
+                    symbol      = entry[0]
                     asset_class = entry[1]
-                    sub_cat    = entry[2] if len(entry) > 2 else None
+                    sub_cat     = entry[2] if len(entry) > 2 else None
+
                     existing = (
                         session.query(StrategyAsset)
                         .filter_by(
@@ -2273,6 +2276,7 @@ def seed_strategy_assets():
                         )
                         .first()
                     )
+
                     if not existing:
                         session.add(StrategyAsset(
                             strategy_name=strategy_name,
@@ -2284,89 +2288,107 @@ def seed_strategy_assets():
                             added_by="system_seed",
                         ))
                         seeded += 1
-                    elif not existing.is_active and existing.added_by == "system_seed":
+                    elif (
+                        not existing.is_active
+                        and existing.added_by == "system_seed"
+                    ):
                         existing.is_active = 1
                         existing.sub_category = sub_cat
-                        session.commit()
+                        reactivated += 1
                         logger.info(
                             f"[DB] seed_strategy_assets: reactivated "
-                            f"{strategy_name}/{symbol} (system seed)"
+                            f"{strategy_name}/{symbol} (system_seed)"
                         )
+                    # added_by=admin_removed — respect admin decision, skip
+
             session.commit()
             if seeded:
                 logger.info(
-                    f"[DB] Seeded {seeded} strategy asset(s) "
-                    f"from hardcoded defaults"
+                    f"[DB] seed_strategy_assets: inserted "
+                    f"{seeded} new asset(s)"
                 )
-            else:
+            if reactivated:
                 logger.info(
-                    "[DB] strategy_assets: all seeds already present"
+                    f"[DB] seed_strategy_assets: reactivated "
+                    f"{reactivated} asset(s)"
+                )
+            if not seeded and not reactivated:
+                logger.info(
+                    "[DB] seed_strategy_assets: "
+                    "all seeds already present and active"
                 )
 
-            # One-time backfill: populate sub_category for any existing
-            # mtf_ema rows where the column is still NULL.
-            backfilled = 0
-            mtf_rows = (
-                session.query(StrategyAsset)
-                .filter_by(strategy_name="mtf_ema")
-                .filter(StrategyAsset.sub_category == None)  # noqa: E711
-                .all()
-            )
-            for row in mtf_rows:
-                correct = _sub_cat_lookup.get(("mtf_ema", row.symbol))
-                if correct:
-                    row.sub_category = correct
-                    backfilled += 1
-            if backfilled:
-                session.commit()
-                logger.info(
-                    f"[DB] Backfilled sub_category for "
-                    f"{backfilled} mtf_ema asset(s)"
+            # ── Stale seed cleanup ──
+            # Deactivate system_seed rows no longer in _STRATEGY_ASSET_SEEDS
+            for strategy_name, assets in _STRATEGY_ASSET_SEEDS.items():
+                seed_symbols = {entry[0] for entry in assets}
+                stale_rows = (
+                    session.query(StrategyAsset)
+                    .filter(
+                        StrategyAsset.strategy_name == strategy_name,
+                        StrategyAsset.symbol.notin_(seed_symbols),
+                        StrategyAsset.is_active == 1,
+                        StrategyAsset.added_by == "system_seed",
+                    )
+                    .all()
                 )
+                for row in stale_rows:
+                    row.is_active = 0
+                    row.added_by = "admin_removed"
+                    logger.info(
+                        f"[DB] seed_strategy_assets: deactivated "
+                        f"stale seed {strategy_name}/{row.symbol} "
+                        f"(no longer in _STRATEGY_ASSET_SEEDS)"
+                    )
+                if stale_rows:
+                    session.commit()
+                    logger.info(
+                        f"[DB] seed_strategy_assets: deactivated "
+                        f"{len(stale_rows)} stale seed(s) "
+                        f"from {strategy_name}"
+                    )
 
-            # One-time consolidated cleanup: permanently deactivate all 28
-            # symbols that no longer belong in mtf_ema (26 crypto altcoins
-            # moved to trend_non_forex + EUR/USD and USD/JPY moved to
-            # trend_forex). Sets added_by="admin_removed" so the seed loop
-            # never re-activates them on future restarts.
-            MTF_CLEANUP_SYMBOLS = [
-                # 26 crypto altcoins
+            # ── MTF EMA duplicate cleanup ──
+            # Deactivate known duplicates from mtf_ema that belong
+            # to other strategies
+            MTF_REMOVE = [
                 "ADA/USD",  "APT/USD",  "ARB/USD",  "ATOM/USD",
                 "AVAX/USD", "BCH/USD",  "BNB/USD",  "CRO/USD",
                 "DOGE/USD", "DOT/USD",  "HBAR/USD", "ICP/USD",
                 "INJ/USD",  "LINK/USD", "LTC/USD",  "MATIC/USD",
                 "NEAR/USD", "OP/USD",   "SHIB/USD", "SOL/USD",
                 "SUI/USD",  "TON/USD",  "TRX/USD",  "UNI/USD",
-                "XLM/USD",  "XRP/USD",
-                # forex pairs
-                "EUR/USD",  "USD/JPY",
+                "XLM/USD",  "XRP/USD",  "EUR/USD",  "USD/JPY",
             ]
-            mtf_cleanup = (
+            mtf_dupes = (
                 session.query(StrategyAsset)
                 .filter(
                     StrategyAsset.strategy_name == "mtf_ema",
-                    StrategyAsset.symbol.in_(MTF_CLEANUP_SYMBOLS),
+                    StrategyAsset.symbol.in_(MTF_REMOVE),
                     StrategyAsset.is_active == 1,
                 )
                 .all()
             )
-            for row in mtf_cleanup:
+            for row in mtf_dupes:
                 row.is_active = 0
                 row.added_by = "admin_removed"
                 logger.info(
-                    f"[DB] seed_strategy_assets: permanently deactivated "
-                    f"mtf_ema/{row.symbol} (duplicate — moved to other strategy)"
+                    f"[DB] seed_strategy_assets: deactivated "
+                    f"mtf_ema/{row.symbol} (duplicate — "
+                    f"belongs to another strategy)"
                 )
-            if mtf_cleanup:
+            if mtf_dupes:
                 session.commit()
                 logger.info(
-                    f"[DB] seed_strategy_assets: permanently deactivated "
-                    f"{len(mtf_cleanup)} duplicate asset(s) from mtf_ema"
+                    f"[DB] seed_strategy_assets: deactivated "
+                    f"{len(mtf_dupes)} duplicate(s) from mtf_ema"
                 )
 
         except Exception as e:
             session.rollback()
-            logger.error(f"[DB] seed_strategy_assets failed: {e}")
+            logger.error(
+                f"[DB] seed_strategy_assets failed: {e}"
+            )
 
 
 def sync_strategy_assets_dedup() -> dict:

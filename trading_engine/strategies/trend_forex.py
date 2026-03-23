@@ -49,18 +49,19 @@ MODE = "LONG_SHORT"
 
 
 def get_active_symbols() -> list[str]:
-    """Return active forex trend symbols from DB.
-    Falls back to hardcoded TARGET_SYMBOLS.
-    """
     try:
         from trading_engine.database import get_strategy_assets
-        symbols = get_strategy_assets(STRATEGY_NAME)
+        symbols = get_strategy_assets(
+            STRATEGY_NAME, active_only=True
+        )
         if symbols:
             return symbols
+        logger.warning(
+            "[TREND-FOREX] DB empty — using hardcoded fallback"
+        )
     except Exception as e:
         logger.error(
-            f"[TREND-FOREX] Failed to load assets from DB: "
-            f"{e} — using hardcoded fallback"
+            f"[TREND-FOREX] DB load failed: {e} — fallback"
         )
     return list(TARGET_SYMBOLS)
 

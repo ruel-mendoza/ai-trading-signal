@@ -34,7 +34,7 @@ TARGET_SYMBOLS = [
     # ── Crypto altcoins (moved from mtf_ema, LONG_ONLY) ────
     "BNB/USD",  "XRP/USD",  "SOL/USD",  "TRX/USD",  "DOGE/USD",
     "ADA/USD",  "TON/USD",  "SHIB/USD", "AVAX/USD", "LINK/USD",
-    "LTC/USD",  "DOT/USD",  "BCH/USD",  "UNI/USD",
+    "MATIC/USD","LTC/USD",  "DOT/USD",  "BCH/USD",  "UNI/USD",
     "ATOM/USD", "XLM/USD",  "HBAR/USD", "ICP/USD",  "APT/USD",
     "NEAR/USD", "ARB/USD",  "OP/USD",   "SUI/USD",  "INJ/USD",
     "CRO/USD",
@@ -83,18 +83,19 @@ def _calculate_quantity(portfolio_value: float, atr: float, atr_mult: float = TR
 
 
 def get_active_symbols() -> list[str]:
-    """Return active symbols from DB.
-    Falls back to hardcoded TARGET_SYMBOLS if DB is empty.
-    """
     try:
         from trading_engine.database import get_strategy_assets
-        symbols = get_strategy_assets(STRATEGY_NAME)
+        symbols = get_strategy_assets(
+            STRATEGY_NAME, active_only=True
+        )
         if symbols:
             return symbols
+        logger.warning(
+            "[TREND-NONFX] DB empty — using hardcoded fallback"
+        )
     except Exception as e:
         logger.error(
-            f"[TREND-NONFX] Failed to load assets from DB: "
-            f"{e} — using hardcoded fallback"
+            f"[TREND-NONFX] DB load failed: {e} — fallback"
         )
     return list(TARGET_SYMBOLS)
 
