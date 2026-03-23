@@ -4221,24 +4221,42 @@ async function addAsset() {
 }
 
 async function removeAsset(btn) {
-  var strategyName = btn.dataset.strategy;
-  var symbol = btn.dataset.symbol;
-  if (!confirm('Remove ' + symbol + ' from ' + strategyName + '? This will NOT close any open signals. The asset will be excluded from future evaluation cycles and can be re-added at any time.')) return;
-  try {
-    var res = await fetch(
-        BASE + '/admin/api/strategy-assets/remove',
-        {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                strategy_name: strategyName,
-                symbol: symbol
-            })
+    var strategyName = btn.dataset.strategy;
+    var symbol = btn.dataset.symbol;
+    if (!strategyName || !symbol) {
+        alert('Error: missing strategy or symbol data on button.');
+        return;
+    }
+    if (!confirm(
+        'Remove ' + symbol + ' from ' + strategyName + '? '
+        + 'This will NOT close any open signals. '
+        + 'The asset will be excluded from future evaluation '
+        + 'cycles and can be re-added at any time.'
+    )) return;
+    try {
+        var res = await fetch(
+            BASE + '/admin/api/strategy-assets/remove',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    strategy_name: strategyName,
+                    symbol: symbol
+                })
+            }
+        );
+        var data = await res.json();
+        if (data.success) {
+            loadAssets();
+        } else {
+            alert(
+                'Failed to remove asset: '
+                + (data.error || 'Unknown error')
+            );
         }
-    );
-    var data = await res.json();
-    if (data.success) { loadAssets(); } else { alert(data.error || 'Failed to remove asset.'); }
-  } catch(e) { alert('Error: ' + e.message); }
+    } catch(e) {
+        alert('Error: ' + e.message);
+    }
 }
 
 async function syncAssetDedup() {
