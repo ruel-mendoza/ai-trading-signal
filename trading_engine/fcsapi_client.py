@@ -34,14 +34,54 @@ TIMEFRAME_DURATION_MINUTES = {
     "D1": 1440,
 }
 
-CRYPTO_SYMBOLS = {"BTC/USD", "ETH/USD", "LTC/USD", "XRP/USD", "BNB/USD"}
+CRYPTO_SYMBOLS = {
+    # Existing
+    "BTC/USD", "ETH/USD", "LTC/USD", "XRP/USD", "BNB/USD",
+    # Tier 1 — high confidence
+    "SOL/USD", "DOGE/USD", "ADA/USD", "AVAX/USD", "LINK/USD",
+    "MATIC/USD", "DOT/USD", "BCH/USD", "XLM/USD", "ATOM/USD",
+    "UNI/USD",
+    # Tier 2 — medium confidence (verified at runtime)
+    "TON/USD", "SHIB/USD", "HBAR/USD", "NEAR/USD",
+    "ICP/USD", "CRO/USD",
+    # Tier 3 — low confidence (graceful skip if unavailable)
+    "APT/USD", "ARB/USD", "OP/USD", "SUI/USD",
+    "INJ/USD", "TRX/USD",
+}
 
 CRYPTO_SYMBOL_MAP = {
-    "BTC/USD": "BTCUSD",
-    "ETH/USD": "ETHUSDT",
-    "LTC/USD": "LTCUSDT",
-    "XRP/USD": "XRPUSDT",
-    "BNB/USD": "BNBUSDT",
+    # Existing
+    "BTC/USD":  "BTCUSD",
+    "ETH/USD":  "ETHUSDT",
+    "LTC/USD":  "LTCUSDT",
+    "XRP/USD":  "XRPUSDT",
+    "BNB/USD":  "BNBUSDT",
+    # Tier 1
+    "SOL/USD":  "SOLUSDT",
+    "DOGE/USD": "DOGEUSDT",
+    "ADA/USD":  "ADAUSDT",
+    "AVAX/USD": "AVAXUSDT",
+    "LINK/USD": "LINKUSDT",
+    "MATIC/USD":"MATICUSDT",
+    "DOT/USD":  "DOTUSDT",
+    "BCH/USD":  "BCHUSDT",
+    "XLM/USD":  "XLMUSDT",
+    "ATOM/USD": "ATOMUSDT",
+    "UNI/USD":  "UNIUSDT",
+    # Tier 2
+    "TON/USD":  "TONUSDT",
+    "SHIB/USD": "SHIBUSDT",
+    "HBAR/USD": "HBARUSDT",
+    "NEAR/USD": "NEARUSDT",
+    "ICP/USD":  "ICPUSDT",
+    "CRO/USD":  "CROUSDT",
+    # Tier 3
+    "APT/USD":  "APTUSDT",
+    "ARB/USD":  "ARBUSDT",
+    "OP/USD":   "OPUSDT",
+    "SUI/USD":  "SUIUSDT",
+    "INJ/USD":  "INJUSDT",
+    "TRX/USD":  "TRXUSDT",
 }
 
 STOCK_INDEX_SYMBOLS = {"SPX", "NDX", "DJI", "RUT"}
@@ -104,6 +144,32 @@ ADVANCE_SYMBOL_MAP = {
     "LTC/USD": "LTCUSDT",
     "XRP/USD": "XRPUSDT",
     "BNB/USD": "BNBUSDT",
+    # Altcoins — Tier 1
+    "SOL/USD":  "SOLUSDT",
+    "DOGE/USD": "DOGEUSDT",
+    "ADA/USD":  "ADAUSDT",
+    "AVAX/USD": "AVAXUSDT",
+    "LINK/USD": "LINKUSDT",
+    "MATIC/USD":"MATICUSDT",
+    "DOT/USD":  "DOTUSDT",
+    "BCH/USD":  "BCHUSDT",
+    "XLM/USD":  "XLMUSDT",
+    "ATOM/USD": "ATOMUSDT",
+    "UNI/USD":  "UNIUSDT",
+    # Altcoins — Tier 2
+    "TON/USD":  "TONUSDT",
+    "SHIB/USD": "SHIBUSDT",
+    "HBAR/USD": "HBARUSDT",
+    "NEAR/USD": "NEARUSDT",
+    "ICP/USD":  "ICPUSDT",
+    "CRO/USD":  "CROUSDT",
+    # Altcoins — Tier 3 (may not be supported)
+    "APT/USD":  "APTUSDT",
+    "ARB/USD":  "ARBUSDT",
+    "OP/USD":   "OPUSDT",
+    "SUI/USD":  "SUIUSDT",
+    "INJ/USD":  "INJUSDT",
+    "TRX/USD":  "TRXUSDT",
     "SPX": "SPX",
     "NDX": "NDX",
     "DJI": "DJI",

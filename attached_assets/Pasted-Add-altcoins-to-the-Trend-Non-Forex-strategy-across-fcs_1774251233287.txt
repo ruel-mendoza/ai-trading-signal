@@ -1,0 +1,368 @@
+Add altcoins to the Trend Non-Forex strategy across
+fcsapi_client.py, trend_non_forex.py, and database.py.
+No other files changed.
+
+The coins are split into three tiers based on FCSAPI
+coverage confidence. All tiers are added but Tier 3
+coins have a graceful skip with a clear log warning
+if the data feed returns no data, rather than crashing.
+
+═══════════════════════════════════════════════════════════
+CHANGE 1 — fcsapi_client.py: add altcoin symbol mappings
+═══════════════════════════════════════════════════════════
+
+In fcsapi_client.py, find CRYPTO_SYMBOLS set and
+CRYPTO_SYMBOL_MAP dict. Replace both with the expanded
+versions covering all 26 altcoins:
+
+FIND and REPLACE CRYPTO_SYMBOLS:
+
+  CRYPTO_SYMBOLS = {
+      # Existing
+      "BTC/USD", "ETH/USD", "LTC/USD", "XRP/USD", "BNB/USD",
+      # Tier 1 — high confidence
+      "SOL/USD", "DOGE/USD", "ADA/USD", "AVAX/USD", "LINK/USD",
+      "MATIC/USD", "DOT/USD", "BCH/USD", "XLM/USD", "ATOM/USD",
+      "UNI/USD",
+      # Tier 2 — medium confidence (verified at runtime)
+      "TON/USD", "SHIB/USD", "HBAR/USD", "NEAR/USD",
+      "ICP/USD", "CRO/USD",
+      # Tier 3 — low confidence (graceful skip if unavailable)
+      "APT/USD", "ARB/USD", "OP/USD", "SUI/USD",
+      "INJ/USD", "TRX/USD",
+  }
+
+FIND and REPLACE CRYPTO_SYMBOL_MAP:
+
+  CRYPTO_SYMBOL_MAP = {
+      # Existing
+      "BTC/USD":  "BTCUSD",
+      "ETH/USD":  "ETHUSDT",
+      "LTC/USD":  "LTCUSDT",
+      "XRP/USD":  "XRPUSDT",
+      "BNB/USD":  "BNBUSDT",
+      # Tier 1
+      "SOL/USD":  "SOLUSDT",
+      "DOGE/USD": "DOGEUSDT",
+      "ADA/USD":  "ADAUSDT",
+      "AVAX/USD": "AVAXUSDT",
+      "LINK/USD": "LINKUSDT",
+      "MATIC/USD":"MATICUSDT",
+      "DOT/USD":  "DOTUSDT",
+      "BCH/USD":  "BCHUSDT",
+      "XLM/USD":  "XLMUSDT",
+      "ATOM/USD": "ATOMUSDT",
+      "UNI/USD":  "UNIUSDT",
+      # Tier 2
+      "TON/USD":  "TONUSDT",
+      "SHIB/USD": "SHIBUSDT",
+      "HBAR/USD": "HBARUSDT",
+      "NEAR/USD": "NEARUSDT",
+      "ICP/USD":  "ICPUSDT",
+      "CRO/USD":  "CROUSDT",
+      # Tier 3
+      "APT/USD":  "APTUSDT",
+      "ARB/USD":  "ARBUSDT",
+      "OP/USD":   "OPUSDT",
+      "SUI/USD":  "SUIUSDT",
+      "INJ/USD":  "INJUSDT",
+      "TRX/USD":  "TRXUSDT",
+  }
+
+Also add all new symbols to ADVANCE_SYMBOL_MAP so the
+advance endpoint routing works correctly. Find
+ADVANCE_SYMBOL_MAP and add after the existing BNB/USD entry:
+
+  # Altcoins — Tier 1
+  "SOL/USD":  "SOLUSDT",
+  "DOGE/USD": "DOGEUSDT",
+  "ADA/USD":  "ADAUSDT",
+  "AVAX/USD": "AVAXUSDT",
+  "LINK/USD": "LINKUSDT",
+  "MATIC/USD":"MATICUSDT",
+  "DOT/USD":  "DOTUSDT",
+  "BCH/USD":  "BCHUSDT",
+  "XLM/USD":  "XLMUSDT",
+  "ATOM/USD": "ATOMUSDT",
+  "UNI/USD":  "UNIUSDT",
+  # Altcoins — Tier 2
+  "TON/USD":  "TONUSDT",
+  "SHIB/USD": "SHIBUSDT",
+  "HBAR/USD": "HBARUSDT",
+  "NEAR/USD": "NEARUSDT",
+  "ICP/USD":  "ICPUSDT",
+  "CRO/USD":  "CROUSDT",
+  # Altcoins — Tier 3 (may not be supported)
+  "APT/USD":  "APTUSDT",
+  "ARB/USD":  "ARBUSDT",
+  "OP/USD":   "OPUSDT",
+  "SUI/USD":  "SUIUSDT",
+  "INJ/USD":  "INJUSDT",
+  "TRX/USD":  "TRXUSDT",
+
+═══════════════════════════════════════════════════════════
+CHANGE 2 — trend_non_forex.py: add altcoins to TARGET_SYMBOLS
+═══════════════════════════════════════════════════════════
+
+In trend_non_forex.py, find TARGET_SYMBOLS and replace with
+the expanded list. Keep existing ETFs exactly as-is and
+append altcoins in tier order:
+
+  TARGET_SYMBOLS = [
+      # ── Commodity ETFs (existing — unchanged) ──────────
+      "CORN", "SOYB", "WEAT", "CANE", "WOOD",
+      "USO", "UNG", "UGA",
+      "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+      "DBB", "SLX",
+      # ── Altcoins — Tier 1 (high confidence) ────────────
+      "BNB/USD", "XRP/USD", "SOL/USD", "DOGE/USD",
+      "ADA/USD", "LTC/USD", "AVAX/USD", "LINK/USD",
+      "MATIC/USD", "DOT/USD", "BCH/USD", "XLM/USD",
+      "ATOM/USD", "UNI/USD",
+      # ── Altcoins — Tier 2 (medium confidence) ──────────
+      "TON/USD", "SHIB/USD", "HBAR/USD", "NEAR/USD",
+      "ICP/USD", "CRO/USD",
+      # ── Altcoins — Tier 3 (low confidence) ─────────────
+      "APT/USD", "ARB/USD", "OP/USD", "SUI/USD",
+      "INJ/USD", "TRX/USD",
+  ]
+
+Add a CRYPTO_SYMBOLS set at module level in trend_non_forex.py
+immediately after TARGET_SYMBOLS, so the strategy can route
+crypto assets differently from ETFs:
+
+  # Crypto assets within TARGET_SYMBOLS — routed via crypto
+  # price endpoint instead of stock/latest ETF endpoint
+  CRYPTO_ALTCOINS = {
+      "BNB/USD", "XRP/USD", "SOL/USD", "DOGE/USD",
+      "ADA/USD", "LTC/USD", "AVAX/USD", "LINK/USD",
+      "MATIC/USD", "DOT/USD", "BCH/USD", "XLM/USD",
+      "ATOM/USD", "UNI/USD", "TON/USD", "SHIB/USD",
+      "HBAR/USD", "NEAR/USD", "ICP/USD", "CRO/USD",
+      "APT/USD", "ARB/USD", "OP/USD", "SUI/USD",
+      "INJ/USD", "TRX/USD",
+  }
+
+  # Tier classification for logging and graceful skip
+  ALTCOIN_TIER: dict[str, int] = {
+      "BNB/USD": 1, "XRP/USD": 1, "SOL/USD": 1,
+      "DOGE/USD": 1, "ADA/USD": 1, "LTC/USD": 1,
+      "AVAX/USD": 1, "LINK/USD": 1, "MATIC/USD": 1,
+      "DOT/USD": 1, "BCH/USD": 1, "XLM/USD": 1,
+      "ATOM/USD": 1, "UNI/USD": 1,
+      "TON/USD": 2, "SHIB/USD": 2, "HBAR/USD": 2,
+      "NEAR/USD": 2, "ICP/USD": 2, "CRO/USD": 2,
+      "APT/USD": 3, "ARB/USD": 3, "OP/USD": 3,
+      "SUI/USD": 3, "INJ/USD": 3, "TRX/USD": 3,
+  }
+
+═══════════════════════════════════════════════════════════
+CHANGE 3 — trend_non_forex.py: update _get_advance_price()
+           to route altcoins via crypto endpoint
+═══════════════════════════════════════════════════════════
+
+In _get_advance_price(), currently the method checks
+self._batch_prices (prefetched via get_stock_latest_prices)
+and falls back to stock/latest for individual fetches.
+Crypto assets cannot use the stock endpoint — they must
+use get_advance_data() which already handles crypto routing
+via BASE_URL_V4_CRYPTO internally.
+
+After the existing batch cache check, add a crypto routing
+branch BEFORE the stock index check:
+
+  FIND this block:
+    if asset in self._batch_prices:
+        quote = self._batch_prices[asset]
+        logger.info(...)
+        return quote
+
+  After it, ADD:
+
+    # ── Crypto altcoin routing ──────────────────────────
+    if asset in CRYPTO_ALTCOINS:
+        tier = ALTCOIN_TIER.get(asset, 1)
+        logger.info(
+            f"[TREND-NONFX] {asset} | "
+            f"Crypto altcoin (Tier {tier}) — "
+            f"fetching via advance crypto endpoint"
+        )
+        try:
+            api_client = self.cache.api_client
+            results = api_client.get_advance_data(
+                [asset], period="1d", merge="latest,profile"
+            )
+            for result in results:
+                if result.get("symbol") == asset:
+                    current = result.get("current", {})
+                    close_price = current.get("close")
+                    if close_price is not None:
+                        logger.info(
+                            f"[TREND-NONFX] {asset} | "
+                            f"Crypto advance price: "
+                            f"close={close_price}"
+                        )
+                        return {
+                            "close": float(close_price),
+                            "high":  current.get("high"),
+                            "low":   current.get("low"),
+                            "open":  current.get("open"),
+                            "timestamp": current.get("timestamp", ""),
+                        }
+            # Tier 3 graceful skip — no data is not a crash
+            if tier == 3:
+                logger.warning(
+                    f"[TREND-NONFX] {asset} | "
+                    f"Tier 3 altcoin — no data returned from "
+                    f"crypto endpoint. FCSAPI may not support "
+                    f"this coin on the current plan. Skipping."
+                )
+            else:
+                logger.warning(
+                    f"[TREND-NONFX] {asset} | "
+                    f"Tier {tier} altcoin — no matching result "
+                    f"in advance response. Skipping."
+                )
+        except Exception as e:
+            logger.error(
+                f"[TREND-NONFX] {asset} | "
+                f"Crypto advance request failed: {e}",
+                exc_info=True,
+            )
+        return None
+
+═══════════════════════════════════════════════════════════
+CHANGE 4 — trend_non_forex.py: update prefetch_prices()
+           to skip altcoins (stock endpoint only for ETFs)
+═══════════════════════════════════════════════════════════
+
+In prefetch_prices(), the batch fetch uses
+get_stock_latest_prices() which only works for ETFs.
+Altcoins must be excluded from this batch:
+
+  FIND:
+    self._batch_prices = api_client.get_stock_latest_prices(
+        list(TARGET_SYMBOLS), batch_size=9
+    )
+
+  REPLACE WITH:
+    etf_symbols = [s for s in TARGET_SYMBOLS
+                   if s not in CRYPTO_ALTCOINS]
+    self._batch_prices = api_client.get_stock_latest_prices(
+        etf_symbols, batch_size=9
+    )
+    logger.info(
+        f"[TREND-NONFX] Batch prefetch: "
+        f"{len(etf_symbols)} ETFs via stock/latest | "
+        f"{len(CRYPTO_ALTCOINS)} altcoins fetched "
+        f"individually via crypto endpoint"
+    )
+
+═══════════════════════════════════════════════════════════
+CHANGE 5 — trend_non_forex.py: update evaluate() asset
+           check to allow altcoins
+═══════════════════════════════════════════════════════════
+
+In evaluate(), the first guard checks:
+  if asset not in TARGET_SYMBOLS:
+
+This already covers altcoins since they are in TARGET_SYMBOLS.
+No change needed here.
+
+However the mode_label log line currently says "LONG_ONLY"
+or "LONG+SHORT". Add "CRYPTO" context for altcoins:
+
+  FIND:
+    mode_label = "LONG+SHORT" if asset in SHORT_ELIGIBLE_SYMBOLS else "LONG_ONLY"
+    logger.info(f"[TREND-NONFX] ====== Evaluating {asset} ({mode_label}) ======")
+
+  REPLACE WITH:
+    if asset in CRYPTO_ALTCOINS:
+        tier = ALTCOIN_TIER.get(asset, 1)
+        mode_label = f"CRYPTO_LONG_ONLY (Tier {tier})"
+    elif asset in SHORT_ELIGIBLE_SYMBOLS:
+        mode_label = "LONG+SHORT"
+    else:
+        mode_label = "LONG_ONLY"
+    logger.info(
+        f"[TREND-NONFX] ====== Evaluating {asset} ({mode_label}) ======"
+    )
+
+Note: altcoins are LONG_ONLY for now. SHORT for crypto can
+be added later when the client confirms short eligibility.
+
+═══════════════════════════════════════════════════════════
+CHANGE 6 — database.py: add altcoins to _ASSET_CLASS_MAP
+═══════════════════════════════════════════════════════════
+
+In _ASSET_CLASS_MAP in database.py, add all 26 altcoins
+under the "crypto" category:
+
+  Add to the crypto section:
+    "SOL/USD":  "crypto", "DOGE/USD": "crypto",
+    "ADA/USD":  "crypto", "AVAX/USD": "crypto",
+    "LINK/USD": "crypto", "MATIC/USD":"crypto",
+    "DOT/USD":  "crypto", "BCH/USD":  "crypto",
+    "XLM/USD":  "crypto", "ATOM/USD": "crypto",
+    "UNI/USD":  "crypto", "TON/USD":  "crypto",
+    "SHIB/USD": "crypto", "HBAR/USD": "crypto",
+    "NEAR/USD": "crypto", "ICP/USD":  "crypto",
+    "CRO/USD":  "crypto", "APT/USD":  "crypto",
+    "ARB/USD":  "crypto", "OP/USD":   "crypto",
+    "SUI/USD":  "crypto", "INJ/USD":  "crypto",
+    "TRX/USD":  "crypto",
+
+═══════════════════════════════════════════════════════════
+CHANGE 7 — admin.py: add altcoins to _ADMIN_CLASS_MAP
+═══════════════════════════════════════════════════════════
+
+In _ADMIN_CLASS_MAP in admin.py, add all 26 altcoins
+under "crypto":
+
+  Add to the crypto section:
+    "SOL/USD":  "crypto", "DOGE/USD": "crypto",
+    "ADA/USD":  "crypto", "AVAX/USD": "crypto",
+    "LINK/USD": "crypto", "MATIC/USD":"crypto",
+    "DOT/USD":  "crypto", "BCH/USD":  "crypto",
+    "XLM/USD":  "crypto", "ATOM/USD": "crypto",
+    "UNI/USD":  "crypto", "TON/USD":  "crypto",
+    "SHIB/USD": "crypto", "HBAR/USD": "crypto",
+    "NEAR/USD": "crypto", "ICP/USD":  "crypto",
+    "CRO/USD":  "crypto", "APT/USD":  "crypto",
+    "ARB/USD":  "crypto", "OP/USD":   "crypto",
+    "SUI/USD":  "crypto", "INJ/USD":  "crypto",
+    "TRX/USD":  "crypto",
+
+Also add to api_v1.py CATEGORY_MAP under crypto:
+  Same 23 entries as above — all mapping to "crypto".
+
+═══════════════════════════════════════════════════════════
+DO NOT CHANGE
+═══════════════════════════════════════════════════════════
+- SHORT_ELIGIBLE_SYMBOLS — altcoins are not added here
+- The existing ETF evaluation logic in evaluate()
+- check_exits() — no changes needed, routing is handled
+  inside _get_advance_price()
+- The 4:01 PM ET scheduler timing — unchanged
+- Any other strategy file
+- main.py scheduler jobs
+
+═══════════════════════════════════════════════════════════
+VERIFICATION CHECKLIST (confirm internally before saving)
+═══════════════════════════════════════════════════════════
+[ ] CRYPTO_SYMBOLS set in fcsapi_client.py has all 26 altcoins
+[ ] CRYPTO_SYMBOL_MAP has all 26 altcoin → USDT mappings
+[ ] ADVANCE_SYMBOL_MAP has all 26 altcoin entries
+[ ] TARGET_SYMBOLS in trend_non_forex.py has 15 ETFs + 26 coins
+[ ] CRYPTO_ALTCOINS set has all 26 altcoins
+[ ] ALTCOIN_TIER dict has all 26 coins with correct tier (1/2/3)
+[ ] prefetch_prices() excludes CRYPTO_ALTCOINS from ETF batch
+[ ] _get_advance_price() routes CRYPTO_ALTCOINS via advance API
+[ ] Tier 3 coins log a warning (not error) when no data returned
+[ ] Tier 3 skip returns None gracefully without raising exception
+[ ] evaluate() mode_label shows CRYPTO_LONG_ONLY for altcoins
+[ ] Altcoins are not added to SHORT_ELIGIBLE_SYMBOLS
+[ ] _ASSET_CLASS_MAP in database.py has all 26 → "crypto"
+[ ] _ADMIN_CLASS_MAP in admin.py has all 26 → "crypto"
+[ ] CATEGORY_MAP in api_v1.py has all 26 → "crypto"
+[ ] All four files are syntactically valid Python

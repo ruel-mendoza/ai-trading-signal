@@ -90,6 +90,21 @@ _ASSET_CLASS_MAP: dict[str, str] = {
     "LTC/USD": "crypto", "XRP/USD": "crypto",
     "BNB/USD": "crypto", "ETHUSD":  "crypto",
     "BTCUSD":  "crypto",
+    # Altcoins — Tier 1
+    "SOL/USD":  "crypto", "DOGE/USD": "crypto",
+    "ADA/USD":  "crypto", "AVAX/USD": "crypto",
+    "LINK/USD": "crypto", "MATIC/USD":"crypto",
+    "DOT/USD":  "crypto", "BCH/USD":  "crypto",
+    "XLM/USD":  "crypto", "ATOM/USD": "crypto",
+    "UNI/USD":  "crypto",
+    # Altcoins — Tier 2
+    "TON/USD":  "crypto", "SHIB/USD": "crypto",
+    "HBAR/USD": "crypto", "NEAR/USD": "crypto",
+    "ICP/USD":  "crypto", "CRO/USD":  "crypto",
+    # Altcoins — Tier 3
+    "APT/USD":  "crypto", "ARB/USD":  "crypto",
+    "OP/USD":   "crypto", "SUI/USD":  "crypto",
+    "INJ/USD":  "crypto", "TRX/USD":  "crypto",
 }
 
 
