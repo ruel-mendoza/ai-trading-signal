@@ -682,6 +682,7 @@ def _build_spx_momentum_html(spx_data: dict, spx_signal_rows: str, spx_signal_co
                 <thead>
                     <tr>
                         <th>Asset</th>
+                        <th>Class</th>
                         <th>Direction</th>
                         <th>Entry Price</th>
                         <th>Stop Loss</th>
@@ -1076,6 +1077,7 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
                 <thead>
                     <tr>
                         <th>Asset</th>
+                        <th>Class</th>
                         <th>Direction</th>
                         <th>Entry Price</th>
                         <th>Stop Loss</th>
@@ -1687,6 +1689,7 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
                 <thead>
                     <tr>
                         <th>Asset</th>
+                        <th>Class</th>
                         <th>Direction</th>
                         <th>Entry Price</th>
                         <th>Stop Loss</th>
@@ -1966,6 +1969,7 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
                 <thead>
                     <tr>
                         <th>Asset</th>
+                        <th>Class</th>
                         <th>Direction</th>
                         <th>Entry Price</th>
                         <th>Stop Loss</th>
@@ -2288,6 +2292,7 @@ def _build_hlc_fx_html(hlc_data: dict, hlc_signal_rows: str, hlc_signal_count: i
                 <thead>
                     <tr>
                         <th>Asset</th>
+                        <th>Class</th>
                         <th>Direction</th>
                         <th>Entry Price</th>
                         <th>Stop Loss</th>
