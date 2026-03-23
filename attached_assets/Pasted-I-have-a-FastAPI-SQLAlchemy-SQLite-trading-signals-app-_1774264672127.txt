@@ -1,0 +1,134 @@
+I have a FastAPI + SQLAlchemy (SQLite) trading signals app. I need to remove 
+two display blocks from the admin panel:
+1. The "Forex Breakout Conditions (D1) LONG ONLY" block from the 
+   Trend Non-Forex tab
+2. The "Highest Close / Lowest Close FX (EUR/USD) — Session & Holiday Aware" 
+   block from the Timezone/Market Hours tab
+
+Read this file first before making any changes:
+- trading_engine/admin.py
+
+Make ALL of the following changes in ONE pass:
+
+---
+
+CHANGE 1 — Remove Forex Breakout Conditions block from Trend Non-Forex tab
+
+1a) In _get_trend_following_data(), make these removals:
+
+    REMOVE this line near the top of the function:
+      trend_fx_symbols = list(_TF_TARGET_SYMBOLS)
+
+    REMOVE the entire forex symbol computation block:
+      forex_data = [_compute_symbol_data(s) for s in forex_symbols]
+
+    REMOVE the _gather_trades call for trend_following:
+      forex_trades = _gather_trades("trend_following")
+
+    In the return dict at the bottom of _get_trend_following_data(),
+    REMOVE these two keys:
+      "forex_symbols": forex_data,
+      "forex_trades": forex_trades,
+
+    Keep all other keys in the return dict exactly as-is:
+      "et_time", "dst_active", "non_forex_symbols", "non_forex_trades"
+
+1b) In _build_trend_following_html(), make these removals:
+
+    REMOVE this line:
+      forex_cards = _build_symbol_cards(tf_data["forex_symbols"])
+
+    REMOVE this line:
+      forex_trades_html = _build_trades_html(tf_data["forex_trades"], "Forex")
+
+    In the return f-string, REMOVE this entire div block:
+      <div class="settings-section">
+          <h3>Forex Breakout Conditions (D1) <span ...>LONG ONLY</span></h3>
+          <div class="stats-grid" style="margin-top:12px;
+          grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
+              {forex_cards}
+          </div>
+      </div>
+
+    In the return f-string, REMOVE this line:
+      {forex_trades_html}
+
+    Keep everything else in the return f-string exactly as-is:
+      - evaluation time stat card
+      - Non-Forex Breakout Conditions block with {non_forex_cards}
+      - {non_forex_trades_html}
+      - Signal History table
+      - Strategy rules timezone-note block
+      - The entire Highest Close / Lowest Close FX yellow note block
+        that starts with:
+        <div class="timezone-note" style="margin-top:16px;
+        border-left:3px solid #f59e0b;...>
+        Keep this block intact — do NOT remove it here. It is removed 
+        separately in Change 2 below only from the Timezone tab, not 
+        from the Trend Non-Forex tab rules section.
+
+---
+
+CHANGE 2 — Remove Highest Close / Lowest Close FX block from Timezone tab
+
+The Timezone tab is built by _build_timezone_html() in admin.py.
+
+2a) In _build_timezone_html(), find the timezone-note div at the bottom 
+    of the return f-string. It looks like this:
+
+      <div class="timezone-note">
+          <strong>Strategy Timezone Logic:</strong>
+          <ul>
+              <li><strong>Highest/Lowest Close FX:</strong> EUR/USD session 
+              &amp; holiday aware &mdash; evaluates at 9:00 AM and 10:00 AM 
+              ET only, skips US/JP holidays. Uses 0.25&times; H1 ATR trailing 
+              stop with previous day high/low filter.</li>
+              <li>All candle timestamps are stored in UTC for consistency.</li>
+              <li>DST is automatically handled for New York time 
+              calculations.</li>
+          </ul>
+      </div>
+
+    REMOVE only the first <li> item about Highest/Lowest Close FX:
+      <li><strong>Highest/Lowest Close FX:</strong> EUR/USD session 
+      &amp; holiday aware &mdash; evaluates at 9:00 AM and 10:00 AM 
+      ET only, skips US/JP holidays. Uses 0.25&times; H1 ATR trailing 
+      stop with previous day high/low filter.</li>
+
+    Keep the other two <li> items exactly as-is:
+      <li>All candle timestamps are stored in UTC for consistency.</li>
+      <li>DST is automatically handled for New York time calculations.</li>
+
+    Keep the <div class="timezone-note">, <strong>Strategy Timezone 
+    Logic:</strong>, and <ul> wrapper tags intact.
+
+---
+
+CONSTRAINTS:
+- Do NOT remove _TF_TARGET_SYMBOLS import at the top of admin.py — it is 
+  still used by _get_signal_analysis_data() for the Signal Analysis tab.
+- Do NOT remove _TNF_TARGET_SYMBOLS import — still used elsewhere.
+- Do NOT touch _get_signal_analysis_data() or _build_signal_analysis_html() 
+  — the Signal Analysis tab has its own separate trend_fx data fetch and 
+  must remain fully functional.
+- Do NOT remove the HLC FX tab itself (tab-hlc_fx) — only remove the 
+  timezone note bullet point.
+- Do NOT remove the yellow Highest/Lowest Close FX note block inside 
+  _build_trend_following_html() return string — only remove it if it 
+  appears as a separate standalone block. If it is part of the strategy 
+  rules section at the bottom of the Trend Non-Forex tab, leave it intact.
+- Do NOT change any strategy files, database files, or API endpoints.
+- Do NOT change any other tabs, sidebar links, or mobile tab bar items.
+- Do NOT change any data-testid attributes.
+- After changes the Trend Non-Forex tab must show only:
+    - Evaluation time card
+    - Non-Forex Breakout Conditions (D1) block
+    - Non-Forex Active Trades block
+    - Signal History table
+    - Strategy rules notes
+- After changes the Timezone/Market Hours tab must show only:
+    - UTC, Tokyo, New York, London time cards
+    - Strategy Timezone Logic note with only the two remaining bullet points
+- The app must start without errors after these changes.
+- Make only the exact changes described. Do not refactor or reorganize 
+  any other code.

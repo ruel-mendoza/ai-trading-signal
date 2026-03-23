@@ -400,7 +400,6 @@ def _build_timezone_html(times: dict) -> str:
     <div class="timezone-note">
         <strong>Strategy Timezone Logic:</strong>
         <ul>
-            <li><strong>Highest/Lowest Close FX:</strong> EUR/USD session &amp; holiday aware &mdash; evaluates at 9:00 AM and 10:00 AM ET only, skips US/JP holidays. Uses 0.25&times; H1 ATR trailing stop with previous day high/low filter.</li>
             <li>All candle timestamps are stored in UTC for consistency.</li>
             <li>DST is automatically handled for New York time calculations.</li>
         </ul>
@@ -1374,9 +1373,8 @@ def _get_trend_following_data() -> dict:
     et_now = datetime.now(et_zone)
     ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
 
-    forex_symbols = list(_TF_TARGET_SYMBOLS)
     non_forex_symbols = list(_TNF_TARGET_SYMBOLS)
-    all_symbols = forex_symbols + non_forex_symbols
+    all_symbols = non_forex_symbols
 
     _SHORT_ELIGIBLE_SYMBOLS = _TNF_SHORT_ELIGIBLE
 
@@ -1475,7 +1473,6 @@ def _get_trend_following_data() -> dict:
 
         return sym_info
 
-    forex_data = [_compute_symbol_data(s) for s in forex_symbols]
     non_forex_data = [_compute_symbol_data(s) for s in non_forex_symbols]
 
     def _gather_trades(strategy_name):
@@ -1530,15 +1527,12 @@ def _get_trend_following_data() -> dict:
             })
         return trade_details
 
-    forex_trades = _gather_trades("trend_following")
     non_forex_trades = _gather_trades("trend_non_forex")
 
     return {
         "et_time": et_now.strftime(f"%Y-%m-%d %H:%M:%S {'EDT' if ny_dst else 'EST'}"),
         "dst_active": ny_dst,
-        "forex_symbols": forex_data,
         "non_forex_symbols": non_forex_data,
-        "forex_trades": forex_trades,
         "non_forex_trades": non_forex_trades,
     }
 
@@ -1686,9 +1680,7 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
             {html}
         </div>"""
 
-    forex_cards = _build_symbol_cards(tf_data["forex_symbols"])
     non_forex_cards = _build_symbol_cards(tf_data["non_forex_symbols"])
-    forex_trades_html = _build_trades_html(tf_data["forex_trades"], "Forex")
     non_forex_trades_html = _build_trades_html(tf_data["non_forex_trades"], "Non-Forex")
 
     return f"""
@@ -1698,19 +1690,12 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
         <div class="stat-label" style="margin-top:4px;">DST: {'Active' if tf_data['dst_active'] else 'Inactive'}</div>
         <div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;">Non-Forex eval at 4:01 PM ET | Forex eval at 5:01 PM ET</div>
     </div>
-    <div class="settings-section">
-        <h3>Forex Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG ONLY</span></h3>
-        <div class="stats-grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
-            {forex_cards}
-        </div>
-    </div>
     <div class="settings-section" style="margin-top:20px;">
         <h3>Non-Forex Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG ONLY | {len(list(_TNF_TARGET_SYMBOLS))} ETFs</span></h3>
         <div class="stats-grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
             {non_forex_cards}
         </div>
     </div>
-    {forex_trades_html}
     {non_forex_trades_html}
     <div class="settings-section" style="margin-top:20px;">
         <h3>Signal History ({tf_signal_count})</h3>
