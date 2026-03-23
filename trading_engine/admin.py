@@ -4225,7 +4225,17 @@ async function removeAsset(btn) {
   var symbol = btn.dataset.symbol;
   if (!confirm('Remove ' + symbol + ' from ' + strategyName + '? This will NOT close any open signals. The asset will be excluded from future evaluation cycles and can be re-added at any time.')) return;
   try {
-    var res = await fetch(BASE + '/admin/api/strategy-assets/' + encodeURIComponent(strategyName) + '/' + encodeURIComponent(symbol), { method: 'DELETE' });
+    var res = await fetch(
+        BASE + '/admin/api/strategy-assets/remove',
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                strategy_name: strategyName,
+                symbol: symbol
+            })
+        }
+    );
     var data = await res.json();
     if (data.success) { loadAssets(); } else { alert(data.error || 'Failed to remove asset.'); }
   } catch(e) { alert('Error: ' + e.message); }
@@ -6672,6 +6682,40 @@ def api_remove_strategy_asset(
         logger.info(
             f"[ADMIN] Removed strategy asset: "
             f"{strategy_name}/{decoded_symbol} "
+            f"by {user.get('username') if user else 'admin'}"
+        )
+        return JSONResponse(content={"success": True})
+    return JSONResponse(
+        content={"success": False, "error": "Asset not found"},
+        status_code=404,
+    )
+
+
+@router.post("/api/strategy-assets/remove")
+def api_remove_strategy_asset_by_body(
+    request: Request,
+    body: dict = Body(...),
+):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    user = _get_session_user(request)
+    strategy_name = body.get("strategy_name", "").strip()
+    symbol = body.get("symbol", "").strip()
+    if not strategy_name or not symbol:
+        return JSONResponse(
+            content={"success": False,
+                     "error": "strategy_name and symbol are required"},
+            status_code=400,
+        )
+    success = remove_strategy_asset(
+        strategy_name=strategy_name,
+        symbol=symbol,
+    )
+    if success:
+        logger.info(
+            f"[ADMIN] Removed strategy asset: "
+            f"{strategy_name}/{symbol} "
             f"by {user.get('username') if user else 'admin'}"
         )
         return JSONResponse(content={"success": True})
