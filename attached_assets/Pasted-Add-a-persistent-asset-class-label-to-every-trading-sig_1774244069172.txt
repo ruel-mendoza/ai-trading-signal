@@ -1,0 +1,288 @@
+Add a persistent asset_class label to every trading signal so users
+can filter signals by stocks, crypto, forex, commodities, or indices.
+The asset_class is determined at insert time and stored in the DB.
+
+Files to change: models.py, database.py, api_v1.py
+Do not change any strategy file, any other API file, or any other
+function beyond those explicitly listed below.
+
+═══════════════════════════════════════════════════════════
+CHANGE 1 — models.py: add asset_class column to Signal
+═══════════════════════════════════════════════════════════
+
+In the Signal class, after the signal_timestamp column, add:
+
+  asset_class = Column(Text, nullable=True, server_default="other")
+
+Also add a DB index for fast filtering:
+
+  Index("idx_signal_asset_class", "asset_class"),
+
+Add this index inside __table_args__ alongside the existing indexes.
+
+═══════════════════════════════════════════════════════════
+CHANGE 2 — database.py: build asset_class map and set at insert
+═══════════════════════════════════════════════════════════
+
+Step A: Add the asset class lookup map at module level in
+database.py, after the imports and before init_db():
+
+  _ASSET_CLASS_MAP: dict[str, str] = {
+      # Forex
+      "EUR/USD": "forex",   "GBP/USD": "forex",   "USD/JPY": "forex",
+      "USD/CAD": "forex",   "AUD/USD": "forex",   "NZD/USD": "forex",
+      "USD/CHF": "forex",   "EUR/GBP": "forex",
+      # Crypto
+      "BTC/USD": "crypto",  "ETH/USD": "crypto",  "LTC/USD": "crypto",
+      "XRP/USD": "crypto",  "BNB/USD": "crypto",
+      # Commodities
+      "XAU/USD": "commodities", "XAG/USD": "commodities",
+      "XPT/USD": "commodities", "XPD/USD": "commodities",
+      "XCU/USD": "commodities", "NATGAS/USD": "commodities",
+      "CORN/USD": "commodities", "SOYBEAN/USD": "commodities",
+      "WHEAT/USD": "commodities", "SUGAR/USD": "commodities",
+      "OSX": "commodities",
+      "USO": "commodities",  "UNG": "commodities",  "UGA": "commodities",
+      "DBB": "commodities",  "SLX": "commodities",
+      "SGOL": "commodities", "SIVR": "commodities", "CPER": "commodities",
+      "PPLT": "commodities", "PALL": "commodities",
+      "CORN": "commodities", "SOYB": "commodities", "WEAT": "commodities",
+      "CANE": "commodities", "WOOD": "commodities",
+      # Indices
+      "SPX": "indices", "NDX": "indices", "RUT": "indices",
+      "DJI": "indices", "OSX": "indices",
+      # Stocks (placeholder for future equity signals)
+  }
+
+  def _get_asset_class(symbol: str) -> str:
+      """Return the asset class label for a symbol.
+      Falls back to 'other' for unmapped symbols.
+      """
+      return _ASSET_CLASS_MAP.get(symbol, "other")
+
+Step B: In insert_signal(), when constructing the Signal object,
+add asset_class:
+
+  FIND:
+    obj = Signal(
+        strategy_name=signal["strategy_name"],
+        asset=signal["asset"],
+        direction=signal["direction"],
+        entry_price=signal["entry_price"],
+        stop_loss=signal.get("stop_loss"),
+        take_profit=signal.get("take_profit"),
+        atr_at_entry=signal.get("atr_at_entry"),
+        signal_timestamp=signal["signal_timestamp"],
+        status="OPEN",
+    )
+
+  REPLACE WITH:
+    obj = Signal(
+        strategy_name=signal["strategy_name"],
+        asset=signal["asset"],
+        direction=signal["direction"],
+        entry_price=signal["entry_price"],
+        stop_loss=signal.get("stop_loss"),
+        take_profit=signal.get("take_profit"),
+        atr_at_entry=signal.get("atr_at_entry"),
+        signal_timestamp=signal["signal_timestamp"],
+        status="OPEN",
+        asset_class=_get_asset_class(signal["asset"]),
+    )
+
+Step C: In _signal_to_dict(), add asset_class to the returned dict:
+
+  FIND:
+    return {
+        "id": sig.id,
+        "asset": sig.asset,
+        "strategy_name": sig.strategy_name,
+
+  Add asset_class as the third field:
+    return {
+        "id": sig.id,
+        "asset": sig.asset,
+        "asset_class": sig.asset_class or _get_asset_class(sig.asset),
+        "strategy_name": sig.strategy_name,
+
+  The fallback _get_asset_class(sig.asset) handles existing signals
+  that predate the column (where asset_class is NULL in the DB).
+
+Step D: In _migrate_schema(), add the migration for the new column:
+
+  Add to the migrations list:
+    ("signals", "asset_class", "TEXT DEFAULT 'other'"),
+
+  This ensures the column is added to existing databases on startup
+  without requiring a full reset.
+
+Step E: After the migration runs, add a one-time backfill that
+sets asset_class on existing signals where it is NULL or 'other'
+and the asset is in _ASSET_CLASS_MAP. Add this function:
+
+  def _backfill_asset_class():
+      """One-time backfill: set asset_class on existing signals
+      that predate the column. Safe to run on every startup —
+      only updates rows where asset_class is NULL or 'other'
+      and the asset has a known mapping.
+      """
+      with _get_session() as session:
+          try:
+              rows = session.query(Signal).filter(
+                  Signal.asset_class.in_([None, "other"])
+              ).all()
+              updated = 0
+              for sig in rows:
+                  mapped = _ASSET_CLASS_MAP.get(sig.asset)
+                  if mapped and mapped != "other":
+                      sig.asset_class = mapped
+                      updated += 1
+              if updated:
+                  session.commit()
+                  logger.info(
+                      f"[DB] Backfilled asset_class for "
+                      f"{updated} existing signal(s)"
+                  )
+              else:
+                  logger.info(
+                      "[DB] asset_class backfill: all signals "
+                      "already classified"
+                  )
+          except Exception as e:
+              session.rollback()
+              logger.error(f"[DB] asset_class backfill failed: {e}")
+
+  Then call _backfill_asset_class() inside init_db() after
+  _migrate_schema() is called:
+
+  FIND in init_db():
+    _migrate_schema()
+
+  Add after it:
+    _backfill_asset_class()
+
+═══════════════════════════════════════════════════════════
+CHANGE 3 — api_v1.py: read asset_class from DB instead of
+           computing from CATEGORY_MAP
+═══════════════════════════════════════════════════════════
+
+Step A: In _format_signal(), update the category field to use
+the DB value with CATEGORY_MAP as fallback:
+
+  FIND:
+    return {
+        "id": s["id"],
+        "asset": s["asset"],
+        "category": CATEGORY_MAP.get(s["asset"], "other"),
+
+  REPLACE WITH:
+    return {
+        "id": s["id"],
+        "asset": s["asset"],
+        "category": s.get("asset_class") or CATEGORY_MAP.get(s["asset"], "other"),
+
+Step B: In _format_signal_public(), update the meta or add
+asset_class to the public signal format so frontend consumers
+get the label directly:
+
+  FIND the result dict construction in _format_signal_public():
+    result = {
+        "asset": s["asset"],
+        "direction": DIRECTION_MAP.get(s["direction"], s["direction"]),
+        "entry": s["entry_price"],
+        "stop_loss": s["stop_loss"],
+        "strategy": s["strategy_name"],
+        "published_at": ts,
+    }
+
+  ADD asset_class field:
+    result = {
+        "asset": s["asset"],
+        "asset_class": s.get("asset_class") or CATEGORY_MAP.get(s["asset"], "other"),
+        "direction": DIRECTION_MAP.get(s["direction"], s["direction"]),
+        "entry": s["entry_price"],
+        "stop_loss": s["stop_loss"],
+        "strategy": s["strategy_name"],
+        "published_at": ts,
+    }
+
+Step C: Update the SignalPublic Pydantic model to include
+asset_class:
+
+  FIND:
+    class SignalPublic(BaseModel):
+        asset: str = Field(..., example="EUR/USD")
+        direction: str = Field(..., example="LONG")
+        entry: float = Field(..., example=1.0845)
+        stop_loss: float = Field(..., example=1.0790)
+        strategy: str = Field(..., example="mtf_ema")
+        published_at: str = Field(..., example="2026-03-02T12:00:00Z")
+        take_profit: Optional[float] = None
+        meta: Optional[dict] = None
+
+  REPLACE WITH:
+    class SignalPublic(BaseModel):
+        asset: str = Field(..., example="EUR/USD")
+        asset_class: str = Field(..., example="forex")
+        direction: str = Field(..., example="LONG")
+        entry: float = Field(..., example=1.0845)
+        stop_loss: float = Field(..., example=1.0790)
+        strategy: str = Field(..., example="mtf_ema")
+        published_at: str = Field(..., example="2026-03-02T12:00:00Z")
+        take_profit: Optional[float] = None
+        meta: Optional[dict] = None
+
+Step D: Update the CATEGORY_MAP in api_v1.py to include all
+missing MTF EMA and trend_non_forex assets so the fallback
+is complete. Add any missing entries:
+
+  "LTC/USD": "crypto", "XRP/USD": "crypto", "BNB/USD": "crypto",
+  "CORN": "commodities", "SOYB": "commodities", "WEAT": "commodities",
+  "CANE": "commodities", "WOOD": "commodities",
+  "SGOL": "commodities", "SIVR": "commodities", "CPER": "commodities",
+  "PPLT": "commodities", "PALL": "commodities",
+  "NDX": "indices",
+
+  Add these to the existing CATEGORY_MAP dict.
+
+═══════════════════════════════════════════════════════════
+VALID ASSET CLASS VALUES
+═══════════════════════════════════════════════════════════
+  "forex"       — currency pairs (EUR/USD, USD/JPY, etc.)
+  "crypto"      — cryptocurrencies (BTC/USD, ETH/USD, etc.)
+  "commodities" — metals, energy, grains, ETFs tracking them
+  "indices"     — stock market indices (SPX, NDX, RUT)
+  "stocks"      — individual equities (reserved, none currently)
+  "other"       — fallback for unmapped symbols
+
+═══════════════════════════════════════════════════════════
+DO NOT CHANGE
+═══════════════════════════════════════════════════════════
+- Any strategy file
+- Any scheduler function in main.py
+- get_all_signals() query logic
+- get_active_signals() query logic
+- The existing status/direction filters on signal endpoints
+- public_signals.py router
+- admin.py signal table rendering
+- Any Pydantic model other than SignalPublic
+
+═══════════════════════════════════════════════════════════
+VERIFICATION CHECKLIST (confirm internally before saving)
+═══════════════════════════════════════════════════════════
+[ ] Signal model has asset_class = Column(Text, nullable=True)
+[ ] idx_signal_asset_class index added to Signal.__table_args__
+[ ] _ASSET_CLASS_MAP covers all 30+ assets across all strategies
+[ ] _get_asset_class() returns "other" for unmapped symbols
+[ ] insert_signal() sets asset_class via _get_asset_class()
+[ ] _signal_to_dict() returns asset_class with fallback
+[ ] _migrate_schema() includes ("signals", "asset_class", ...)
+[ ] _backfill_asset_class() exists and is called from init_db()
+[ ] Backfill only updates NULL or "other" rows
+[ ] _format_signal() uses s.get("asset_class") with fallback
+[ ] _format_signal_public() includes asset_class field
+[ ] SignalPublic model has asset_class: str field
+[ ] CATEGORY_MAP in api_v1.py has all missing assets added
+[ ] Existing signals get asset_class on next startup via backfill
+[ ] New signals get asset_class at insert time
+[ ] File is syntactically valid Python for all three files

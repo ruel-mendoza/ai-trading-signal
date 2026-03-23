@@ -29,6 +29,7 @@ logger = logging.getLogger("trading_engine.api_v1")
 
 class SignalPublic(BaseModel):
     asset: str = Field(..., example="EUR/USD")
+    asset_class: str = Field(..., example="forex")
     direction: str = Field(..., example="LONG")
     entry: float = Field(..., example=1.0845)
     stop_loss: float = Field(..., example=1.0790)
@@ -395,10 +396,15 @@ CATEGORY_MAP = {
     "USD/CAD": "forex", "AUD/USD": "forex", "NZD/USD": "forex",
     "USD/CHF": "forex", "EUR/GBP": "forex",
     "BTC/USD": "crypto", "ETH/USD": "crypto",
+    "LTC/USD": "crypto", "XRP/USD": "crypto", "BNB/USD": "crypto",
     "XAU/USD": "commodities", "XAG/USD": "commodities", "OSX": "commodities",
-    "SPX": "indices", "NDX": "indices", "RUT": "indices",
     "USO": "commodities", "UNG": "commodities", "UGA": "commodities",
     "DBB": "commodities", "SLX": "commodities",
+    "SGOL": "commodities", "SIVR": "commodities", "CPER": "commodities",
+    "PPLT": "commodities", "PALL": "commodities",
+    "CORN": "commodities", "SOYB": "commodities", "WEAT": "commodities",
+    "CANE": "commodities", "WOOD": "commodities",
+    "SPX": "indices", "NDX": "indices", "RUT": "indices", "DJI": "indices",
 }
 
 STRATEGY_LABELS = {
@@ -434,6 +440,7 @@ def _format_signal_public(s: dict, position: Optional[dict] = None) -> dict:
 
     result = {
         "asset": s["asset"],
+        "asset_class": s.get("asset_class") or CATEGORY_MAP.get(s["asset"], "other"),
         "direction": DIRECTION_MAP.get(s["direction"], s["direction"]),
         "entry": s["entry_price"],
         "stop_loss": s["stop_loss"],
@@ -451,7 +458,7 @@ def _format_signal(s: dict) -> dict:
     return {
         "id": s["id"],
         "asset": s["asset"],
-        "category": CATEGORY_MAP.get(s["asset"], "other"),
+        "category": s.get("asset_class") or CATEGORY_MAP.get(s["asset"], "other"),
         "strategy": s["strategy_name"],
         "strategy_label": STRATEGY_LABELS.get(s["strategy_name"], s["strategy_name"]),
         "direction": s["direction"],

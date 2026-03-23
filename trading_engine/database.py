@@ -64,6 +64,37 @@ from trading_engine.models import (
 
 logger = logging.getLogger("trading_engine.database")
 
+_ASSET_CLASS_MAP: dict[str, str] = {
+    # Forex
+    "EUR/USD": "forex",   "GBP/USD": "forex",   "USD/JPY": "forex",
+    "USD/CAD": "forex",   "AUD/USD": "forex",   "NZD/USD": "forex",
+    "USD/CHF": "forex",   "EUR/GBP": "forex",
+    # Crypto
+    "BTC/USD": "crypto",  "ETH/USD": "crypto",  "LTC/USD": "crypto",
+    "XRP/USD": "crypto",  "BNB/USD": "crypto",
+    # Commodities — metals, energy, grains, ETFs
+    "XAU/USD": "commodities", "XAG/USD": "commodities",
+    "XPT/USD": "commodities", "XPD/USD": "commodities",
+    "XCU/USD": "commodities", "NATGAS/USD": "commodities",
+    "CORN/USD": "commodities", "SOYBEAN/USD": "commodities",
+    "WHEAT/USD": "commodities", "SUGAR/USD": "commodities",
+    "OSX": "commodities",
+    "USO": "commodities",  "UNG": "commodities",  "UGA": "commodities",
+    "DBB": "commodities",  "SLX": "commodities",
+    "SGOL": "commodities", "SIVR": "commodities", "CPER": "commodities",
+    "PPLT": "commodities", "PALL": "commodities",
+    "CORN": "commodities", "SOYB": "commodities", "WEAT": "commodities",
+    "CANE": "commodities", "WOOD": "commodities",
+    # Indices
+    "SPX": "indices", "NDX": "indices", "RUT": "indices",
+    "DJI": "indices",
+}
+
+
+def _get_asset_class(symbol: str) -> str:
+    """Return the asset class label for a symbol. Falls back to 'other' for unmapped symbols."""
+    return _ASSET_CLASS_MAP.get(symbol, "other")
+
 DB_PATH = os.path.join(os.path.dirname(__file__), "trading_data.db")
 DATABASE_URL = os.environ.get("TRADING_ENGINE_DB_URL", f"sqlite:///{DB_PATH}")
 
@@ -154,6 +185,7 @@ def _migrate_schema():
     migrations = [
         ("signals", "exit_price", "REAL"),
         ("signals", "exit_reason", "TEXT"),
+        ("signals", "asset_class", "TEXT DEFAULT 'other'"),
         ("admin_users", "role", "TEXT DEFAULT 'CUSTOMER'"),
         ("admin_users", "email", "TEXT"),
         ("admin_users", "full_name", "TEXT"),
@@ -495,12 +527,45 @@ def close_opposite_signal_if_exists(
             return False
 
 
+def _backfill_asset_class():
+    """One-time backfill: set asset_class on existing signals that predate the column.
+
+    Safe to run on every startup — only updates rows where asset_class is NULL or
+    'other' and the asset has a known mapping in _ASSET_CLASS_MAP.
+    """
+    with _get_session() as session:
+        try:
+            rows = session.query(Signal).filter(
+                Signal.asset_class.in_([None, "other"])
+            ).all()
+            updated = 0
+            for sig in rows:
+                mapped = _ASSET_CLASS_MAP.get(sig.asset)
+                if mapped and mapped != "other":
+                    sig.asset_class = mapped
+                    updated += 1
+            if updated:
+                session.commit()
+                logger.info(
+                    f"[DB] Backfilled asset_class for "
+                    f"{updated} existing signal(s)"
+                )
+            else:
+                logger.info(
+                    "[DB] asset_class backfill: all signals already classified"
+                )
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] asset_class backfill failed: {e}")
+
+
 def init_db():
     logger.info("[DB] Initializing database tables via SQLAlchemy...")
     Base.metadata.create_all(engine)
     logger.info("[DB] All tables created/verified")
 
     _migrate_schema()
+    _backfill_asset_class()
 
     with _get_session() as session:
         _seed_default_admin(session)
@@ -651,6 +716,7 @@ def insert_signal(signal: dict) -> Optional[int]:
                 atr_at_entry=signal.get("atr_at_entry"),
                 signal_timestamp=signal["signal_timestamp"],
                 status="OPEN",
+                asset_class=_get_asset_class(signal["asset"]),
             )
             session.add(obj)
             session.commit()
@@ -909,6 +975,7 @@ def _signal_to_dict(sig: Signal) -> dict:
     return {
         "id": sig.id,
         "asset": sig.asset,
+        "asset_class": sig.asset_class or _get_asset_class(sig.asset),
         "strategy_name": sig.strategy_name,
         "direction": sig.direction,
         "entry_price": sig.entry_price,

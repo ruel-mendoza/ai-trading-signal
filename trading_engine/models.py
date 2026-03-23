@@ -60,6 +60,7 @@ class Signal(Base):
     exit_price = Column(Float)
     exit_reason = Column(Text)
     signal_timestamp = Column(Text, nullable=False)
+    asset_class = Column(Text, nullable=True, server_default="other")
     created_at = Column(Text, server_default=func.now())
     updated_at = Column(Text, server_default=func.now(), onupdate=func.now())
     wp_post_id = Column(Integer, nullable=True)
@@ -76,6 +77,7 @@ class Signal(Base):
         Index("idx_signal_status_created", "status", "created_at"),
         Index("idx_signal_status_ts", "status", "signal_timestamp"),
         Index("idx_signal_strategy_asset_status", "strategy_name", "asset", "status"),
+        Index("idx_signal_asset_class", "asset_class"),
     )
 
 
