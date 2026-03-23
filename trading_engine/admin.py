@@ -1733,22 +1733,6 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
             <li><strong>Timeframe:</strong> Daily (D1) candles | SMA(50), SMA(100), ATR(100) | 50-day lookback window</li>
         </ul>
     </div>
-    <div class="timezone-note" style="margin-top:16px;border-left:3px solid #f59e0b;padding:12px 16px;background:rgba(245,158,11,0.06);border-radius:6px;">
-        <strong style="color:#f59e0b;">Highest Close / Lowest Close FX (EUR/USD) &mdash; Session &amp; Holiday Aware</strong>
-        <ul style="margin-top:8px;">
-            <li><strong>Asset:</strong> EUR/USD only</li>
-            <li><strong>Evaluation Window:</strong> Runs <strong>only</strong> at 9:00 AM and 10:00 AM ET (America/New_York), DST-aware</li>
-            <li><strong>Holiday Filter:</strong> Skips US and Japan public holidays (via <code>holidays</code> library &mdash; US() + JP() calendars)</li>
-            <li><strong>Long Entry:</strong> Price &ge; highest close of last 50 daily candles</li>
-            <li><strong>Short Entry:</strong> Price &le; lowest close of last 50 daily candles (reversal: if within 0.2% of lowest, triggers BUY instead)</li>
-            <li><strong>Previous Day Filter:</strong> Rejects Longs if entry price &lt; previous trading day&rsquo;s Low; rejects Shorts if entry price &gt; previous trading day&rsquo;s High</li>
-            <li><strong>ATR Source:</strong> ATR(100) calculated from <strong>H1 (hourly)</strong> candles, fixed at entry</li>
-            <li><strong>Trailing Stop (Long):</strong> Exit when price &lt; highest_close_since_entry &minus; (ATR<sub>entry</sub> &times; 0.25)</li>
-            <li><strong>Trailing Stop (Short):</strong> Exit when price &gt; lowest_close_since_entry + (ATR<sub>entry</sub> &times; 0.25)</li>
-            <li><strong>State Tracking:</strong> highest/lowest close updated in database on every H1 evaluation while trade is active</li>
-            <li><strong>Schedule:</strong> Automated via APScheduler at 09:00 and 10:00 AM US/Eastern</li>
-        </ul>
-    </div>
     """
 
 

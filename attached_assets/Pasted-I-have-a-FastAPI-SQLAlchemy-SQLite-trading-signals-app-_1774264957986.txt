@@ -1,0 +1,143 @@
+I have a FastAPI + SQLAlchemy (SQLite) trading signals app. I need to remove 
+two specific display blocks from the Trend Non-Forex admin tab:
+  1. The "Forex Breakout Conditions (D1) LONG ONLY" section
+  2. The "Highest Close / Lowest Close FX (EUR/USD) — Session & Holiday Aware" 
+     note block at the bottom of the same tab
+
+Read this file first before making any changes:
+- trading_engine/admin.py
+
+---
+
+Make ALL of the following changes in ONE pass:
+
+---
+
+1. In _get_trend_following_data()
+
+a) Remove the forex symbols data fetch. Find and remove these lines:
+     trend_fx_symbols = list(_TF_TARGET_SYMBOLS)
+
+   And remove the forex_data computation line:
+     forex_data = [_compute_symbol_data(s) for s in forex_symbols]
+
+   NOTE: keep non_forex_data computation exactly as-is.
+
+b) Remove the forex trades fetch. Find and remove:
+     forex_trades = _gather_trades("trend_following")
+
+   NOTE: keep non_forex_trades = _gather_trades("trend_non_forex") exactly 
+   as-is.
+
+c) In the return dict at the bottom of _get_trend_following_data(), remove 
+   the forex keys and keep only non-forex keys:
+
+     # REMOVE these two keys from the return dict:
+     "forex_symbols": forex_data,
+     "forex_trades": forex_trades,
+
+     # KEEP these exactly as-is:
+     "non_forex_symbols": non_forex_data,
+     "non_forex_trades": non_forex_trades,
+
+   Keep all other keys in the return dict exactly as-is 
+   (et_time, dst_active, etc.).
+
+---
+
+2. In _build_trend_following_html()
+
+a) Remove the forex_cards variable assignment. Find and remove:
+     forex_cards = _build_symbol_cards(tf_data["forex_symbols"])
+
+   NOTE: keep non_forex_cards assignment exactly as-is.
+
+b) Remove the forex_trades_html variable assignment. Find and remove:
+     forex_trades_html = _build_trades_html(tf_data["forex_trades"], "Forex")
+
+   NOTE: keep non_forex_trades_html assignment exactly as-is.
+
+c) In the return f-string, find and remove the entire Forex Breakout 
+   Conditions div block. Remove this entire section:
+
+     <div class="settings-section">
+         <h3>Forex Breakout Conditions (D1) <span style="font-size:0.75rem;
+         color:#94a3b8;font-weight:normal;">LONG ONLY</span></h3>
+         <div class="stats-grid" style="margin-top:12px;
+         grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
+             {forex_cards}
+         </div>
+     </div>
+
+d) In the return f-string, find and remove the forex trades placeholder:
+     {forex_trades_html}
+
+   NOTE: keep {non_forex_trades_html} exactly as-is.
+
+e) In the return f-string at the bottom, find the timezone-note div that 
+   contains the "Highest Close / Lowest Close FX (EUR/USD)" block. It starts 
+   with this pattern:
+     <div class="timezone-note" style="margin-top:16px;border-left:3px 
+     solid #f59e0b;padding:12px 16px;background:rgba(245,158,11,0.06);
+     border-radius:6px;">
+         <strong style="color:#f59e0b;">Highest Close / Lowest Close FX 
+         (EUR/USD) &mdash; Session &amp; Holiday Aware</strong>
+
+   Remove this entire div block from the opening 
+   <div class="timezone-note" style="margin-top:16px;border-left:3px... 
+   all the way to its closing </div> tag.
+
+   NOTE: keep the first timezone-note div that contains the main 
+   "Strategy Rules (Trend Following — Commodity ETF | QuantConnect 
+   Validated)" block — only remove the second timezone-note div with 
+   the f59e0b amber border that contains the HLC FX content.
+
+---
+
+3. Verify these are NOT removed (keep exactly as-is):
+
+   In _get_trend_following_data():
+   - non_forex_symbols computation
+   - non_forex_trades fetch
+   - All et_time, dst_active keys in return dict
+
+   In _build_trend_following_html():
+   - non_forex_cards variable and its display block:
+       <div class="settings-section" style="margin-top:20px;">
+           <h3>Non-Forex Breakout Conditions (D1)...
+   - non_forex_trades_html variable and {non_forex_trades_html} in return
+   - Signal History table section
+   - First timezone-note div with Strategy Rules for Commodity ETF
+   - All function parameters (tf_data, tf_signal_rows, tf_signal_count)
+
+---
+
+4. Verify these imports are NOT removed from admin.py:
+
+   Keep these imports exactly as-is — they are used by other parts of 
+   admin.py outside of the trend following tab:
+   - _TF_TARGET_SYMBOLS (used by _get_signal_analysis_data())
+   - _TNF_TARGET_SYMBOLS (used by _build_signal_analysis_html())
+   - _TNF_SHORT_ELIGIBLE (used by _build_trend_following_html() still)
+
+---
+
+CONSTRAINTS:
+- Only modify _get_trend_following_data() and _build_trend_following_html() 
+  in admin.py.
+- Do NOT touch any other function in admin.py.
+- Do NOT touch any strategy files.
+- Do NOT touch any database files.
+- Do NOT remove the Non-Forex Breakout Conditions display block.
+- Do NOT remove the Signal History table.
+- Do NOT remove the main Strategy Rules timezone-note at the bottom.
+- Do NOT change any function signatures.
+- After changes, the Trend Non-Forex admin tab must load without errors 
+  and display only:
+    - Evaluation time card
+    - Non-Forex Breakout Conditions (D1) section with ETF and crypto cards
+    - Non-Forex Active Trades section
+    - Signal History table
+    - Strategy Rules (Commodity ETF / QuantConnect Validated) note
+- The page must not throw any KeyError or undefined variable errors from 
+  removed keys being referenced in the template.
