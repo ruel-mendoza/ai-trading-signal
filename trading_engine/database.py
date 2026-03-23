@@ -2598,6 +2598,10 @@ def remove_strategy_asset(
                 .first()
             )
             if not row:
+                logger.warning(
+                    f"[DB] remove_strategy_asset: "
+                    f"not found: {strategy_name}/{symbol}"
+                )
                 return False
             row.is_active = 0
             session.commit()
@@ -2608,7 +2612,9 @@ def remove_strategy_asset(
             return True
         except Exception as e:
             session.rollback()
-            logger.error(f"[DB] remove_strategy_asset failed: {e}")
+            logger.error(
+                f"[DB] remove_strategy_asset failed: {e}"
+            )
             return False
 
 

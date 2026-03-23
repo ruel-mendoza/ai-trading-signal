@@ -4224,7 +4224,11 @@ async function removeAsset(btn) {
     var strategyName = btn.dataset.strategy;
     var symbol = btn.dataset.symbol;
     if (!strategyName || !symbol) {
-        alert('Error: missing strategy or symbol data on button.');
+        alert(
+            'Error: missing strategy or symbol. '
+            + 'strategy=' + strategyName
+            + ' symbol=' + symbol
+        );
         return;
     }
     if (!confirm(
@@ -4238,7 +4242,9 @@ async function removeAsset(btn) {
             BASE + '/admin/api/strategy-assets/remove',
             {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json'
+                },
                 body: JSON.stringify({
                     strategy_name: strategyName,
                     symbol: symbol
@@ -4250,12 +4256,12 @@ async function removeAsset(btn) {
             loadAssets();
         } else {
             alert(
-                'Failed to remove asset: '
+                'Failed to remove: '
                 + (data.error || 'Unknown error')
             );
         }
     } catch(e) {
-        alert('Error: ' + e.message);
+        alert('Network error: ' + e.message);
     }
 }
 
@@ -6681,6 +6687,42 @@ def api_add_strategy_asset(
     return JSONResponse(content={"success": True, "id": asset_id})
 
 
+@router.post("/api/strategy-assets/remove")
+def api_remove_strategy_asset_by_body(
+    request: Request,
+    body: dict = Body(...),
+):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    user = _get_session_user(request)
+    strategy_name = body.get("strategy_name", "").strip()
+    symbol = body.get("symbol", "").strip()
+    if not strategy_name or not symbol:
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": "strategy_name and symbol are required",
+            },
+            status_code=400,
+        )
+    success = remove_strategy_asset(
+        strategy_name=strategy_name,
+        symbol=symbol,
+    )
+    if success:
+        logger.info(
+            f"[ADMIN] Removed strategy asset: "
+            f"{strategy_name}/{symbol} "
+            f"by {user.get('username') if user else 'admin'}"
+        )
+        return JSONResponse(content={"success": True})
+    return JSONResponse(
+        content={"success": False, "error": "Asset not found"},
+        status_code=404,
+    )
+
+
 @router.delete("/api/strategy-assets/{strategy_name}/{symbol}")
 def api_remove_strategy_asset(
     request: Request,
@@ -6700,40 +6742,6 @@ def api_remove_strategy_asset(
         logger.info(
             f"[ADMIN] Removed strategy asset: "
             f"{strategy_name}/{decoded_symbol} "
-            f"by {user.get('username') if user else 'admin'}"
-        )
-        return JSONResponse(content={"success": True})
-    return JSONResponse(
-        content={"success": False, "error": "Asset not found"},
-        status_code=404,
-    )
-
-
-@router.post("/api/strategy-assets/remove")
-def api_remove_strategy_asset_by_body(
-    request: Request,
-    body: dict = Body(...),
-):
-    guard = _admin_role_guard(request)
-    if guard:
-        return guard
-    user = _get_session_user(request)
-    strategy_name = body.get("strategy_name", "").strip()
-    symbol = body.get("symbol", "").strip()
-    if not strategy_name or not symbol:
-        return JSONResponse(
-            content={"success": False,
-                     "error": "strategy_name and symbol are required"},
-            status_code=400,
-        )
-    success = remove_strategy_asset(
-        strategy_name=strategy_name,
-        symbol=symbol,
-    )
-    if success:
-        logger.info(
-            f"[ADMIN] Removed strategy asset: "
-            f"{strategy_name}/{symbol} "
             f"by {user.get('username') if user else 'admin'}"
         )
         return JSONResponse(content={"success": True})

@@ -1,0 +1,282 @@
+Read trading_engine/admin.py carefully and diagnose why the Remove 
+button in the Asset Management tab is not working. Then fix all issues 
+found in ONE pass.
+
+Do a full trace of the entire Remove flow from button click to database 
+and fix every issue found. Do not change anything that is already 
+working correctly.
+
+---
+
+TRACE THESE IN ORDER:
+
+---
+
+1. BUTTON GENERATION in loadAssets() JS function
+
+Check the removeBtn HTML string generated inside loadAssets(). Verify:
+
+   a) The button has onclick="removeAsset(this)" attribute
+   b) The button has data-strategy attribute set to a.strategy_name
+   c) The button has data-symbol attribute set to a.symbol
+   d) The data-strategy and data-symbol values are not empty, 
+      undefined, or null for any asset row
+   e) The button HTML is actually included in the rows string that 
+      gets assigned to tbody.innerHTML
+
+   If any of these are missing or broken, fix them. The correct 
+   removeBtn must look like this:
+
+     var removeBtn = 
+         '<button class="btn" '
+         + 'style="font-size:12px;padding:4px 10px;'
+         + 'background:rgba(239,68,68,0.12);color:#ef4444;" '
+         + 'onclick="removeAsset(this)" '
+         + 'data-strategy="' + a.strategy_name + '" '
+         + 'data-symbol="' + a.symbol + '" '
+         + 'data-testid="button-remove-asset-'
+         + a.symbol.replace(/\//g, \'-\') + '">'
+         + 'Remove</button>';
+
+---
+
+2. removeAsset() JS FUNCTION
+
+Check if removeAsset() function exists in ADMIN_JS. Verify:
+
+   a) The function is defined as: async function removeAsset(btn)
+   b) It reads strategyName from btn.dataset.strategy
+   c) It reads symbol from btn.dataset.symbol
+   d) It has a null/empty check on strategyName and symbol before 
+      proceeding
+   e) The fetch call uses POST method to 
+      BASE + '/admin/api/strategy-assets/remove'
+   f) The fetch sends Content-Type: application/json header
+   g) The fetch body is JSON.stringify with strategy_name and symbol 
+      keys
+   h) The response handler checks data.success and calls loadAssets() 
+      on success
+   i) There is a catch block that shows an error alert
+
+   If removeAsset() is missing entirely, add it. If it exists but 
+   has any of the above issues, fix them. The correct implementation 
+   must be:
+
+     async function removeAsset(btn) {
+         var strategyName = btn.dataset.strategy;
+         var symbol = btn.dataset.symbol;
+         if (!strategyName || !symbol) {
+             alert(
+                 'Error: missing strategy or symbol. '
+                 + 'strategy=' + strategyName 
+                 + ' symbol=' + symbol
+             );
+             return;
+         }
+         if (!confirm(
+             'Remove ' + symbol + ' from ' + strategyName + '? '
+             + 'This will NOT close any open signals. '
+             + 'The asset will be excluded from future evaluation '
+             + 'cycles and can be re-added at any time.'
+         )) return;
+         try {
+             var res = await fetch(
+                 BASE + '/admin/api/strategy-assets/remove',
+                 {
+                     method: 'POST',
+                     headers: {
+                         'Content-Type': 'application/json'
+                     },
+                     body: JSON.stringify({
+                         strategy_name: strategyName,
+                         symbol: symbol
+                     })
+                 }
+             );
+             var data = await res.json();
+             if (data.success) {
+                 loadAssets();
+             } else {
+                 alert(
+                     'Failed to remove: '
+                     + (data.error || 'Unknown error')
+                 );
+             }
+         } catch(e) {
+             alert('Network error: ' + e.message);
+         }
+     }
+
+---
+
+3. POST ENDPOINT in admin.py
+
+Check if the endpoint @router.post("/api/strategy-assets/remove") 
+exists. Verify:
+
+   a) The route decorator is @router.post (not @router.delete)
+   b) The path is exactly "/api/strategy-assets/remove"
+   c) It calls _admin_role_guard(request) and returns if guard fails
+   d) It reads strategy_name from body.get("strategy_name")
+   e) It reads symbol from body.get("symbol")
+   f) It has a check for empty strategy_name or symbol returning 400
+   g) It calls remove_strategy_asset(strategy_name, symbol)
+   h) It returns JSONResponse with success=True on success
+   i) It returns JSONResponse with success=False and error="Asset 
+      not found" with status_code=404 on failure
+   j) Body is imported — check the imports at the top of admin.py:
+      from fastapi import APIRouter, Query, Body, Request, Response, 
+      Cookie, Depends
+      Body is already in this import — do not add a duplicate
+
+   If the endpoint is missing, add it immediately after the existing 
+   api_remove_strategy_asset DELETE endpoint. The correct 
+   implementation must be:
+
+     @router.post("/api/strategy-assets/remove")
+     def api_remove_strategy_asset_by_body(
+         request: Request,
+         body: dict = Body(...),
+     ):
+         guard = _admin_role_guard(request)
+         if guard:
+             return guard
+         user = _get_session_user(request)
+         strategy_name = body.get("strategy_name", "").strip()
+         symbol = body.get("symbol", "").strip()
+         if not strategy_name or not symbol:
+             return JSONResponse(
+                 content={
+                     "success": False,
+                     "error": "strategy_name and symbol are required",
+                 },
+                 status_code=400,
+             )
+         success = remove_strategy_asset(
+             strategy_name=strategy_name,
+             symbol=symbol,
+         )
+         if success:
+             logger.info(
+                 f"[ADMIN] Removed strategy asset: "
+                 f"{strategy_name}/{symbol} "
+                 f"by {user.get('username') if user else 'admin'}"
+             )
+             return JSONResponse(content={"success": True})
+         return JSONResponse(
+             content={
+                 "success": False,
+                 "error": "Asset not found",
+             },
+             status_code=404,
+         )
+
+---
+
+4. remove_strategy_asset() in database.py
+
+Open trading_engine/database.py and check remove_strategy_asset(). 
+Verify:
+
+   a) The function exists and accepts strategy_name and symbol params
+   b) It queries StrategyAsset filtering by both strategy_name AND 
+      symbol
+   c) It sets row.is_active = 0 (soft delete)
+   d) It calls session.commit() after setting is_active
+   e) It returns True on success and False if row not found
+   f) It has a try/except with session.rollback() on error
+
+   If any of these are missing or incorrect, fix them. The correct 
+   implementation must be:
+
+     def remove_strategy_asset(
+         strategy_name: str,
+         symbol: str,
+     ) -> bool:
+         with _get_session() as session:
+             try:
+                 row = (
+                     session.query(StrategyAsset)
+                     .filter_by(
+                         strategy_name=strategy_name,
+                         symbol=symbol,
+                     )
+                     .first()
+                 )
+                 if not row:
+                     logger.warning(
+                         f"[DB] remove_strategy_asset: "
+                         f"not found: {strategy_name}/{symbol}"
+                     )
+                     return False
+                 row.is_active = 0
+                 session.commit()
+                 logger.info(
+                     f"[DB] Deactivated strategy asset: "
+                     f"{strategy_name}/{symbol}"
+                 )
+                 return True
+             except Exception as e:
+                 session.rollback()
+                 logger.error(
+                     f"[DB] remove_strategy_asset failed: {e}"
+                 )
+                 return False
+
+---
+
+5. ROUTE CONFLICT CHECK in admin.py
+
+Check if there is a route conflict between the existing DELETE 
+endpoint and the new POST endpoint. FastAPI resolves routes by 
+method so POST and DELETE on similar paths should not conflict. 
+Verify:
+
+   a) The DELETE endpoint path is:
+      "/api/strategy-assets/{strategy_name}/{symbol}"
+   b) The POST endpoint path is:
+      "/api/strategy-assets/remove"
+   c) These paths are different and do not conflict
+
+   If the POST endpoint path "/api/strategy-assets/remove" could be 
+   matched by the DELETE pattern 
+   "/api/strategy-assets/{strategy_name}/{symbol}" as a GET/POST 
+   with strategy_name="remove", check the router ordering. In 
+   FastAPI, static path segments take priority over path parameters 
+   only when defined BEFORE the parameterized route. 
+
+   To be safe, move the POST endpoint BEFORE the DELETE endpoint in 
+   the file so "/api/strategy-assets/remove" is registered first 
+   and takes priority.
+
+---
+
+6. FINAL VERIFICATION
+
+After all fixes are applied, verify the complete flow works:
+
+   a) loadAssets() generates rows with correct data-strategy and 
+      data-symbol on every Remove button
+   b) removeAsset(btn) reads those attributes correctly and sends 
+      POST to /admin/api/strategy-assets/remove with JSON body
+   c) The POST endpoint receives the body, calls 
+      remove_strategy_asset(), and returns success=True
+   d) remove_strategy_asset() sets is_active=0 and commits
+   e) loadAssets() is called again to refresh the table
+
+---
+
+CONSTRAINTS:
+- Do NOT remove the existing DELETE endpoint 
+  api_remove_strategy_asset — keep it exactly as-is.
+- Do NOT change any strategy logic, indicator calculations, or 
+  exit rules.
+- Do NOT change any other JS functions in ADMIN_JS.
+- Do NOT change any other endpoints in admin.py.
+- Do NOT add duplicate imports — Body is already imported.
+- Do NOT change models.py or any strategy files.
+- Only fix what is actually broken — do not refactor working code.
+- After the fix, clicking Remove on any asset (including symbols 
+  with slashes like MATIC/USD, EUR/USD, BNB/USD) must successfully 
+  soft-delete the row and reload the assets table without any 
+  errors in the browser console or server logs.
