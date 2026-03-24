@@ -1,0 +1,159 @@
+I have a FastAPI + SQLAlchemy (SQLite) trading signals app. I need to fix two 
+issues in trading_engine/strategy_engine.py:
+
+1. PRIORITY 1 — Remove STRATEGY_MTF_EMA from D1 trailing stop loop in 
+   check_exit_conditions(). The correct MTF EMA exit is H1 EMA20 cross which 
+   is already handled by self.mtf_ema_strategy.check_exits() at the bottom of 
+   the same function. Having MTF EMA in the D1 trailing stop loop creates a 
+   conflict where positions get checked with wrong exit logic first.
+
+2. PRIORITY 2 — Remove three legacy dead code methods that are never called 
+   by the scheduler and contain wrong/outdated logic:
+   - evaluate_mtf_ema()
+   - evaluate_trend_following()
+   - evaluate_highest_lowest_fx()
+
+Read this file before making any changes:
+- trading_engine/strategy_engine.py
+
+---
+
+CHANGE 1 — Fix check_exit_conditions()
+
+Find this block:
+    for strategy_name in [STRATEGY_TREND_FOLLOWING, STRATEGY_MTF_EMA]:
+
+Replace with:
+    for strategy_name in [STRATEGY_TREND_FOLLOWING]:
+
+This single change removes MTF EMA from the D1 ATR trailing stop loop.
+The correct MTF EMA exit (H1 EMA20 cross) already runs at the bottom of
+check_exit_conditions() via self.mtf_ema_strategy.check_exits().
+Do NOT change anything else in the loop body.
+
+---
+
+CHANGE 2 — Remove evaluate_mtf_ema()
+
+Remove the entire method from class StrategyEngine:
+
+    def evaluate_mtf_ema(self, asset: str) -> Optional[dict]:
+        ...entire method body...
+        return None
+
+This method is never called by the scheduler. The scheduler calls
+self.mtf_ema_strategy.evaluate() directly via _scheduled_mtf_ema_evaluate()
+in main.py. This legacy method uses wrong indicator logic (missing D1 EMA200
+slope, H4 slope acceleration, no SHORT signals, wrong stop loss).
+
+---
+
+CHANGE 3 — Remove evaluate_trend_following()
+
+Remove the entire method from class StrategyEngine:
+
+    def evaluate_trend_following(self, asset: str) -> Optional[dict]:
+        ...entire method body...
+        return None
+
+This method is never called by the scheduler. The scheduler calls
+trend_forex_strategy.evaluate() and trend_non_forex_strategy.evaluate()
+directly. This legacy method uses wrong lookback logic (includes current bar
+in highest_50 calculation) and is LONG only with no SHORT support.
+
+---
+
+CHANGE 4 — Remove evaluate_highest_lowest_fx()
+
+Remove the entire method from class StrategyEngine:
+
+    def evaluate_highest_lowest_fx(self, asset: str = "EUR/USD") -> Optional[dict]:
+        ...entire method body...
+        return None
+
+This method is never called by the scheduler. The scheduler calls
+self.highest_lowest_strategy.evaluate() directly via
+_scheduled_highest_lowest_fx() in main.py. This legacy method uses
+datetime.utcnow() with hardcoded UTC offsets and old 50-day highest/lowest
+logic instead of the correct Tokyo sweep & recover pattern.
+
+---
+
+CHANGE 5 — Fix evaluate_all() to use DB-driven MTF EMA symbols
+
+Find this block in evaluate_all():
+    forex_symbols = symbols or ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "NZD/USD", "USD/CAD", "USD/CHF", "EUR/GBP"]
+    logger.info(f"[STRATEGY-ENGINE] evaluate_all called | symbols={forex_symbols}")
+
+    for asset in forex_symbols:
+        mtf_result = self.evaluate_mtf_ema(asset)
+        if mtf_result:
+            results.append(mtf_result)
+
+        tf_result = self.evaluate_trend_following(asset)
+        if tf_result:
+            results.append(tf_result)
+
+Replace with:
+    from trading_engine.strategies.multi_timeframe import get_all_mtf_assets
+    mtf_symbols = symbols or get_all_mtf_assets()
+    logger.info(f"[STRATEGY-ENGINE] evaluate_all called | mtf_symbols={mtf_symbols}")
+
+    for asset in mtf_symbols:
+        try:
+            h1_candles = self.cache.get_candles(asset, "1H", 300)
+            h1_df = pd.DataFrame(h1_candles) if h1_candles else pd.DataFrame()
+        except Exception as e:
+            logger.error(f"[STRATEGY-ENGINE] {asset} | Failed to fetch H1 candles: {e}")
+            continue
+        open_pos = get_open_position(STRATEGY_MTF_EMA, asset)
+        mtf_result = self.mtf_ema_strategy.evaluate(asset, "1H", h1_df, open_pos)
+        if mtf_result.is_entry:
+            signal = mtf_result.metadata.get("signal")
+            if signal:
+                results.append(signal)
+
+This replaces the legacy evaluate_mtf_ema() and evaluate_trend_following()
+calls with the correct DB-driven strategy class calls.
+
+---
+
+CHANGE 6 — Remove unused imports after dead code removal
+
+After removing the three legacy methods, remove these imports that are no
+longer used anywhere in strategy_engine.py:
+
+    from trading_engine.database import (
+        ...
+        update_position_tracking,  # only used in check_exit_conditions — keep
+        ...
+    )
+
+Check each import in the database import block and remove only those that
+are exclusively used by the three removed methods and nowhere else.
+Specifically check:
+- signal_exists — used by removed methods AND check_exit_conditions — KEEP
+- insert_signal — used by removed methods only — REMOVE if not used elsewhere
+- open_position — used by removed methods only — REMOVE if not used elsewhere
+
+Do NOT remove any import that is still used by remaining methods.
+
+---
+
+CONSTRAINTS:
+- Do NOT change any other method in StrategyEngine.
+- Do NOT change check_exit_conditions() except for the single list change
+  in CHANGE 1.
+- Do NOT change evaluate_sp500_momentum() or run_sp500_intraday_cycle().
+- Do NOT change evaluate_all() except for the block replacement in CHANGE 5.
+- Do NOT change any imports except those identified in CHANGE 6.
+- Do NOT change main.py, admin.py, or any strategy files.
+- Do NOT change models.py, database.py, or cache_layer.py.
+- After changes the scheduler behavior must be identical — all strategies
+  still evaluate via their own strategy class evaluate() methods called
+  directly from main.py scheduled functions.
+- evaluate_all() is only called from POST /api/strategies/evaluate endpoint
+  (manual trigger) — not by the scheduler. It must still work correctly
+  after the changes.
+- The STRATEGY_TREND_FOLLOWING constant can remain defined even if
+  evaluate_trend_following() is removed — it may be referenced elsewhere.
