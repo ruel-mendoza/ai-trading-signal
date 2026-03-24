@@ -1,0 +1,285 @@
+I have a FastAPI + SQLAlchemy (SQLite) trading signals app. I need to rebuild 
+the asset management system to be fully database-driven, removing all hardcoded 
+asset lists. The DB already has the correct assets seeded. I want a clean 
+one-time bootstrap approach — seed only if DB is empty, never re-seed on restart.
+
+Read these files before making any changes:
+- trading_engine/database.py
+- trading_engine/strategies/multi_timeframe.py
+- trading_engine/strategies/trend_non_forex.py
+- trading_engine/strategies/trend_forex.py
+- trading_engine/admin.py
+- trading_engine/main.py
+
+---
+
+CURRENT DB STATE (source of truth — use this as the bootstrap seed):
+
+mtf_ema (11 assets):
+  ("SPX", "forex", "indices")
+  ("NDX", "forex", "indices")
+  ("RUT", "forex", "indices")
+  ("DJI", "forex", "indices")
+  ("XAU/USD", "forex", "commodities")
+  ("XAG/USD", "forex", "commodities")
+  ("OSX", "forex", "commodities")
+  ("BTC/USD", "crypto", "crypto")
+  ("ETH/USD", "crypto", "crypto")
+  ("GBP/USD", "forex", "forex")
+  ("AUD/USD", "forex", "forex")
+
+trend_non_forex (40 assets):
+  ETFs: CORN, SOYB, WEAT, CANE, WOOD, USO, UNG, UGA,
+        SGOL, SIVR, CPER, PPLT, PALL, DBB, SLX
+  Crypto: BNB/USD, XRP/USD, SOL/USD, TRX/USD, DOGE/USD,
+          ADA/USD, TON/USD, SHIB/USD, AVAX/USD, LINK/USD,
+          LTC/USD, DOT/USD, BCH/USD, UNI/USD, ATOM/USD,
+          XLM/USD, HBAR/USD, ICP/USD, APT/USD, NEAR/USD,
+          ARB/USD, OP/USD, SUI/USD, INJ/USD, CRO/USD
+
+trend_forex (2 assets):
+  EUR/USD, USD/JPY
+
+sp500_momentum (1 asset):
+  SPX
+
+highest_lowest_fx (1 asset):
+  EUR/USD
+
+---
+
+CHANGE 1 — database.py
+
+a) Replace _STRATEGY_ASSET_SEEDS with the exact DB state above.
+   Add sub_category as third element for mtf_ema assets.
+   trend_non_forex assets have no sub_category (None).
+
+b) Replace seed_strategy_assets() with a one-time bootstrap function:
+   - Query strategy_assets table total count
+   - If count > 0: log "DB already seeded — skipping bootstrap" and return
+   - If count == 0: insert all seeds with added_by="system_seed", 
+     is_active=1, fcsapi_verified=1
+   - No stale cleanup block
+   - No MTF_REMOVE block
+   - No sync_strategy_assets_dedup() call
+   - Fully idempotent — safe to call multiple times
+
+c) Replace remove_strategy_asset() with hard-delete only:
+   - Always session.delete(row) regardless of added_by value
+   - Never soft-delete, never set admin_removed
+   - If row not found return False
+   - Log the deletion with strategy_name and symbol
+
+d) Remove sync_strategy_assets_dedup() call from init_db().
+   Keep the function itself in case it is called manually from admin.
+
+e) Fix add_strategy_asset():
+   - When existing row is found and is_active=0: reactivate it 
+     (set is_active=1, update added_by, fcsapi_verified, sub_category)
+     and return existing id
+   - When existing row is found and is_active=1: return None 
+     (duplicate — already active)
+   - When no row found: insert new row and return new id
+
+---
+
+CHANGE 2 — multi_timeframe.py
+
+a) Keep TARGET_ASSETS and ALL_ASSETS as module-level constants 
+   for backward compatibility with admin.py imports but make them 
+   DB-driven by calling get_strategy_assets at module load time 
+   with a hardcoded fallback only if DB raises an exception:
+
+   def _build_target_assets() -> dict[str, list[str]]:
+       try:
+           from trading_engine.database import get_strategy_assets_full
+           rows = get_strategy_assets_full("mtf_ema")
+           active = [r for r in rows if r.get("is_active") is True 
+                     or r.get("is_active") == 1]
+           if active:
+               grouped = {}
+               for r in active:
+                   key = r.get("sub_category") or r["asset_class"]
+                   grouped.setdefault(key, []).append(r["symbol"])
+               return grouped
+       except Exception:
+           pass
+       return {
+           "indices": ["SPX", "NDX", "RUT", "DJI"],
+           "commodities": ["XAU/USD", "XAG/USD", "OSX"],
+           "crypto": ["BTC/USD", "ETH/USD"],
+           "forex": ["GBP/USD", "AUD/USD"],
+       }
+
+   TARGET_ASSETS = _build_target_assets()
+   ALL_ASSETS = [s for group in TARGET_ASSETS.values() for s in group]
+
+b) _load_target_assets() — reads from DB, no hardcoded fallback:
+   def _load_target_assets() -> dict[str, list[str]]:
+       from trading_engine.database import get_strategy_assets_full
+       rows = get_strategy_assets_full("mtf_ema")
+       grouped = {}
+       for row in rows:
+           if not (row.get("is_active") is True or row.get("is_active") == 1):
+               continue
+           key = row.get("sub_category") or row["asset_class"]
+           grouped.setdefault(key, []).append(row["symbol"])
+       if not grouped:
+           logger.warning("[MTF-EMA] DB returned no active assets")
+       return grouped
+
+c) get_all_mtf_assets() — reads from DB, no hardcoded fallback:
+   def get_all_mtf_assets() -> list[str]:
+       from trading_engine.database import get_strategy_assets
+       symbols = get_strategy_assets("mtf_ema", active_only=True)
+       if not symbols:
+           logger.warning("[MTF-EMA] DB returned no active assets")
+       return symbols
+
+---
+
+CHANGE 3 — trend_non_forex.py
+
+a) Keep TARGET_SYMBOLS as a module-level constant but make it 
+   DB-driven:
+
+   def _load_symbols() -> list[str]:
+       try:
+           from trading_engine.database import get_strategy_assets
+           symbols = get_strategy_assets("trend_non_forex", active_only=True)
+           if symbols:
+               return symbols
+       except Exception:
+           pass
+       return [
+           "CORN", "SOYB", "WEAT", "CANE", "WOOD",
+           "USO", "UNG", "UGA", "SGOL", "SIVR", "CPER",
+           "PPLT", "PALL", "DBB", "SLX",
+           "BNB/USD", "XRP/USD", "SOL/USD", "TRX/USD",
+           "DOGE/USD", "ADA/USD", "TON/USD", "SHIB/USD",
+           "AVAX/USD", "LINK/USD", "LTC/USD", "DOT/USD",
+           "BCH/USD", "UNI/USD", "ATOM/USD", "XLM/USD",
+           "HBAR/USD", "ICP/USD", "APT/USD", "NEAR/USD",
+           "ARB/USD", "OP/USD", "SUI/USD", "INJ/USD", "CRO/USD",
+       ]
+
+   TARGET_SYMBOLS = _load_symbols()
+
+b) get_active_symbols() — reads from DB only:
+   def get_active_symbols() -> list[str]:
+       try:
+           from trading_engine.database import get_strategy_assets
+           symbols = get_strategy_assets("trend_non_forex", active_only=True)
+           if symbols:
+               return symbols
+           logger.warning("[TREND-NONFX] DB empty — using module fallback")
+       except Exception as e:
+           logger.error(f"[TREND-NONFX] DB load failed: {e} — fallback")
+       return list(TARGET_SYMBOLS)
+
+c) In evaluate(): the guard "if asset not in TARGET_SYMBOLS" has 
+   already been removed. Do NOT add it back.
+
+d) _close_orphaned_signals() uses TARGET_SYMBOLS for is_legacy check.
+   Update it to use get_active_symbols() instead so it reflects 
+   the current DB state:
+   active_symbols = get_active_symbols()
+   is_legacy = asset not in active_symbols
+
+---
+
+CHANGE 4 — trend_forex.py
+
+a) Same pattern as trend_non_forex:
+
+   def _load_symbols() -> list[str]:
+       try:
+           from trading_engine.database import get_strategy_assets
+           symbols = get_strategy_assets("trend_forex", active_only=True)
+           if symbols:
+               return symbols
+       except Exception:
+           pass
+       return ["EUR/USD", "USD/JPY"]
+
+   TARGET_SYMBOLS = _load_symbols()
+
+b) get_active_symbols() — reads from DB only:
+   def get_active_symbols() -> list[str]:
+       try:
+           from trading_engine.database import get_strategy_assets
+           symbols = get_strategy_assets("trend_forex", active_only=True)
+           if symbols:
+               return symbols
+           logger.warning("[TREND-FOREX] DB empty — using module fallback")
+       except Exception as e:
+           logger.error(f"[TREND-FOREX] DB load failed: {e} — fallback")
+       return list(TARGET_SYMBOLS)
+
+c) In evaluate(): the guard "if asset not in TARGET_SYMBOLS" has 
+   already been removed. Do NOT add it back.
+
+---
+
+CHANGE 5 — admin.py
+
+a) Fix the AttributeError 500 in api_add_strategy_asset().
+   The error happens after add_strategy_asset() returns a valid id.
+   Find the logger.info() call after the insert and wrap it in 
+   a try/except, then ensure the return JSONResponse always fires:
+
+   try:
+       logger.info(
+           f"[ADMIN] Added strategy asset: "
+           f"{strategy_name}/{symbol} ({asset_class})"
+       )
+   except Exception as log_err:
+       logger.warning(f"[ADMIN] Log failed: {log_err}")
+   return JSONResponse(content={"success": True, "id": asset_id})
+
+b) Keep the is_active filter fix already applied:
+   if a.get("is_active") is True or a.get("is_active") == 1
+
+---
+
+CHANGE 6 — main.py
+
+a) Remove these imports that reference hardcoded lists:
+   from trading_engine.strategies.trend_forex import TARGET_SYMBOLS as TREND_FOREX_SYMBOLS
+   from trading_engine.strategies.trend_non_forex import TARGET_SYMBOLS as TREND_NON_FOREX_SYMBOLS
+   from trading_engine.strategies.multi_timeframe import ALL_ASSETS as MTF_EMA_ASSETS
+
+b) Replace with DB-driven calls wherever these constants are used.
+   In _sync_performance_context():
+   - Replace TREND_FOREX_SYMBOLS with get_active_symbols() from trend_forex
+   - Replace TREND_NON_FOREX_SYMBOLS with get_active_symbols() from trend_non_forex  
+   - Replace MTF_EMA_ASSETS with get_all_mtf_assets() from multi_timeframe
+
+c) In lifespan() and other places that reference these constants 
+   replace with the DB-driven function calls.
+
+---
+
+CONSTRAINTS:
+- Do NOT change any strategy entry/exit logic, indicator 
+  calculations, trailing stop rules, or timing windows.
+- Do NOT change models.py.
+- Do NOT change any imports unless explicitly listed above.
+- Do NOT change websocket.py, cache_layer.py, or fcsapi_client.py.
+- Do NOT change security_middleware.py or notifications.py.
+- All changes must be backward compatible — existing signals and 
+  positions must not be affected.
+- The existing 83 rows in strategy_assets table must not be 
+  deleted or modified by the new bootstrap logic.
+- After changes:
+    mtf_ema: 11 active assets (SPX, NDX, RUT, DJI, XAU/USD, 
+             XAG/USD, OSX, BTC/USD, ETH/USD, GBP/USD, AUD/USD)
+    trend_non_forex: 40 active assets (15 ETFs + 25 crypto)
+    trend_forex: 2 active assets (EUR/USD, USD/JPY)
+    sp500_momentum: 1 active asset (SPX)
+    highest_lowest_fx: 1 active asset (EUR/USD)
+- Asset Management tab must show only active assets.
+- Adding an asset via admin panel must succeed without 500 error.
+- Removing an asset via admin panel must hard-delete the row 
+  completely from the DB.
+- Server restart must never re-add removed assets.

@@ -7,19 +7,44 @@ from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger("trading_engine.admin")
 from fastapi import APIRouter, Query, Body, Request, Response, Cookie, Depends
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    HTMLResponse,
+    StreamingResponse,
+    JSONResponse,
+    RedirectResponse,
+)
 from typing import Optional
 
 from trading_engine.database import (
-    get_all_signals, get_active_signals, get_api_usage_stats, get_setting, set_setting,
-    authenticate_admin, create_session, validate_session, delete_session,
-    get_all_admins, create_admin, update_admin, delete_admin, get_admin_by_id,
-    cleanup_expired_sessions, get_candles,
-    get_all_open_positions, get_open_position,
-    get_recent_job_logs, get_scheduler_health_summary,
-    create_partner_api_key, list_partner_api_keys, toggle_partner_api_key, delete_partner_api_key,
-    get_all_strategy_assets, get_strategy_assets_full,
-    add_strategy_asset, remove_strategy_asset, mark_asset_verified,
+    get_all_signals,
+    get_active_signals,
+    get_api_usage_stats,
+    get_setting,
+    set_setting,
+    authenticate_admin,
+    create_session,
+    validate_session,
+    delete_session,
+    get_all_admins,
+    create_admin,
+    update_admin,
+    delete_admin,
+    get_admin_by_id,
+    cleanup_expired_sessions,
+    get_candles,
+    get_all_open_positions,
+    get_open_position,
+    get_recent_job_logs,
+    get_scheduler_health_summary,
+    create_partner_api_key,
+    list_partner_api_keys,
+    toggle_partner_api_key,
+    delete_partner_api_key,
+    get_all_strategy_assets,
+    get_strategy_assets_full,
+    add_strategy_asset,
+    remove_strategy_asset,
+    mark_asset_verified,
 )
 from trading_engine.indicators import IndicatorEngine
 
@@ -27,6 +52,7 @@ from trading_engine.strategies.trend_non_forex import (
     TARGET_SYMBOLS as _TNF_TARGET_SYMBOLS,
     SHORT_ELIGIBLE_SYMBOLS as _TNF_SHORT_ELIGIBLE,
 )
+
 _TNF_CRYPTO_ALTCOINS: set = set()
 
 from trading_engine.strategies.trend_forex import (
@@ -48,6 +74,7 @@ def _require_auth(request: Request):
     if not user:
         return None
     return user
+
 
 TOKYO_TZ = timezone(timedelta(hours=9))
 NY_TZ = timezone(timedelta(hours=-5))
@@ -82,7 +109,9 @@ def _get_market_times() -> dict:
             "session": "Tokyo",
         },
         "new_york": {
-            "time": ny_time_actual.strftime(f"%Y-%m-%d %H:%M:%S {'EDT' if ny_dst else 'EST'}"),
+            "time": ny_time_actual.strftime(
+                f"%Y-%m-%d %H:%M:%S {'EDT' if ny_dst else 'EST'}"
+            ),
             "hour": ny_time_actual.hour,
             "market_open": ny_open,
             "session": "New York",
@@ -116,50 +145,84 @@ def _nth_weekday(year: int, month: int, weekday: int, n: int) -> datetime:
 
 _ADMIN_CLASS_MAP: dict[str, str] = {
     # ── Forex (pairs) ──────────────────────────────────
-    "EUR/USD": "forex",  "GBP/USD": "forex",  "USD/JPY": "forex",
-    "USD/CAD": "forex",  "AUD/USD": "forex",  "NZD/USD": "forex",
-    "USD/CHF": "forex",  "EUR/GBP": "forex",
+    "EUR/USD": "forex",
+    "GBP/USD": "forex",
+    "USD/JPY": "forex",
+    "USD/CAD": "forex",
+    "AUD/USD": "forex",
+    "NZD/USD": "forex",
+    "USD/CHF": "forex",
+    "EUR/GBP": "forex",
     # ── Forex (spot commodities) ───────────────────────
-    "XAU/USD": "forex",  "XAG/USD": "forex",  "XPT/USD": "forex",
-    "XPD/USD": "forex",  "XCU/USD": "forex",  "OSX":     "forex",
+    "XAU/USD": "forex",
+    "XAG/USD": "forex",
+    "XPT/USD": "forex",
+    "XPD/USD": "forex",
+    "XCU/USD": "forex",
+    "OSX": "forex",
     "NATGAS/USD": "forex",
-    "CORN/USD": "forex", "SOYBEAN/USD": "forex",
-    "WHEAT/USD": "forex","SUGAR/USD":   "forex",
+    "CORN/USD": "forex",
+    "SOYBEAN/USD": "forex",
+    "WHEAT/USD": "forex",
+    "SUGAR/USD": "forex",
     # ── Forex (commodity ETFs) ─────────────────────────
-    "USO":  "forex", "UNG":  "forex", "UGA":  "forex",
-    "DBB":  "forex", "SLX":  "forex",
-    "SGOL": "forex", "SIVR": "forex", "CPER": "forex",
-    "PPLT": "forex", "PALL": "forex",
-    "CORN": "forex", "SOYB": "forex", "WEAT": "forex",
-    "CANE": "forex", "WOOD": "forex",
+    "USO": "forex",
+    "UNG": "forex",
+    "UGA": "forex",
+    "DBB": "forex",
+    "SLX": "forex",
+    "SGOL": "forex",
+    "SIVR": "forex",
+    "CPER": "forex",
+    "PPLT": "forex",
+    "PALL": "forex",
+    "CORN": "forex",
+    "SOYB": "forex",
+    "WEAT": "forex",
+    "CANE": "forex",
+    "WOOD": "forex",
     # ── Forex (indices) ────────────────────────────────
-    "SPX": "forex", "NDX": "forex", "RUT": "forex",
+    "SPX": "forex",
+    "NDX": "forex",
+    "RUT": "forex",
     "DJI": "forex",
     # ── Crypto ─────────────────────────────────────────
-    "BTC/USD": "crypto", "ETH/USD": "crypto",
-    "LTC/USD": "crypto", "XRP/USD": "crypto",
+    "BTC/USD": "crypto",
+    "ETH/USD": "crypto",
+    "LTC/USD": "crypto",
+    "XRP/USD": "crypto",
     "BNB/USD": "crypto",
     # Altcoins — Tier 1
-    "SOL/USD":  "crypto", "DOGE/USD": "crypto",
-    "ADA/USD":  "crypto", "AVAX/USD": "crypto",
+    "SOL/USD": "crypto",
+    "DOGE/USD": "crypto",
+    "ADA/USD": "crypto",
+    "AVAX/USD": "crypto",
     "LINK/USD": "crypto",
-    "DOT/USD":  "crypto", "BCH/USD":  "crypto",
-    "XLM/USD":  "crypto", "ATOM/USD": "crypto",
-    "UNI/USD":  "crypto",
+    "DOT/USD": "crypto",
+    "BCH/USD": "crypto",
+    "XLM/USD": "crypto",
+    "ATOM/USD": "crypto",
+    "UNI/USD": "crypto",
     # Altcoins — Tier 2
-    "TON/USD":  "crypto", "SHIB/USD": "crypto",
-    "HBAR/USD": "crypto", "NEAR/USD": "crypto",
-    "ICP/USD":  "crypto", "CRO/USD":  "crypto",
+    "TON/USD": "crypto",
+    "SHIB/USD": "crypto",
+    "HBAR/USD": "crypto",
+    "NEAR/USD": "crypto",
+    "ICP/USD": "crypto",
+    "CRO/USD": "crypto",
     # Altcoins — Tier 3
-    "APT/USD":  "crypto", "ARB/USD":  "crypto",
-    "OP/USD":   "crypto", "SUI/USD":  "crypto",
-    "INJ/USD":  "crypto", "TRX/USD":  "crypto",
+    "APT/USD": "crypto",
+    "ARB/USD": "crypto",
+    "OP/USD": "crypto",
+    "SUI/USD": "crypto",
+    "INJ/USD": "crypto",
+    "TRX/USD": "crypto",
 }
 
 _CLASS_COLORS: dict[str, tuple[str, str]] = {
-    "forex":   ("rgba(6,182,212,0.15)",  "#67e8f9"),
-    "crypto":  ("rgba(168,85,247,0.15)", "#c4b5fd"),
-    "stocks":  ("rgba(34,197,94,0.15)",  "#86efac"),
+    "forex": ("rgba(6,182,212,0.15)", "#67e8f9"),
+    "crypto": ("rgba(168,85,247,0.15)", "#c4b5fd"),
+    "stocks": ("rgba(34,197,94,0.15)", "#86efac"),
 }
 
 
@@ -188,7 +251,9 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
     for s in signals:
         status = s.get("status", "OPEN")
         if status == "OPEN":
-            dedup_key = s.get("asset")  # one OPEN signal per asset across all strategies
+            dedup_key = s.get(
+                "asset"
+            )  # one OPEN signal per asset across all strategies
             if dedup_key in seen_open:
                 continue
             seen_open.add(dedup_key)
@@ -202,11 +267,11 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
         dir_class = "buy" if direction == "BUY" else "sell"
         status_class = "status-active" if status == "OPEN" else "status-closed"
 
-        entry_str = f'{s.get("entry_price", 0):.5f}'
+        entry_str = f"{s.get('entry_price', 0):.5f}"
         sl_val = s.get("stop_loss")
-        sl_str = f'{sl_val:.5f}' if sl_val is not None else "—"
+        sl_str = f"{sl_val:.5f}" if sl_val is not None else "—"
         tp_val = s.get("take_profit")
-        tp_str = f'{tp_val:.5f}' if tp_val is not None else "—"
+        tp_str = f"{tp_val:.5f}" if tp_val is not None else "—"
 
         ts_raw = s.get("signal_timestamp", "")
         if isinstance(ts_raw, dt_cls):
@@ -253,7 +318,7 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
         if is_duplicate_asset:
             exit_info += (
                 '<div style="font-size:0.75rem;color:#f59e0b;margin-top:2px;">'
-                '⚠ Multiple OPEN signals for this asset — auto-deduped</div>'
+                "⚠ Multiple OPEN signals for this asset — auto-deduped</div>"
             )
 
         sig_id = s.get("id", "")
@@ -263,26 +328,28 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
                 f'title="{badge_tooltip}" '
                 f'style="cursor:help;" '
                 f'data-testid="badge-status-{sig_id}">'
-                f'{status}</span>'
+                f"{status}</span>"
             )
         else:
             status_badge = f'<span class="badge {status_class}">{status}</span>'
 
-        ac_raw = s.get("asset_class") or _ADMIN_CLASS_MAP.get(s.get("asset", ""), "other")
+        ac_raw = s.get("asset_class") or _ADMIN_CLASS_MAP.get(
+            s.get("asset", ""), "other"
+        )
         if ac_raw in _CLASS_COLORS:
             ac_bg, ac_color = _CLASS_COLORS[ac_raw]
             ac_label = ac_raw
         else:
-            ac_bg    = "rgba(100,116,139,0.12)"
+            ac_bg = "rgba(100,116,139,0.12)"
             ac_color = "#94a3b8"
             ac_label = s.get("asset", ac_raw)
 
         ac_badge = (
             f'<span style="display:inline-block;padding:2px 8px;'
-            f'border-radius:4px;font-size:0.7rem;font-weight:600;'
-            f'text-transform:uppercase;letter-spacing:0.03em;'
+            f"border-radius:4px;font-size:0.7rem;font-weight:600;"
+            f"text-transform:uppercase;letter-spacing:0.03em;"
             f'background:{ac_bg};color:{ac_color};">'
-            f'{ac_label}</span>'
+            f"{ac_label}</span>"
         )
 
         rows.append(f"""
@@ -321,11 +388,11 @@ def _build_credit_html(stats: dict) -> str:
 
     endpoint_rows = ""
     for ep in stats.get("by_endpoint", []):
-        endpoint_rows += f'<tr><td>{ep["endpoint"]}</td><td>{ep["count"]}</td><td>{ep["credits"]}</td></tr>'
+        endpoint_rows += f"<tr><td>{ep['endpoint']}</td><td>{ep['count']}</td><td>{ep['credits']}</td></tr>"
 
     daily_rows = ""
     for dh in stats.get("daily_history", [])[:7]:
-        daily_rows += f'<tr><td>{dh["day"]}</td><td>{dh["credits"]}</td></tr>'
+        daily_rows += f"<tr><td>{dh['day']}</td><td>{dh['credits']}</td></tr>"
 
     return f"""
     {alert_html}
@@ -334,7 +401,7 @@ def _build_credit_html(stats: dict) -> str:
             <div class="stat-label">Monthly Usage</div>
             <div class="stat-value">{monthly:,} / {limit:,}</div>
             <div class="progress-bar">
-                <div class="progress-fill" style="width:{min(pct,100):.1f}%;background:{bar_color};"></div>
+                <div class="progress-fill" style="width:{min(pct, 100):.1f}%;background:{bar_color};"></div>
             </div>
             <div class="stat-label">{pct:.2f}% used</div>
         </div>
@@ -385,7 +452,7 @@ def _build_timezone_html(times: dict) -> str:
             <div class="stat-label" style="margin-top:4px;">Session: 09:00 - 15:00 JST</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">New York ({'EDT' if times['new_york']['dst'] else 'EST'})</div>
+            <div class="stat-label">New York ({"EDT" if times["new_york"]["dst"] else "EST"})</div>
             <div class="stat-value" style="font-size:1.1rem;">{times["new_york"]["time"]}</div>
             {market_badge(times["new_york"])}
             <div class="stat-label" style="margin-top:4px;">Session: 09:30 - 16:00 ET</div>
@@ -414,9 +481,17 @@ def _build_settings_html() -> str:
     has_env_key = bool(env_key)
     masked_key = ""
     if current_key:
-        masked_key = current_key[:4] + "•" * (len(current_key) - 8) + current_key[-4:] if len(current_key) > 8 else "•" * len(current_key)
+        masked_key = (
+            current_key[:4] + "•" * (len(current_key) - 8) + current_key[-4:]
+            if len(current_key) > 8
+            else "•" * len(current_key)
+        )
     elif env_key:
-        masked_key = env_key[:4] + "•" * (len(env_key) - 8) + env_key[-4:] if len(env_key) > 8 else "•" * len(env_key)
+        masked_key = (
+            env_key[:4] + "•" * (len(env_key) - 8) + env_key[-4:]
+            if len(env_key) > 8
+            else "•" * len(env_key)
+        )
 
     source_badge = ""
     if has_db_key:
@@ -432,7 +507,7 @@ def _build_settings_html() -> str:
         <p class="settings-desc">Configure your FCSAPI API key for live market data. The key is stored securely in the application database and persists across restarts.</p>
         <div class="key-status">
             <span class="stat-label">Current Key Source:</span> {source_badge}
-            <span style="margin-left:12px;color:#94a3b8;font-size:0.85rem;">{masked_key if masked_key else 'No key configured'}</span>
+            <span style="margin-left:12px;color:#94a3b8;font-size:0.85rem;">{masked_key if masked_key else "No key configured"}</span>
         </div>
         <div class="key-form" style="margin-top:16px;">
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -476,7 +551,7 @@ def _build_settings_html() -> str:
         Formula: quantity = (portfolio_value &times; 1%) / (3 &times; ATR). Leave blank to disable sizing.</p>
         <div style="display:flex;gap:8px;align-items:center;">
             <input type="number" id="portfolio-value-input" placeholder="e.g. 100000"
-                value="{get_setting('portfolio_value') or ''}"
+                value="{get_setting("portfolio_value") or ""}"
                 style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;
                 padding:10px 14px;border-radius:6px;font-size:0.9rem;width:240px;">
             <button class="btn btn-primary" onclick="savePortfolioValue()">Save</button>
@@ -504,10 +579,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 
 def _build_login_page(error: str = "", success: str = "") -> str:
     error_html = f'<div class="error-msg">{error}</div>' if error else ""
-    success_html = f'<div class="success-msg" data-testid="text-login-success">{success}</div>' if success else ""
+    success_html = (
+        f'<div class="success-msg" data-testid="text-login-success">{success}</div>'
+        if success
+        else ""
+    )
     reg_val = get_setting("registration_enabled")
     reg_enabled = reg_val != "false"
-    reg_link = '<div class="link-row">Don\'t have an account? <a href="/api/v1/auth/register" data-testid="link-register">Create one</a></div>' if reg_enabled else ""
+    reg_link = (
+        '<div class="link-row">Don\'t have an account? <a href="/api/v1/auth/register" data-testid="link-register">Create one</a></div>'
+        if reg_enabled
+        else ""
+    )
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -545,6 +628,7 @@ def _build_login_page(error: str = "", success: str = "") -> str:
 
 def _get_spx_momentum_data() -> dict:
     from zoneinfo import ZoneInfo
+
     et_zone = ZoneInfo("America/New_York")
     et_now = datetime.now(et_zone)
     et_minutes = et_now.hour * 60 + et_now.minute
@@ -602,9 +686,15 @@ def _get_spx_momentum_data() -> dict:
     }
 
 
-def _build_spx_momentum_html(spx_data: dict, spx_signal_rows: str, spx_signal_count: int) -> str:
+def _build_spx_momentum_html(
+    spx_data: dict, spx_signal_rows: str, spx_signal_count: int
+) -> str:
     in_session = spx_data["in_session"]
-    session_badge = '<span class="badge status-active">IN SESSION</span>' if in_session else '<span class="badge status-closed">OUTSIDE SESSION</span>'
+    session_badge = (
+        '<span class="badge status-active">IN SESSION</span>'
+        if in_session
+        else '<span class="badge status-closed">OUTSIDE SESSION</span>'
+    )
 
     rsi_val = spx_data["current_rsi"]
     rsi_display = f"{rsi_val:.4f}" if rsi_val is not None else "N/A"
@@ -668,7 +758,7 @@ def _build_spx_momentum_html(spx_data: dict, spx_signal_rows: str, spx_signal_co
                     <div class="stat-value" style="font-size:1.3rem;">{pnl}</div>
                 </div>
             </div>
-            <div class="stat-label" style="margin-top:8px;">Opened: {sig.get('created_at', 'N/A')} | Direction: {sig['direction']}</div>
+            <div class="stat-label" style="margin-top:8px;">Opened: {sig.get("created_at", "N/A")} | Direction: {sig["direction"]}</div>
         </div>"""
     else:
         active_html = """
@@ -682,13 +772,13 @@ def _build_spx_momentum_html(spx_data: dict, spx_signal_rows: str, spx_signal_co
         <div class="stat-card">
             <div class="stat-label">ARCA Session (9:30-15:30 ET)</div>
             <div style="margin-top:8px;">{session_badge}</div>
-            <div class="stat-label" style="margin-top:8px;">{spx_data['et_time']}</div>
-            <div class="stat-label">DST: {'Active' if spx_data['dst_active'] else 'Inactive'}</div>
+            <div class="stat-label" style="margin-top:8px;">{spx_data["et_time"]}</div>
+            <div class="stat-label">DST: {"Active" if spx_data["dst_active"] else "Inactive"}</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Current Close (30m)</div>
             <div class="stat-value" style="font-size:1.3rem;">{close_display}</div>
-            <div class="stat-label" style="margin-top:4px;">{spx_data['candle_count']} candles loaded</div>
+            <div class="stat-label" style="margin-top:4px;">{spx_data["candle_count"]} candles loaded</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">RSI(20)</div>
@@ -739,22 +829,32 @@ def _get_mtf_ema_data() -> dict:
     from zoneinfo import ZoneInfo
     from trading_engine.strategies.multi_timeframe import (
         TARGET_ASSETS,
+        _load_target_assets,
         ALL_ASSETS as _MTF_ALL_ASSETS_LOCAL,
     )
+
     et_zone = ZoneInfo("America/New_York")
     et_now = datetime.now(et_zone)
     ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
 
     grouped_data = {}
-    for group_name, group_symbols in TARGET_ASSETS.items():
+    db_assets = _load_target_assets()
+    for group_name, group_symbols in db_assets.items():
         grouped_data[group_name] = []
         for symbol in group_symbols:
             sym_info = {
-                "symbol": symbol, "group": group_name,
-                "d1_ema200": None, "d1_ema50": None, "d1_count": 0,
-                "h4_ema200": None, "h4_ema50": None, "h4_atr100": None, "h4_count": 0,
+                "symbol": symbol,
+                "group": group_name,
+                "d1_ema200": None,
+                "d1_ema50": None,
+                "d1_count": 0,
+                "h4_ema200": None,
+                "h4_ema50": None,
+                "h4_atr100": None,
+                "h4_count": 0,
                 "h4_close": None,
-                "h1_close": None, "h1_count": 0,
+                "h1_close": None,
+                "h1_count": 0,
                 "cond1_d1_filter_long": False,
                 "cond1_d1_filter_short": False,
                 "cond2_d1_slope": False,
@@ -773,7 +873,8 @@ def _get_mtf_ema_data() -> dict:
                 "cond5_bearish_candle": False,
                 "cond5_long_met": False,
                 "cond5_short_met": False,
-                "long_ready": False, "short_ready": False,
+                "long_ready": False,
+                "short_ready": False,
             }
 
             d1_candles = get_candles(symbol, "D1", 300)
@@ -783,7 +884,11 @@ def _get_mtf_ema_data() -> dict:
             sym_info["h4_count"] = len(h4_candles)
             sym_info["h1_count"] = len(h1_candles)
 
-            if len(d1_candles) >= 200 and len(h4_candles) >= 210 and len(h1_candles) >= 20:
+            if (
+                len(d1_candles) >= 200
+                and len(h4_candles) >= 210
+                and len(h1_candles) >= 20
+            ):
                 d1_closes = [c["close"] for c in d1_candles]
                 h4_closes = [c["close"] for c in h4_candles]
                 h4_highs = [c["high"] for c in h4_candles]
@@ -804,19 +909,31 @@ def _get_mtf_ema_data() -> dict:
                 sym_info["h4_close"] = h4_closes[-1]
                 sym_info["h1_close"] = h1_closes[-1]
 
-                cond1_long = (d1_ema50[-1] is not None and d1_ema200[-1] is not None
-                              and d1_ema50[-1] > d1_ema200[-1])
-                cond1_short = (d1_ema50[-1] is not None and d1_ema200[-1] is not None
-                               and d1_ema50[-1] < d1_ema200[-1])
+                cond1_long = (
+                    d1_ema50[-1] is not None
+                    and d1_ema200[-1] is not None
+                    and d1_ema50[-1] > d1_ema200[-1]
+                )
+                cond1_short = (
+                    d1_ema50[-1] is not None
+                    and d1_ema200[-1] is not None
+                    and d1_ema50[-1] < d1_ema200[-1]
+                )
                 sym_info["cond1_d1_filter_long"] = cond1_long
                 sym_info["cond1_d1_filter_short"] = cond1_short
 
                 # Cond 2: D1 EMA200 slope
                 d1_ema200_prev = d1_ema200[-2] if len(d1_ema200) >= 2 else None
-                d1_slope_rising = (d1_ema200[-1] is not None and d1_ema200_prev is not None
-                                   and d1_ema200[-1] > d1_ema200_prev)
-                d1_slope_falling = (d1_ema200[-1] is not None and d1_ema200_prev is not None
-                                    and d1_ema200[-1] < d1_ema200_prev)
+                d1_slope_rising = (
+                    d1_ema200[-1] is not None
+                    and d1_ema200_prev is not None
+                    and d1_ema200[-1] > d1_ema200_prev
+                )
+                d1_slope_falling = (
+                    d1_ema200[-1] is not None
+                    and d1_ema200_prev is not None
+                    and d1_ema200[-1] < d1_ema200_prev
+                )
                 if cond1_long:
                     sym_info["cond2_d1_slope"] = d1_slope_rising
                 elif cond1_short:
@@ -863,46 +980,56 @@ def _get_mtf_ema_data() -> dict:
                 # Cond 5: H1 EMA20 crossover
                 if len(h1_candles) >= 22:
                     h1_closes_full = [c["close"] for c in h1_candles]
-                    h1_opens_full  = [c["open"]  for c in h1_candles]
-                    h1_ema20_vals  = IndicatorEngine.ema(h1_closes_full, 20)
+                    h1_opens_full = [c["open"] for c in h1_candles]
+                    h1_ema20_vals = IndicatorEngine.ema(h1_closes_full, 20)
 
                     if h1_ema20_vals and h1_ema20_vals[-1] is not None:
-                        h1_ema20_now  = float(h1_ema20_vals[-1])
+                        h1_ema20_now = float(h1_ema20_vals[-1])
                         h1_curr_close = float(h1_closes_full[-1])
                         h1_prev_close = float(h1_closes_full[-2])
-                        h1_curr_open  = float(h1_opens_full[-1])
+                        h1_curr_open = float(h1_opens_full[-1])
 
                         bullish_candle = h1_curr_close > h1_curr_open
                         bearish_candle = h1_curr_close < h1_curr_open
 
-                        long_cross  = (h1_prev_close < h1_ema20_now and
-                                       h1_curr_close > h1_ema20_now and
-                                       bullish_candle)
-                        short_cross = (h1_prev_close > h1_ema20_now and
-                                       h1_curr_close < h1_ema20_now and
-                                       bearish_candle)
+                        long_cross = (
+                            h1_prev_close < h1_ema20_now
+                            and h1_curr_close > h1_ema20_now
+                            and bullish_candle
+                        )
+                        short_cross = (
+                            h1_prev_close > h1_ema20_now
+                            and h1_curr_close < h1_ema20_now
+                            and bearish_candle
+                        )
 
-                        sym_info["cond5_h1_prev_close"]  = round(h1_prev_close, 5)
-                        sym_info["cond5_h1_curr_close"]  = round(h1_curr_close, 5)
-                        sym_info["cond5_h1_open"]        = round(h1_curr_open,  5)
-                        sym_info["cond5_h1_ema20"]       = round(h1_ema20_now,  5)
+                        sym_info["cond5_h1_prev_close"] = round(h1_prev_close, 5)
+                        sym_info["cond5_h1_curr_close"] = round(h1_curr_close, 5)
+                        sym_info["cond5_h1_open"] = round(h1_curr_open, 5)
+                        sym_info["cond5_h1_ema20"] = round(h1_ema20_now, 5)
                         sym_info["cond5_bullish_candle"] = bullish_candle
                         sym_info["cond5_bearish_candle"] = bearish_candle
-                        sym_info["cond5_long_cross"]     = long_cross
-                        sym_info["cond5_short_cross"]    = short_cross
-                        sym_info["cond5_long_met"]       = long_cross
-                        sym_info["cond5_short_met"]      = short_cross
+                        sym_info["cond5_long_cross"] = long_cross
+                        sym_info["cond5_short_cross"] = short_cross
+                        sym_info["cond5_long_met"] = long_cross
+                        sym_info["cond5_short_met"] = short_cross
 
                 if cond1_long:
-                    sym_info["long_ready"] = (cond1_long and
-                                              sym_info["cond2_d1_slope"] and
-                                              cond3 and cond4 and
-                                              sym_info["cond5_long_met"])
+                    sym_info["long_ready"] = (
+                        cond1_long
+                        and sym_info["cond2_d1_slope"]
+                        and cond3
+                        and cond4
+                        and sym_info["cond5_long_met"]
+                    )
                 elif cond1_short:
-                    sym_info["short_ready"] = (cond1_short and
-                                               sym_info["cond2_d1_slope"] and
-                                               cond3 and cond4 and
-                                               sym_info["cond5_short_met"])
+                    sym_info["short_ready"] = (
+                        cond1_short
+                        and sym_info["cond2_d1_slope"]
+                        and cond3
+                        and cond4
+                        and sym_info["cond5_short_met"]
+                    )
 
             grouped_data[group_name].append(sym_info)
 
@@ -919,31 +1046,37 @@ def _get_mtf_ema_data() -> dict:
         cur_close = sym_candles[-1]["close"] if sym_candles else None
 
         if direction == "SHORT":
-            stored_extreme = (pos.get("lowest_price_since_entry") if pos else None) or entry_price
+            stored_extreme = (
+                pos.get("lowest_price_since_entry") if pos else None
+            ) or entry_price
             if cur_close:
                 stored_extreme = min(stored_extreme, cur_close)
             trailing_stop = None
             if atr_at_entry is not None:
                 trailing_stop = stored_extreme + (atr_at_entry * 2.0)
         else:
-            stored_extreme = (pos.get("highest_price_since_entry") if pos else None) or entry_price
+            stored_extreme = (
+                pos.get("highest_price_since_entry") if pos else None
+            ) or entry_price
             if cur_close:
                 stored_extreme = max(stored_extreme, cur_close)
             trailing_stop = None
             if atr_at_entry is not None:
                 trailing_stop = stored_extreme - (atr_at_entry * 2.0)
 
-        trade_details.append({
-            "id": sig["id"],
-            "symbol": sig["asset"],
-            "direction": direction,
-            "entry_price": entry_price,
-            "atr_at_entry": atr_at_entry,
-            "extreme_close": stored_extreme,
-            "trailing_stop": trailing_stop,
-            "current_close": cur_close,
-            "created_at": sig.get("created_at"),
-        })
+        trade_details.append(
+            {
+                "id": sig["id"],
+                "symbol": sig["asset"],
+                "direction": direction,
+                "entry_price": entry_price,
+                "atr_at_entry": atr_at_entry,
+                "extreme_close": stored_extreme,
+                "trailing_stop": trailing_stop,
+                "current_close": cur_close,
+                "created_at": sig.get("created_at"),
+            }
+        )
 
     all_symbols = []
     for group_syms in grouped_data.values():
@@ -958,7 +1091,9 @@ def _get_mtf_ema_data() -> dict:
     }
 
 
-def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: int) -> str:
+def _build_mtf_ema_html(
+    mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: int
+) -> str:
     from trading_engine.strategies.multi_timeframe import (
         ALL_ASSETS as _MTF_ALL_ASSETS,
         TARGET_ASSETS as _MTF_TARGET_ASSETS,
@@ -968,7 +1103,11 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
         return f"{val:.{decimals}f}" if val is not None else "N/A"
 
     def _cond(val):
-        return '<span style="color:#6ee7b7;">YES</span>' if val else '<span style="color:#fca5a5;">NO</span>'
+        return (
+            '<span style="color:#6ee7b7;">YES</span>'
+            if val
+            else '<span style="color:#fca5a5;">NO</span>'
+        )
 
     group_colors = {
         "indices": ("#1e3a5f", "#93c5fd", "Indices"),
@@ -983,7 +1122,9 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
 
     sections_html = ""
     for group_name, group_syms in mtf_data.get("grouped", {}).items():
-        bg_color, text_color, label = group_colors.get(group_name, ("#1e293b", "#e2e8f0", group_name.title()))
+        bg_color, text_color, label = group_colors.get(
+            group_name, ("#1e293b", "#e2e8f0", group_name.title())
+        )
         cards_html = ""
         for sym in group_syms:
             dp = _dp(sym["symbol"])
@@ -1002,7 +1143,11 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
 
                 rs = sym.get("cond3_h4_recent_slope")
                 ps = sym.get("cond3_h4_prev_slope")
-                slope_display = f"recent={rs:.5f} {'>' if sym['cond1_d1_filter_long'] else '<'} prev={ps:.5f}" if rs is not None and ps is not None else "—"
+                slope_display = (
+                    f"recent={rs:.5f} {'>' if sym['cond1_d1_filter_long'] else '<'} prev={ps:.5f}"
+                    if rs is not None and ps is not None
+                    else "—"
+                )
                 prox_dist = sym.get("cond4_proximity_distance")
                 prox_display = f"{prox_dist:.{dp}f}" if prox_dist is not None else "—"
 
@@ -1038,7 +1183,7 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
                 signal_badge = ' <span class="badge sell" style="font-size:0.7rem;">SHORT READY</span>'
 
             cards_html += f"""
-            <div class="stat-card" style="min-width:250px;" data-testid="mtf-card-{sym['symbol'].replace('/','-')}">
+            <div class="stat-card" style="min-width:250px;" data-testid="mtf-card-{sym["symbol"].replace("/", "-")}">
                 <div class="stat-label">{sym["symbol"]}{signal_badge}</div>
                 {data_status}
             </div>"""
@@ -1096,8 +1241,8 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
     return f"""
     <div class="stat-card" style="margin-bottom:16px;">
         <div class="stat-label">Evaluation Time</div>
-        <div style="margin-top:4px;">{mtf_data['et_time']}</div>
-        <div class="stat-label" style="margin-top:4px;">DST: {'Active' if mtf_data['dst_active'] else 'Inactive'}</div>
+        <div style="margin-top:4px;">{mtf_data["et_time"]}</div>
+        <div class="stat-label" style="margin-top:4px;">DST: {"Active" if mtf_data["dst_active"] else "Inactive"}</div>
     </div>
     <div class="settings-section">
         <h3>Multi-Timeframe Conditions <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">{len(_MTF_ALL_ASSETS)} assets &middot; {len(_MTF_TARGET_ASSETS)} groups &middot; Hourly at :01 ET</span></h3>
@@ -1191,7 +1336,7 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
                 <div class="stat-card">
                     <div class="stat-label">H1 (1-Hour)</div>
                     <div style="font-size:0.8rem;color:#94a3b8;margin-top:4px;">Exit Monitoring</div>
-                    <div style="font-size:0.78rem;margin-top:6px;">H1 close vs H4 EMA 50 &mdash; Exit trigger</div>
+                    <div style="font-size:0.78rem;margin-top:6px;">H1 close vs H1 EMA 20 &mdash; Exit trigger</div>
                 </div>
             </div>
         </div>
@@ -1272,16 +1417,16 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
             <div class="stat-card" style="border-left:3px solid #f59e0b;margin-bottom:8px;">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
                     <span class="badge" style="background:#f59e0b;color:#1e293b;font-size:0.7rem;">PRIORITY 1</span>
-                    <strong style="font-size:0.9rem;">H1 Close vs H4 EMA 50 Exit</strong>
+                    <strong style="font-size:0.9rem;">H1 Close vs H1 EMA 20 Exit</strong>
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
                     <div style="background:#1a2332;border-radius:6px;padding:10px;">
                         <div style="font-size:0.82rem;font-weight:600;color:#6ee7b7;margin-bottom:4px;">Long Exit</div>
-                        <div style="font-size:0.78rem;color:#94a3b8;">Exit when <strong style="color:#e2e8f0;">H1 close &lt; H4 EMA 50</strong>. The pullback zone has been lost.</div>
+                        <div style="font-size:0.78rem;color:#94a3b8;">Exit when <strong style="color:#e2e8f0;">H1 close &lt; H1 EMA 20</strong>. The EMA 20 trend filter has been lost.</div>
                     </div>
                     <div style="background:#1a2332;border-radius:6px;padding:10px;">
                         <div style="font-size:0.82rem;font-weight:600;color:#fca5a5;margin-bottom:4px;">Short Exit</div>
-                        <div style="font-size:0.78rem;color:#94a3b8;">Exit when <strong style="color:#e2e8f0;">H1 close &gt; H4 EMA 50</strong>. The pullback zone has been lost.</div>
+                        <div style="font-size:0.78rem;color:#94a3b8;">Exit when <strong style="color:#e2e8f0;">H1 close &gt; H1 EMA 20</strong>. The EMA 20 trend filter has been lost.</div>
                     </div>
                 </div>
             </div>
@@ -1369,11 +1514,16 @@ def _build_mtf_ema_html(mtf_data: dict, mtf_signal_rows: str, mtf_signal_count: 
 
 def _get_trend_following_data() -> dict:
     from zoneinfo import ZoneInfo
+
     et_zone = ZoneInfo("America/New_York")
     et_now = datetime.now(et_zone)
     ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
 
-    non_forex_symbols = list(_TNF_TARGET_SYMBOLS)
+    from trading_engine.strategies.trend_non_forex import (
+        get_active_symbols as _get_tnf_symbols,
+    )
+
+    non_forex_symbols = _get_tnf_symbols()
     all_symbols = non_forex_symbols
 
     _SHORT_ELIGIBLE_SYMBOLS = _TNF_SHORT_ELIGIBLE
@@ -1423,7 +1573,9 @@ def _get_trend_following_data() -> dict:
                 sym_info["lowest_50d"] = min(prior_closes)
 
             if sym_info["sma50"] is not None and sym_info["sma100"] is not None:
-                sym_info["cond_sma50_above_sma100"] = sym_info["sma50"] > sym_info["sma100"]
+                sym_info["cond_sma50_above_sma100"] = (
+                    sym_info["sma50"] > sym_info["sma100"]
+                )
                 if sym_info["cond_sma50_above_sma100"]:
                     sym_info["sma_status"] = "Bullish"
                 elif sym_info["sma50"] < sym_info["sma100"]:
@@ -1431,16 +1583,31 @@ def _get_trend_following_data() -> dict:
                 else:
                     sym_info["sma_status"] = "Neutral"
 
-            if sym_info["highest_50d"] is not None and sym_info["current_close"] is not None:
-                sym_info["cond_price_above_50d_high"] = sym_info["current_close"] >= sym_info["highest_50d"]
+            if (
+                sym_info["highest_50d"] is not None
+                and sym_info["current_close"] is not None
+            ):
+                sym_info["cond_price_above_50d_high"] = (
+                    sym_info["current_close"] >= sym_info["highest_50d"]
+                )
 
-            if sym_info["lowest_50d"] is not None and sym_info["current_close"] is not None:
-                sym_info["cond_price_below_50d_low"] = sym_info["current_close"] <= sym_info["lowest_50d"]
+            if (
+                sym_info["lowest_50d"] is not None
+                and sym_info["current_close"] is not None
+            ):
+                sym_info["cond_price_below_50d_low"] = (
+                    sym_info["current_close"] <= sym_info["lowest_50d"]
+                )
 
             # Proximity to trigger levels
-            if sym_info["current_close"] is not None and sym_info["highest_50d"] is not None:
-                pct_from_high = ((sym_info["current_close"] - sym_info["highest_50d"])
-                                 / sym_info["highest_50d"]) * 100
+            if (
+                sym_info["current_close"] is not None
+                and sym_info["highest_50d"] is not None
+            ):
+                pct_from_high = (
+                    (sym_info["current_close"] - sym_info["highest_50d"])
+                    / sym_info["highest_50d"]
+                ) * 100
                 sym_info["pct_from_high"] = round(pct_from_high, 2)
 
                 if pct_from_high >= 0:
@@ -1450,9 +1617,14 @@ def _get_trend_following_data() -> dict:
                 else:
                     sym_info["proximity_long"] = "neutral"
 
-            if sym_info["lowest_50d"] is not None and sym_info["current_close"] is not None:
-                pct_from_low = ((sym_info["current_close"] - sym_info["lowest_50d"])
-                                / sym_info["lowest_50d"]) * 100
+            if (
+                sym_info["lowest_50d"] is not None
+                and sym_info["current_close"] is not None
+            ):
+                pct_from_low = (
+                    (sym_info["current_close"] - sym_info["lowest_50d"])
+                    / sym_info["lowest_50d"]
+                ) * 100
                 sym_info["pct_from_low"] = round(pct_from_low, 2)
 
                 if symbol in _SHORT_ELIGIBLE_SYMBOLS:
@@ -1463,7 +1635,10 @@ def _get_trend_following_data() -> dict:
                     else:
                         sym_info["proximity_short"] = "neutral"
 
-            sym_info["long_ready"] = sym_info["cond_price_above_50d_high"] and sym_info["cond_sma50_above_sma100"]
+            sym_info["long_ready"] = (
+                sym_info["cond_price_above_50d_high"]
+                and sym_info["cond_sma50_above_sma100"]
+            )
 
             sym_info["short_met"] = (
                 symbol in _SHORT_ELIGIBLE_SYMBOLS
@@ -1493,10 +1668,12 @@ def _get_trend_following_data() -> dict:
             live_atr = None
             if len(sym_candles) >= 101:
                 _closes = [c["close"] for c in sym_candles]
-                _highs  = [c["high"]  for c in sym_candles]
-                _lows   = [c["low"]   for c in sym_candles]
+                _highs = [c["high"] for c in sym_candles]
+                _lows = [c["low"] for c in sym_candles]
                 _atr_vals = IndicatorEngine.atr(_highs, _lows, _closes, 100)
-                live_atr = _atr_vals[-1] if _atr_vals and _atr_vals[-1] is not None else None
+                live_atr = (
+                    _atr_vals[-1] if _atr_vals and _atr_vals[-1] is not None else None
+                )
 
             # Use the stored stop_loss from the signal (ratcheted by check_exits each run)
             trailing_stop = sig.get("stop_loss")
@@ -1509,22 +1686,26 @@ def _get_trend_following_data() -> dict:
                     trailing_stop = cur_close + (live_atr * 3.0)
 
             # For display: use cur_close as reference for highest/lowest
-            stored_highest = (pos.get("highest_price_since_entry") if pos else None) or entry_price
+            stored_highest = (
+                pos.get("highest_price_since_entry") if pos else None
+            ) or entry_price
             if cur_close and direction == "BUY":
                 stored_highest = max(stored_highest, cur_close)
 
-            trade_details.append({
-                "id": sig["id"],
-                "symbol": sig["asset"],
-                "direction": direction,
-                "strategy": strategy_name,
-                "entry_price": entry_price,
-                "live_atr": live_atr,
-                "highest_close": stored_highest,
-                "trailing_stop": trailing_stop,
-                "current_close": cur_close,
-                "created_at": sig.get("created_at"),
-            })
+            trade_details.append(
+                {
+                    "id": sig["id"],
+                    "symbol": sig["asset"],
+                    "direction": direction,
+                    "strategy": strategy_name,
+                    "entry_price": entry_price,
+                    "live_atr": live_atr,
+                    "highest_close": stored_highest,
+                    "trailing_stop": trailing_stop,
+                    "current_close": cur_close,
+                    "created_at": sig.get("created_at"),
+                }
+            )
         return trade_details
 
     non_forex_trades = _gather_trades("trend_non_forex")
@@ -1537,14 +1718,20 @@ def _get_trend_following_data() -> dict:
     }
 
 
-def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_count: int) -> str:
+def _build_trend_following_html(
+    tf_data: dict, tf_signal_rows: str, tf_signal_count: int
+) -> str:
     _SHORT_ELIGIBLE_SYMBOLS = _TNF_SHORT_ELIGIBLE
 
     def _fmt(val, decimals=5):
         return f"{val:.{decimals}f}" if val is not None else "N/A"
 
     def _cond(val):
-        return '<span style="color:#6ee7b7;">YES</span>' if val else '<span style="color:#fca5a5;">NO</span>'
+        return (
+            '<span style="color:#6ee7b7;">YES</span>'
+            if val
+            else '<span style="color:#fca5a5;">NO</span>'
+        )
 
     def _build_symbol_cards(symbols_list):
         html = ""
@@ -1552,9 +1739,17 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
             if sym["candle_count"] < 101:
                 data_status = f'<div style="color:#fbbf24;font-size:0.8rem;margin-top:6px;">D1: {sym["candle_count"]}/101 candles loaded</div>'
             else:
-                sma_color = "#6ee7b7" if sym["sma_status"] == "Bullish" else ("#fca5a5" if sym["sma_status"] == "Bearish" else "#94a3b8")
+                sma_color = (
+                    "#6ee7b7"
+                    if sym["sma_status"] == "Bullish"
+                    else ("#fca5a5" if sym["sma_status"] == "Bearish" else "#94a3b8")
+                )
 
-                low_50d_row = f'<div>50d Low: {_fmt(sym["lowest_50d"])}</div>' if sym.get("lowest_50d") is not None else ""
+                low_50d_row = (
+                    f"<div>50d Low: {_fmt(sym['lowest_50d'])}</div>"
+                    if sym.get("lowest_50d") is not None
+                    else ""
+                )
                 short_cond_rows = ""
                 if sym.get("symbol") in _SHORT_ELIGIBLE_SYMBOLS:
                     short_cond_rows = f"""
@@ -1580,25 +1775,30 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
                 </div>
                 <div style="margin-top:4px;padding-top:4px;border-top:1px solid #334155;font-size:0.8rem;"><strong>Signal Ready:</strong> {_cond(signal_ready)}</div>"""
 
-                prox_long  = sym.get("proximity_long",  "N/A")
+                prox_long = sym.get("proximity_long", "N/A")
                 prox_short = sym.get("proximity_short", "N/A")
-                pct_high   = sym.get("pct_from_high")
-                pct_low    = sym.get("pct_from_low")
+                pct_high = sym.get("pct_from_high")
+                pct_low = sym.get("pct_from_low")
 
                 long_color = (
-                    "#22c55e" if prox_long == "triggered" else
-                    "#f59e0b" if prox_long == "approaching" else
-                    "#94a3b8"
+                    "#22c55e"
+                    if prox_long == "triggered"
+                    else "#f59e0b"
+                    if prox_long == "approaching"
+                    else "#94a3b8"
                 )
                 short_color = (
-                    "#ef4444" if prox_short == "triggered" else
-                    "#f59e0b" if prox_short == "approaching" else
-                    "#94a3b8" if prox_short == "neutral" else
-                    "#64748b"
+                    "#ef4444"
+                    if prox_short == "triggered"
+                    else "#f59e0b"
+                    if prox_short == "approaching"
+                    else "#94a3b8"
+                    if prox_short == "neutral"
+                    else "#64748b"
                 )
 
                 pct_high_str = f"{pct_high:+.2f}%" if pct_high is not None else "N/A"
-                pct_low_str  = f"{pct_low:+.2f}%"  if pct_low  is not None else "N/A"
+                pct_low_str = f"{pct_low:+.2f}%" if pct_low is not None else "N/A"
 
                 short_row = ""
                 if prox_short != "N/A":
@@ -1607,7 +1807,7 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
                         f'font-size:0.75rem;margin-top:3px;">'
                         f'<span style="color:#64748b;">50d Low proximity (SHORT)</span>'
                         f'<span style="color:{short_color};font-weight:600;">'
-                        f'{prox_short.upper()} ({pct_low_str})</span></div>'
+                        f"{prox_short.upper()} ({pct_low_str})</span></div>"
                     )
 
                 proximity_html = (
@@ -1617,9 +1817,9 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
                     f'font-size:0.75rem;">'
                     f'<span style="color:#64748b;">50d High proximity (LONG)</span>'
                     f'<span style="color:{long_color};font-weight:600;">'
-                    f'{prox_long.upper()} ({pct_high_str})</span></div>'
-                    f'{short_row}'
-                    f'</div>'
+                    f"{prox_long.upper()} ({pct_high_str})</span></div>"
+                    f"{short_row}"
+                    f"</div>"
                 )
 
                 data_status += proximity_html
@@ -1686,8 +1886,8 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
     return f"""
     <div class="stat-card" style="margin-bottom:16px;">
         <div class="stat-label">Evaluation Time</div>
-        <div style="margin-top:4px;">{tf_data['et_time']}</div>
-        <div class="stat-label" style="margin-top:4px;">DST: {'Active' if tf_data['dst_active'] else 'Inactive'}</div>
+        <div style="margin-top:4px;">{tf_data["et_time"]}</div>
+        <div class="stat-label" style="margin-top:4px;">DST: {"Active" if tf_data["dst_active"] else "Inactive"}</div>
         <div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;">Non-Forex eval at 4:01 PM ET | Forex eval at 5:01 PM ET</div>
     </div>
     <div class="settings-section" style="margin-top:20px;">
@@ -1738,6 +1938,7 @@ def _build_trend_following_html(tf_data: dict, tf_signal_rows: str, tf_signal_co
 
 def _get_forex_trend_data() -> dict:
     from zoneinfo import ZoneInfo
+
     et_zone = ZoneInfo("America/New_York")
     et_now = datetime.now(et_zone)
     et_minutes = et_now.hour * 60 + et_now.minute
@@ -1747,7 +1948,11 @@ def _get_forex_trend_data() -> dict:
     ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
 
     symbols_data = []
-    for symbol in ["EUR/USD", "USD/JPY"]:
+    from trading_engine.strategies.trend_forex import (
+        get_active_symbols as _get_tf_symbols,
+    )
+
+    for symbol in _get_tf_symbols():
         candles = get_candles(symbol, "D1", 300)
         sym_info = {
             "symbol": symbol,
@@ -1780,7 +1985,9 @@ def _get_forex_trend_data() -> dict:
                 sym_info["lowest_50d"] = min(prior_closes)
 
             if sym_info["sma50"] is not None and sym_info["sma100"] is not None:
-                sym_info["sma_status"] = "Bullish" if sym_info["sma50"] > sym_info["sma100"] else "Bearish"
+                sym_info["sma_status"] = (
+                    "Bullish" if sym_info["sma50"] > sym_info["sma100"] else "Bearish"
+                )
 
         symbols_data.append(sym_info)
 
@@ -1797,8 +2004,8 @@ def _get_forex_trend_data() -> dict:
         live_atr = None
         if len(sym_candles) >= 101:
             _c = [c["close"] for c in sym_candles]
-            _h = [c["high"]  for c in sym_candles]
-            _l = [c["low"]   for c in sym_candles]
+            _h = [c["high"] for c in sym_candles]
+            _l = [c["low"] for c in sym_candles]
             _atr = IndicatorEngine.atr(_h, _l, _c, 100)
             live_atr = _atr[-1] if _atr and _atr[-1] is not None else None
 
@@ -1811,16 +2018,18 @@ def _get_forex_trend_data() -> dict:
             else:
                 trailing_stop = cur_close + (live_atr * 3.0)
 
-        trade_details.append({
-            "id": sig["id"],
-            "symbol": sig["asset"],
-            "direction": direction,
-            "entry_price": entry_price,
-            "live_atr": live_atr,
-            "trailing_stop": trailing_stop,
-            "current_close": cur_close,
-            "created_at": sig.get("created_at"),
-        })
+        trade_details.append(
+            {
+                "id": sig["id"],
+                "symbol": sig["asset"],
+                "direction": direction,
+                "entry_price": entry_price,
+                "live_atr": live_atr,
+                "trailing_stop": trailing_stop,
+                "current_close": cur_close,
+                "created_at": sig.get("created_at"),
+            }
+        )
 
     return {
         "et_time": et_now.strftime(f"%Y-%m-%d %H:%M:%S {'EDT' if ny_dst else 'EST'}"),
@@ -1831,19 +2040,37 @@ def _get_forex_trend_data() -> dict:
     }
 
 
-def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count: int) -> str:
+def _build_forex_trend_html(
+    fx_data: dict, fx_signal_rows: str, fx_signal_count: int
+) -> str:
     in_window = fx_data["in_window"]
-    window_badge = '<span class="badge status-active">IN WINDOW</span>' if in_window else '<span class="badge status-closed">OUTSIDE WINDOW</span>'
+    window_badge = (
+        '<span class="badge status-active">IN WINDOW</span>'
+        if in_window
+        else '<span class="badge status-closed">OUTSIDE WINDOW</span>'
+    )
 
     symbols_html = ""
     for sym in fx_data["symbols"]:
-        close_display = f"{sym['current_close']:.5f}" if sym["current_close"] is not None else "N/A"
+        close_display = (
+            f"{sym['current_close']:.5f}" if sym["current_close"] is not None else "N/A"
+        )
         sma50_display = f"{sym['sma50']:.5f}" if sym["sma50"] is not None else "N/A"
         sma100_display = f"{sym['sma100']:.5f}" if sym["sma100"] is not None else "N/A"
         atr_display = f"{sym['atr100']:.5f}" if sym["atr100"] is not None else "N/A"
-        high_display = f"{sym['highest_50d']:.5f}" if sym["highest_50d"] is not None else "N/A"
-        low_display = f"{sym['lowest_50d']:.5f}" if sym["lowest_50d"] is not None else "N/A"
-        sma_color = "#6ee7b7" if sym["sma_status"] == "Bullish" else "#fca5a5" if sym["sma_status"] == "Bearish" else "#94a3b8"
+        high_display = (
+            f"{sym['highest_50d']:.5f}" if sym["highest_50d"] is not None else "N/A"
+        )
+        low_display = (
+            f"{sym['lowest_50d']:.5f}" if sym["lowest_50d"] is not None else "N/A"
+        )
+        sma_color = (
+            "#6ee7b7"
+            if sym["sma_status"] == "Bullish"
+            else "#fca5a5"
+            if sym["sma_status"] == "Bearish"
+            else "#94a3b8"
+        )
         sma_badge = f'<span style="color:{sma_color};font-weight:600;">{sym["sma_status"]}</span>'
 
         breakout_long = ""
@@ -1856,8 +2083,8 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
                 breakout_short = ' <span class="badge sell">BREAKDOWN ✓</span>'
 
         symbols_html += f"""
-        <div class="settings-section" style="margin-bottom:16px;" data-testid="forex-trend-symbol-{sym['symbol'].replace('/','-')}">
-            <h3>{sym['symbol']} <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">{sym['candle_count']} D1 candles</span></h3>
+        <div class="settings-section" style="margin-bottom:16px;" data-testid="forex-trend-symbol-{sym["symbol"].replace("/", "-")}">
+            <h3>{sym["symbol"]} <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">{sym["candle_count"]} D1 candles</span></h3>
             <div class="stats-grid" style="margin-top:12px;">
                 <div class="stat-card">
                     <div class="stat-label">Current Close</div>
@@ -1891,30 +2118,40 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
             dir_class = "buy" if direction == "BUY" else "sell"
             dir_color = "#3b82f6" if direction == "BUY" else "#ef4444"
             entry_display = f"{t['entry_price']:.5f}"
-            atr_display = f"{t['live_atr']:.6f}" if t.get("live_atr") is not None else "N/A"
-            trail_display = f"{t['trailing_stop']:.5f}" if t["trailing_stop"] is not None else "N/A"
-            cur_display = f"{t['current_close']:.5f}" if t["current_close"] is not None else "N/A"
+            atr_display = (
+                f"{t['live_atr']:.6f}" if t.get("live_atr") is not None else "N/A"
+            )
+            trail_display = (
+                f"{t['trailing_stop']:.5f}" if t["trailing_stop"] is not None else "N/A"
+            )
+            cur_display = (
+                f"{t['current_close']:.5f}" if t["current_close"] is not None else "N/A"
+            )
             pnl = ""
             if t["current_close"] is not None:
-                diff = t["current_close"] - t["entry_price"] if direction == "BUY" else t["entry_price"] - t["current_close"]
+                diff = (
+                    t["current_close"] - t["entry_price"]
+                    if direction == "BUY"
+                    else t["entry_price"] - t["current_close"]
+                )
                 pnl_color = "#6ee7b7" if diff >= 0 else "#fca5a5"
                 pnl = f'<span style="color:{pnl_color};font-weight:600;">{diff:+.5f}</span>'
 
             trade_rows += f"""
-            <tr data-testid="row-forex-trade-{t['id']}">
-                <td>{t['symbol']}</td>
+            <tr data-testid="row-forex-trade-{t["id"]}">
+                <td>{t["symbol"]}</td>
                 <td><span class="badge {dir_class}">{direction}</span></td>
                 <td>{entry_display}</td>
                 <td><span style="color:#94a3b8;font-size:0.8rem;">live</span> {atr_display}</td>
                 <td style="color:#fbbf24;font-weight:600;">{trail_display}</td>
                 <td>{cur_display}</td>
                 <td>{pnl}</td>
-                <td>{t.get('created_at', 'N/A')}</td>
+                <td>{t.get("created_at", "N/A")}</td>
             </tr>"""
 
         active_html = f"""
         <div class="settings-section" style="margin-top:20px;border-left:3px solid #6366f1;">
-            <h3>Active Trades ({len(fx_data['active_trades'])})</h3>
+            <h3>Active Trades ({len(fx_data["active_trades"])})</h3>
             <div style="overflow-x:auto;margin-top:12px;">
                 <table class="data-table" data-testid="forex-trend-active-table">
                     <thead>
@@ -1945,8 +2182,8 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
         <div class="stat-card">
             <div class="stat-label">Eval Window (5:01 PM ET)</div>
             <div style="margin-top:8px;">{window_badge}</div>
-            <div class="stat-label" style="margin-top:8px;">{fx_data['et_time']}</div>
-            <div class="stat-label">DST: {'Active' if fx_data['dst_active'] else 'Inactive'}</div>
+            <div class="stat-label" style="margin-top:8px;">{fx_data["et_time"]}</div>
+            <div class="stat-label">DST: {"Active" if fx_data["dst_active"] else "Inactive"}</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Target Assets</div>
@@ -2005,6 +2242,7 @@ def _build_forex_trend_html(fx_data: dict, fx_signal_rows: str, fx_signal_count:
 def _get_hlc_fx_data() -> dict:
     from zoneinfo import ZoneInfo
     from trading_engine.utils.holiday_manager import is_trading_holiday as _is_holiday
+
     et_zone = ZoneInfo("America/New_York")
     et_now = datetime.now(et_zone)
     et_minutes = et_now.hour * 60 + et_now.minute
@@ -2077,7 +2315,9 @@ def _get_hlc_fx_data() -> dict:
         pos = pos_by_asset.get(sig["asset"])
 
         if direction == "BUY":
-            stored_extreme = (pos.get("highest_price_since_entry") if pos else None) or entry_price
+            stored_extreme = (
+                pos.get("highest_price_since_entry") if pos else None
+            ) or entry_price
             sym_h1 = get_candles(sig["asset"], "1H", 5)
             cur_close = sym_h1[-1]["close"] if sym_h1 else None
             if cur_close:
@@ -2088,20 +2328,24 @@ def _get_hlc_fx_data() -> dict:
             take_profit = None
             if atr_at_entry is not None:
                 take_profit = entry_price + (atr_at_entry * 6.0)
-            trade_details.append({
-                "id": sig["id"],
-                "symbol": sig["asset"],
-                "direction": direction,
-                "entry_price": entry_price,
-                "atr_at_entry": atr_at_entry,
-                "extreme_price": stored_extreme,
-                "trailing_stop": trailing_stop,
-                "take_profit": take_profit,
-                "current_close": cur_close,
-                "created_at": sig.get("created_at"),
-            })
+            trade_details.append(
+                {
+                    "id": sig["id"],
+                    "symbol": sig["asset"],
+                    "direction": direction,
+                    "entry_price": entry_price,
+                    "atr_at_entry": atr_at_entry,
+                    "extreme_price": stored_extreme,
+                    "trailing_stop": trailing_stop,
+                    "take_profit": take_profit,
+                    "current_close": cur_close,
+                    "created_at": sig.get("created_at"),
+                }
+            )
         elif direction == "SELL":
-            stored_extreme = (pos.get("lowest_price_since_entry") if pos else None) or entry_price
+            stored_extreme = (
+                pos.get("lowest_price_since_entry") if pos else None
+            ) or entry_price
             sym_h1 = get_candles(sig["asset"], "1H", 5)
             cur_close = sym_h1[-1]["close"] if sym_h1 else None
             if cur_close:
@@ -2112,18 +2356,20 @@ def _get_hlc_fx_data() -> dict:
             take_profit = None
             if atr_at_entry is not None:
                 take_profit = entry_price - (atr_at_entry * 6.0)
-            trade_details.append({
-                "id": sig["id"],
-                "symbol": sig["asset"],
-                "direction": direction,
-                "entry_price": entry_price,
-                "atr_at_entry": atr_at_entry,
-                "extreme_price": stored_extreme,
-                "trailing_stop": trailing_stop,
-                "take_profit": take_profit,
-                "current_close": cur_close,
-                "created_at": sig.get("created_at"),
-            })
+            trade_details.append(
+                {
+                    "id": sig["id"],
+                    "symbol": sig["asset"],
+                    "direction": direction,
+                    "entry_price": entry_price,
+                    "atr_at_entry": atr_at_entry,
+                    "extreme_price": stored_extreme,
+                    "trailing_stop": trailing_stop,
+                    "take_profit": take_profit,
+                    "current_close": cur_close,
+                    "created_at": sig.get("created_at"),
+                }
+            )
 
     return {
         "et_time": et_now.strftime(f"%Y-%m-%d %H:%M:%S {'EDT' if ny_dst else 'EST'}"),
@@ -2135,7 +2381,9 @@ def _get_hlc_fx_data() -> dict:
     }
 
 
-def _build_hlc_fx_html(hlc_data: dict, hlc_signal_rows: str, hlc_signal_count: int) -> str:
+def _build_hlc_fx_html(
+    hlc_data: dict, hlc_signal_rows: str, hlc_signal_count: int
+) -> str:
     in_window = hlc_data["in_window"]
     is_holiday = hlc_data.get("is_holiday", False)
     if is_holiday:
@@ -2146,13 +2394,25 @@ def _build_hlc_fx_html(hlc_data: dict, hlc_signal_rows: str, hlc_signal_count: i
         window_badge = '<span class="badge status-closed">OUTSIDE WINDOW</span>'
 
     sym = hlc_data["symbol_info"]
-    price_display = f"{sym['current_price']:.5f}" if sym["current_price"] is not None else "N/A"
-    high_display = f"{sym['highest_50d']:.5f}" if sym["highest_50d"] is not None else "N/A"
+    price_display = (
+        f"{sym['current_price']:.5f}" if sym["current_price"] is not None else "N/A"
+    )
+    high_display = (
+        f"{sym['highest_50d']:.5f}" if sym["highest_50d"] is not None else "N/A"
+    )
     low_display = f"{sym['lowest_50d']:.5f}" if sym["lowest_50d"] is not None else "N/A"
     atr_display = f"{sym['h1_atr100']:.5f}" if sym["h1_atr100"] is not None else "N/A"
-    prev_high_display = f"{sym['prev_day_high']:.5f}" if sym["prev_day_high"] is not None else "N/A"
-    prev_low_display = f"{sym['prev_day_low']:.5f}" if sym["prev_day_low"] is not None else "N/A"
-    reversal_display = f"{sym['reversal_threshold']:.5f}" if sym["reversal_threshold"] is not None else "N/A"
+    prev_high_display = (
+        f"{sym['prev_day_high']:.5f}" if sym["prev_day_high"] is not None else "N/A"
+    )
+    prev_low_display = (
+        f"{sym['prev_day_low']:.5f}" if sym["prev_day_low"] is not None else "N/A"
+    )
+    reversal_display = (
+        f"{sym['reversal_threshold']:.5f}"
+        if sym["reversal_threshold"] is not None
+        else "N/A"
+    )
 
     breakout_long = ""
     breakout_short = ""
@@ -2164,8 +2424,8 @@ def _build_hlc_fx_html(hlc_data: dict, hlc_signal_rows: str, hlc_signal_count: i
             breakout_short = ' <span class="badge sell">BREAKDOWN</span>'
 
     symbol_html = f"""
-    <div class="settings-section" style="margin-bottom:16px;" data-testid="hlc-fx-symbol-{sym['symbol'].replace('/','-')}">
-        <h3>{sym['symbol']} <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">{sym['h1_candle_count']} H1 / {sym['d1_candle_count']} D1 candles</span></h3>
+    <div class="settings-section" style="margin-bottom:16px;" data-testid="hlc-fx-symbol-{sym["symbol"].replace("/", "-")}">
+        <h3>{sym["symbol"]} <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">{sym["h1_candle_count"]} H1 / {sym["d1_candle_count"]} D1 candles</span></h3>
         <div class="stats-grid" style="margin-top:12px;">
             <div class="stat-card">
                 <div class="stat-label">Current Price</div>
@@ -2204,12 +2464,20 @@ def _build_hlc_fx_html(hlc_data: dict, hlc_signal_rows: str, hlc_signal_count: i
         for t in hlc_data["active_trades"]:
             dir_class = "buy" if t["direction"] == "BUY" else "sell"
             entry_display = f"{t['entry_price']:.5f}"
-            atr_display_t = f"{t['atr_at_entry']:.6f}" if t["atr_at_entry"] is not None else "N/A"
+            atr_display_t = (
+                f"{t['atr_at_entry']:.6f}" if t["atr_at_entry"] is not None else "N/A"
+            )
             extreme_label = "Peak" if t["direction"] == "BUY" else "Trough"
             extreme_display = f"{t['extreme_price']:.5f}"
-            trail_display = f"{t['trailing_stop']:.5f}" if t["trailing_stop"] is not None else "N/A"
-            tp_display = f"{t['take_profit']:.5f}" if t["take_profit"] is not None else "N/A"
-            cur_display = f"{t['current_close']:.5f}" if t["current_close"] is not None else "N/A"
+            trail_display = (
+                f"{t['trailing_stop']:.5f}" if t["trailing_stop"] is not None else "N/A"
+            )
+            tp_display = (
+                f"{t['take_profit']:.5f}" if t["take_profit"] is not None else "N/A"
+            )
+            cur_display = (
+                f"{t['current_close']:.5f}" if t["current_close"] is not None else "N/A"
+            )
             pnl = ""
             if t["current_close"] is not None:
                 if t["direction"] == "BUY":
@@ -2220,9 +2488,9 @@ def _build_hlc_fx_html(hlc_data: dict, hlc_signal_rows: str, hlc_signal_count: i
                 pnl = f'<span style="color:{pnl_color};font-weight:600;">{diff:+.5f}</span>'
 
             trade_rows += f"""
-            <tr data-testid="row-hlc-trade-{t['id']}">
-                <td>{t['symbol']}</td>
-                <td><span class="badge {dir_class}">{t['direction']}</span></td>
+            <tr data-testid="row-hlc-trade-{t["id"]}">
+                <td>{t["symbol"]}</td>
+                <td><span class="badge {dir_class}">{t["direction"]}</span></td>
                 <td>{entry_display}</td>
                 <td>{atr_display_t}</td>
                 <td>{extreme_display} <span style="color:#64748b;font-size:0.75rem;">({extreme_label})</span></td>
@@ -2230,12 +2498,12 @@ def _build_hlc_fx_html(hlc_data: dict, hlc_signal_rows: str, hlc_signal_count: i
                 <td style="color:#3b82f6;">{tp_display}</td>
                 <td>{cur_display}</td>
                 <td>{pnl}</td>
-                <td>{t.get('created_at', 'N/A')}</td>
+                <td>{t.get("created_at", "N/A")}</td>
             </tr>"""
 
         active_html = f"""
         <div class="settings-section" style="margin-top:20px;border-left:3px solid #8b5cf6;">
-            <h3>Active Trades ({len(hlc_data['active_trades'])})</h3>
+            <h3>Active Trades ({len(hlc_data["active_trades"])})</h3>
             <div style="overflow-x:auto;margin-top:12px;">
                 <table class="data-table" data-testid="hlc-fx-active-table">
                     <thead>
@@ -2268,8 +2536,8 @@ def _build_hlc_fx_html(hlc_data: dict, hlc_signal_rows: str, hlc_signal_count: i
         <div class="stat-card">
             <div class="stat-label">Eval Window (9:00 &amp; 10:00 AM ET)</div>
             <div style="margin-top:8px;">{window_badge}</div>
-            <div class="stat-label" style="margin-top:8px;">{hlc_data['et_time']}</div>
-            <div class="stat-label">DST: {'Active' if hlc_data['dst_active'] else 'Inactive'}</div>
+            <div class="stat-label" style="margin-top:8px;">{hlc_data["et_time"]}</div>
+            <div class="stat-label">DST: {"Active" if hlc_data["dst_active"] else "Inactive"}</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Target Asset</div>
@@ -2336,17 +2604,22 @@ def _get_signal_analysis_data() -> dict:
     all_positions = get_all_open_positions()
     pos_map = {}
     for p in all_positions:
-        key = f"{p.get('strategy_name','')}|{p.get('asset','')}"
+        key = f"{p.get('strategy_name', '')}|{p.get('asset', '')}"
         pos_map[key] = p
     sig_by_strat = {}
     for s in all_signals:
         sn = s.get("strategy_name", "")
         sig_by_strat.setdefault(sn, []).append(s)
 
-    trend_nf_symbols = list(_TNF_TARGET_SYMBOLS)
-    trend_fx_symbols = list(_TF_TARGET_SYMBOLS)
-    from trading_engine.strategies.multi_timeframe import ALL_ASSETS as _MTF_ALL_ASSETS
-    mtf_symbols = list(_MTF_ALL_ASSETS)
+    from trading_engine.strategies.trend_non_forex import (
+        get_active_symbols as _get_tnf_syms,
+    )
+    from trading_engine.strategies.trend_forex import get_active_symbols as _get_tf_syms
+    from trading_engine.strategies.multi_timeframe import get_all_mtf_assets
+
+    trend_nf_symbols = _get_tnf_syms()
+    trend_fx_symbols = _get_tf_syms()
+    mtf_symbols = get_all_mtf_assets()
 
     def _dp(sym):
         return 5 if "/" in sym else 2
@@ -2355,11 +2628,21 @@ def _get_signal_analysis_data() -> dict:
     for sym in trend_nf_symbols:
         d1 = get_candles(sym, "D1", 300)
         dp = _dp(sym)
-        row = {"symbol": sym, "candles": len(d1), "status": "insufficient", "close": None,
-               "hi50": None, "sma50": None, "sma100": None, "atr100": None,
-               "pct_from_hi": None, "sma_bias": None,
-               "long_met": False, "dp": dp,
-               "position": pos_map.get(f"trend_non_forex|{sym}")}
+        row = {
+            "symbol": sym,
+            "candles": len(d1),
+            "status": "insufficient",
+            "close": None,
+            "hi50": None,
+            "sma50": None,
+            "sma100": None,
+            "atr100": None,
+            "pct_from_hi": None,
+            "sma_bias": None,
+            "long_met": False,
+            "dp": dp,
+            "position": pos_map.get(f"trend_non_forex|{sym}"),
+        }
         if len(d1) >= 101:
             closes = [c["close"] for c in d1]
             highs = [c["high"] for c in d1]
@@ -2370,23 +2653,39 @@ def _get_signal_analysis_data() -> dict:
             atr_val = atr[-1] if atr else None
             hi50 = max(closes[-51:-1])
             cur = closes[-1]
-            row.update({
-                "status": "ready", "close": cur, "hi50": hi50,
-                "sma50": sma50, "sma100": sma100, "atr100": atr_val,
-                "pct_from_hi": (cur - hi50) / hi50 * 100,
-                "sma_bias": "BULL" if sma50 > sma100 else "BEAR",
-                "long_met": cur > hi50 and sma50 > sma100,
-            })
+            row.update(
+                {
+                    "status": "ready",
+                    "close": cur,
+                    "hi50": hi50,
+                    "sma50": sma50,
+                    "sma100": sma100,
+                    "atr100": atr_val,
+                    "pct_from_hi": (cur - hi50) / hi50 * 100,
+                    "sma_bias": "BULL" if sma50 > sma100 else "BEAR",
+                    "long_met": cur > hi50 and sma50 > sma100,
+                }
+            )
         trend_nf_rows.append(row)
 
     trend_fx_rows = []
     for sym in trend_fx_symbols:
         d1 = get_candles(sym, "D1", 300)
-        row = {"symbol": sym, "candles": len(d1), "status": "insufficient", "close": None,
-               "hi50": None, "sma50": None, "sma100": None, "atr100": None,
-               "pct_from_hi": None, "sma_bias": None,
-               "long_met": False, "dp": 5,
-               "position": pos_map.get(f"trend_forex|{sym}")}
+        row = {
+            "symbol": sym,
+            "candles": len(d1),
+            "status": "insufficient",
+            "close": None,
+            "hi50": None,
+            "sma50": None,
+            "sma100": None,
+            "atr100": None,
+            "pct_from_hi": None,
+            "sma_bias": None,
+            "long_met": False,
+            "dp": 5,
+            "position": pos_map.get(f"trend_forex|{sym}"),
+        }
         if len(d1) >= 101:
             closes = [c["close"] for c in d1]
             highs = [c["high"] for c in d1]
@@ -2397,26 +2696,44 @@ def _get_signal_analysis_data() -> dict:
             atr_val = atr[-1] if atr else None
             hi50 = max(closes[-51:-1])
             cur = closes[-1]
-            row.update({
-                "status": "ready", "close": cur, "hi50": hi50,
-                "sma50": sma50, "sma100": sma100, "atr100": atr_val,
-                "pct_from_hi": (cur - hi50) / hi50 * 100,
-                "sma_bias": "BULL" if sma50 > sma100 else "BEAR",
-                "long_met": cur > hi50 and sma50 > sma100,
-            })
+            row.update(
+                {
+                    "status": "ready",
+                    "close": cur,
+                    "hi50": hi50,
+                    "sma50": sma50,
+                    "sma100": sma100,
+                    "atr100": atr_val,
+                    "pct_from_hi": (cur - hi50) / hi50 * 100,
+                    "sma_bias": "BULL" if sma50 > sma100 else "BEAR",
+                    "long_met": cur > hi50 and sma50 > sma100,
+                }
+            )
         trend_fx_rows.append(row)
 
-    hlc_row = {"symbol": "EUR/USD", "status": "insufficient", "close": None,
-               "tokyo_high": None, "tokyo_low": None, "h1_atr": None,
-               "prev_high": None, "prev_low": None,
-               "swept_below": False, "swept_above": False,
-               "recovered_above_low": False, "recovered_below_high": False,
-               "bullish_candle": False, "bearish_candle": False,
-               "long_met": False, "short_met": False,
-               "window_active": et_hour in (9, 10),
-               "holiday_blocked": is_holiday,
-               "position": pos_map.get("highest_lowest_fx|EUR/USD"),
-               "tokyo_candle_count": 0, "ny_candle_count": 0}
+    hlc_row = {
+        "symbol": "EUR/USD",
+        "status": "insufficient",
+        "close": None,
+        "tokyo_high": None,
+        "tokyo_low": None,
+        "h1_atr": None,
+        "prev_high": None,
+        "prev_low": None,
+        "swept_below": False,
+        "swept_above": False,
+        "recovered_above_low": False,
+        "recovered_below_high": False,
+        "bullish_candle": False,
+        "bearish_candle": False,
+        "long_met": False,
+        "short_met": False,
+        "window_active": et_hour in (9, 10),
+        "holiday_blocked": is_holiday,
+        "position": pos_map.get("highest_lowest_fx|EUR/USD"),
+        "tokyo_candle_count": 0,
+        "ny_candle_count": 0,
+    }
     h1 = get_candles("EUR/USD", "1H", 300)
     d1 = get_candles("EUR/USD", "D1", 200)
     if len(h1) >= 100 and len(d1) >= 5:
@@ -2427,13 +2744,19 @@ def _get_signal_analysis_data() -> dict:
         atr_val = atr[-1] if atr else None
 
         from zoneinfo import ZoneInfo
+
         tokyo_tz = ZoneInfo("Asia/Tokyo")
         et_tz = ZoneInfo("America/New_York")
         today_et = et_now.date()
 
-        tokyo_start_local = datetime(today_et.year, today_et.month, today_et.day, 8, 0, tzinfo=tokyo_tz)
-        ny_start_local = datetime(today_et.year, today_et.month, today_et.day, 8, 0, tzinfo=et_tz)
+        tokyo_start_local = datetime(
+            today_et.year, today_et.month, today_et.day, 8, 0, tzinfo=tokyo_tz
+        )
+        ny_start_local = datetime(
+            today_et.year, today_et.month, today_et.day, 8, 0, tzinfo=et_tz
+        )
         from datetime import timezone as dt_tz
+
         tokyo_start_utc = tokyo_start_local.astimezone(dt_tz.utc)
         ny_start_utc = ny_start_local.astimezone(dt_tz.utc)
 
@@ -2443,12 +2766,20 @@ def _get_signal_analysis_data() -> dict:
             ts = c.get("timestamp", "")
             try:
                 if isinstance(ts, datetime):
-                    c_utc = ts.replace(tzinfo=dt_tz.utc) if ts.tzinfo is None else ts.astimezone(dt_tz.utc)
+                    c_utc = (
+                        ts.replace(tzinfo=dt_tz.utc)
+                        if ts.tzinfo is None
+                        else ts.astimezone(dt_tz.utc)
+                    )
                 else:
-                    c_utc = datetime.strptime(str(ts)[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=dt_tz.utc)
+                    c_utc = datetime.strptime(
+                        str(ts)[:19], "%Y-%m-%dT%H:%M:%S"
+                    ).replace(tzinfo=dt_tz.utc)
             except (ValueError, TypeError):
                 try:
-                    c_utc = datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=dt_tz.utc)
+                    c_utc = datetime.strptime(
+                        str(ts)[:19], "%Y-%m-%d %H:%M:%S"
+                    ).replace(tzinfo=dt_tz.utc)
                 except (ValueError, TypeError):
                     continue
             if tokyo_start_utc <= c_utc < ny_start_utc:
@@ -2475,8 +2806,16 @@ def _get_signal_analysis_data() -> dict:
                 prev_low = candle.get("low")
                 break
 
-        tokyo_high = max((c["close"] for c in tokyo_candles), default=None) if tokyo_candles else None
-        tokyo_low = min((c["close"] for c in tokyo_candles), default=None) if tokyo_candles else None
+        tokyo_high = (
+            max((c["close"] for c in tokyo_candles), default=None)
+            if tokyo_candles
+            else None
+        )
+        tokyo_low = (
+            min((c["close"] for c in tokyo_candles), default=None)
+            if tokyo_candles
+            else None
+        )
 
         swept_below = False
         swept_above = False
@@ -2490,40 +2829,77 @@ def _get_signal_analysis_data() -> dict:
         bullish_candle = cur > cur_open
         bearish_candle = cur < cur_open
 
-        long_met = swept_below and recovered_above_low and bullish_candle and (prev_low is not None and cur > prev_low)
-        short_met = swept_above and recovered_below_high and bearish_candle and (prev_high is not None and cur < prev_high)
+        long_met = (
+            swept_below
+            and recovered_above_low
+            and bullish_candle
+            and (prev_low is not None and cur > prev_low)
+        )
+        short_met = (
+            swept_above
+            and recovered_below_high
+            and bearish_candle
+            and (prev_high is not None and cur < prev_high)
+        )
 
-        hlc_row.update({
-            "status": "ready", "close": cur, "tokyo_high": tokyo_high, "tokyo_low": tokyo_low,
-            "h1_atr": atr_val, "prev_high": prev_high, "prev_low": prev_low,
-            "swept_below": swept_below, "swept_above": swept_above,
-            "recovered_above_low": recovered_above_low, "recovered_below_high": recovered_below_high,
-            "bullish_candle": bullish_candle, "bearish_candle": bearish_candle,
-            "long_met": long_met, "short_met": short_met,
-            "tokyo_candle_count": len(tokyo_candles), "ny_candle_count": len(ny_candles),
-        })
+        hlc_row.update(
+            {
+                "status": "ready",
+                "close": cur,
+                "tokyo_high": tokyo_high,
+                "tokyo_low": tokyo_low,
+                "h1_atr": atr_val,
+                "prev_high": prev_high,
+                "prev_low": prev_low,
+                "swept_below": swept_below,
+                "swept_above": swept_above,
+                "recovered_above_low": recovered_above_low,
+                "recovered_below_high": recovered_below_high,
+                "bullish_candle": bullish_candle,
+                "bearish_candle": bearish_candle,
+                "long_met": long_met,
+                "short_met": short_met,
+                "tokyo_candle_count": len(tokyo_candles),
+                "ny_candle_count": len(ny_candles),
+            }
+        )
 
-    spx_row = {"symbol": "SPX", "status": "insufficient", "close": None, "rsi20": None,
-               "long_met": False, "in_session": False,
-               "position": pos_map.get("sp500_momentum|SPX")}
+    spx_row = {
+        "symbol": "SPX",
+        "status": "insufficient",
+        "close": None,
+        "rsi20": None,
+        "long_met": False,
+        "in_session": False,
+        "position": pos_map.get("sp500_momentum|SPX"),
+    }
     m30 = get_candles("SPX", "30m", 300)
     if len(m30) >= 20:
         closes_30 = [c["close"] for c in m30]
         rsi = IndicatorEngine.rsi(closes_30, 20)
         rsi_val = rsi[-1] if rsi else None
         in_session = 9 * 60 + 30 <= et_hour * 60 + et_now.minute < 15 * 60 + 30
-        spx_row.update({
-            "status": "ready", "close": closes_30[-1], "rsi20": rsi_val,
-            "long_met": bool(rsi_val and rsi_val > 70),
-            "in_session": in_session,
-        })
+        spx_row.update(
+            {
+                "status": "ready",
+                "close": closes_30[-1],
+                "rsi20": rsi_val,
+                "long_met": bool(rsi_val and rsi_val > 70),
+                "in_session": in_session,
+            }
+        )
 
     mtf_rows = []
     for sym in mtf_symbols:
         dp = _dp(sym)
-        row = {"symbol": sym, "dp": dp, "timeframes": {},
-               "all_bull": False, "all_bear": False,
-               "position": pos_map.get(f"mtf_ema|{sym}")}
+        row = {
+            "symbol": sym,
+            "dp": dp,
+            "timeframes": {},
+            "all_bull": False,
+            "all_bear": False,
+            "position": pos_map.get(f"mtf_ema|{sym}"),
+        }
         bull_count = 0
         bear_count = 0
         for tf in ["D1", "4H", "1H"]:
@@ -2542,9 +2918,14 @@ def _get_signal_analysis_data() -> dict:
                 if bear:
                     bear_count += 1
                 tf_data = {
-                    "candles": len(candles), "status": "ready",
-                    "close": cur, "ema20": ema20, "ema50": ema50, "ema200": ema200,
-                    "bull": bull, "bear": bear,
+                    "candles": len(candles),
+                    "status": "ready",
+                    "close": cur,
+                    "ema20": ema20,
+                    "ema50": ema50,
+                    "ema200": ema200,
+                    "bull": bull,
+                    "bear": bear,
                 }
             row["timeframes"][tf] = tf_data
         row["all_bull"] = bull_count == 3
@@ -2566,19 +2947,24 @@ def _get_signal_analysis_data() -> dict:
         "spx": spx_row,
         "mtf": mtf_rows,
         "multi_sig_assets": sum(
-            1 for cnt in (
-                __import__("collections").Counter(
-                    s["asset"] for s in all_signals if s.get("status") == "OPEN"
-                ).values()
-            ) if cnt > 1
+            1
+            for cnt in (
+                __import__("collections")
+                .Counter(s["asset"] for s in all_signals if s.get("status") == "OPEN")
+                .values()
+            )
+            if cnt > 1
         ),
         "integrity_ok": all(
-            cnt == 1 for cnt in (
-                __import__("collections").Counter(
-                    s["asset"] for s in all_signals if s.get("status") == "OPEN"
-                ).values()
+            cnt == 1
+            for cnt in (
+                __import__("collections")
+                .Counter(s["asset"] for s in all_signals if s.get("status") == "OPEN")
+                .values()
             )
-        ) if all_signals else True,
+        )
+        if all_signals
+        else True,
     }
 
 
@@ -2598,16 +2984,16 @@ def _build_signal_analysis_html(data: dict) -> str:
     <div class="stats-grid" style="margin-bottom:24px;">
         <div class="stat-card">
             <div class="stat-label">Current Time</div>
-            <div class="stat-value" style="font-size:1rem;">{data['et_time']}</div>
-            <div class="stat-label" style="margin-top:4px;">DST: {'Active' if data['dst_active'] else 'Inactive'}{' | <span style=&quot;color:#f59e0b;&quot;>HOLIDAY</span>' if data['is_holiday'] else ''}</div>
+            <div class="stat-value" style="font-size:1rem;">{data["et_time"]}</div>
+            <div class="stat-label" style="margin-top:4px;">DST: {"Active" if data["dst_active"] else "Inactive"}{" | <span style=&quot;color:#f59e0b;&quot;>HOLIDAY</span>" if data["is_holiday"] else ""}</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Total Signals (All Time)</div>
-            <div class="stat-value" data-testid="text-total-signals">{data['total_signals']}</div>
+            <div class="stat-value" data-testid="text-total-signals">{data["total_signals"]}</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Open Positions</div>
-            <div class="stat-value" data-testid="text-open-positions">{data['open_positions']}</div>
+            <div class="stat-value" data-testid="text-open-positions">{data["open_positions"]}</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Duplicate Active Assets</div>
@@ -2616,16 +3002,20 @@ def _build_signal_analysis_html(data: dict) -> str:
         </div>
         <div class="stat-card">
             <div class="stat-label">Signal Integrity</div>
-            <div class="stat-value" style="color:{'#22c55e' if data.get('integrity_ok', True) else '#ef4444'};" data-testid="text-signal-integrity">
-                {'OK' if data.get('integrity_ok', True) else 'CHECK'}
+            <div class="stat-value" style="color:{"#22c55e" if data.get("integrity_ok", True) else "#ef4444"};" data-testid="text-signal-integrity">
+                {"OK" if data.get("integrity_ok", True) else "CHECK"}
             </div>
-            <div class="stat-label" style="margin-top:4px;">Multi-signal assets: {data.get('multi_sig_assets', 0)}</div>
+            <div class="stat-label" style="margin-top:4px;">Multi-signal assets: {data.get("multi_sig_assets", 0)}</div>
         </div>
     </div>
     """
 
     def _fmt(val, dp):
-        return f"{val:.{dp}f}" if val is not None else '<span style="color:#64748b;">N/A</span>'
+        return (
+            f"{val:.{dp}f}"
+            if val is not None
+            else '<span style="color:#64748b;">N/A</span>'
+        )
 
     def _pct_bar(pct_hi, pct_lo):
         if pct_hi is None or pct_lo is None:
@@ -2645,7 +3035,9 @@ def _build_signal_analysis_html(data: dict) -> str:
         if blocked:
             return f'<span class="badge status-expired" style="font-size:11px;">{label}: BLOCKED</span>'
         if met:
-            return f'<span class="badge buy" style="font-size:11px;">{label}: MET</span>'
+            return (
+                f'<span class="badge buy" style="font-size:11px;">{label}: MET</span>'
+            )
         return f'<span class="badge" style="font-size:11px;background:rgba(100,116,139,0.15);color:#94a3b8;">{label}: NOT MET</span>'
 
     def _pos_badge(pos):
@@ -2659,102 +3051,132 @@ def _build_signal_analysis_html(data: dict) -> str:
     for r in data["trend_nf"]:
         dp = r["dp"]
         if r["status"] == "insufficient":
-            trend_nf_html += f"""<tr data-testid="row-analysis-tnf-{r['symbol'].replace('/','-')}">
-                <td style="font-weight:600;">{r['symbol']}</td>
-                <td colspan="5" style="color:#64748b;">Insufficient data ({r['candles']} candles, need 101+)</td>
-                <td>{_pos_badge(r['position'])}</td></tr>"""
+            trend_nf_html += f"""<tr data-testid="row-analysis-tnf-{r["symbol"].replace("/", "-")}">
+                <td style="font-weight:600;">{r["symbol"]}</td>
+                <td colspan="5" style="color:#64748b;">Insufficient data ({r["candles"]} candles, need 101+)</td>
+                <td>{_pos_badge(r["position"])}</td></tr>"""
             continue
         sma_color = "#6ee7b7" if r["sma_bias"] == "BULL" else "#fca5a5"
-        trend_nf_html += f"""<tr data-testid="row-analysis-tnf-{r['symbol'].replace('/','-')}">
-            <td style="font-weight:600;">{r['symbol']}</td>
-            <td>{_fmt(r['close'], dp)}</td>
-            <td>{_fmt(r['hi50'], dp)} <span style="color:#64748b;font-size:11px;">({r['pct_from_hi']:+.2f}%)</span></td>
-            <td><span style="color:{sma_color};font-weight:600;">{r['sma_bias']}</span>
-                <span style="color:#64748b;font-size:11px;display:block;">{_fmt(r['sma50'], dp)} / {_fmt(r['sma100'], dp)}</span></td>
-            <td>{_fmt(r['atr100'], dp)}</td>
-            <td>{_cond_badge(r['long_met'], 'LONG')}</td>
-            <td>{_pos_badge(r['position'])}</td></tr>"""
+        trend_nf_html += f"""<tr data-testid="row-analysis-tnf-{r["symbol"].replace("/", "-")}">
+            <td style="font-weight:600;">{r["symbol"]}</td>
+            <td>{_fmt(r["close"], dp)}</td>
+            <td>{_fmt(r["hi50"], dp)} <span style="color:#64748b;font-size:11px;">({r["pct_from_hi"]:+.2f}%)</span></td>
+            <td><span style="color:{sma_color};font-weight:600;">{r["sma_bias"]}</span>
+                <span style="color:#64748b;font-size:11px;display:block;">{_fmt(r["sma50"], dp)} / {_fmt(r["sma100"], dp)}</span></td>
+            <td>{_fmt(r["atr100"], dp)}</td>
+            <td>{_cond_badge(r["long_met"], "LONG")}</td>
+            <td>{_pos_badge(r["position"])}</td></tr>"""
 
     trend_fx_html = ""
     for r in data["trend_fx"]:
         if r["status"] == "insufficient":
-            trend_fx_html += f"""<tr data-testid="row-analysis-tfx-{r['symbol'].replace('/','-')}">
-                <td style="font-weight:600;">{r['symbol']}</td>
+            trend_fx_html += f"""<tr data-testid="row-analysis-tfx-{r["symbol"].replace("/", "-")}">
+                <td style="font-weight:600;">{r["symbol"]}</td>
                 <td colspan="5" style="color:#f59e0b;">No data &mdash; awaiting first scheduler run (4:01 PM ET)</td>
-                <td>{_pos_badge(r['position'])}</td></tr>"""
+                <td>{_pos_badge(r["position"])}</td></tr>"""
             continue
         sma_color = "#6ee7b7" if r["sma_bias"] == "BULL" else "#fca5a5"
-        trend_fx_html += f"""<tr data-testid="row-analysis-tfx-{r['symbol'].replace('/','-')}">
-            <td style="font-weight:600;">{r['symbol']}</td>
-            <td>{_fmt(r['close'], 5)}</td>
-            <td>{_fmt(r['hi50'], 5)} <span style="color:#64748b;font-size:11px;">({r['pct_from_hi']:+.2f}%)</span></td>
-            <td><span style="color:{sma_color};font-weight:600;">{r['sma_bias']}</span>
-                <span style="color:#64748b;font-size:11px;display:block;">{_fmt(r['sma50'], 5)} / {_fmt(r['sma100'], 5)}</span></td>
-            <td>{_fmt(r['atr100'], 5)}</td>
-            <td>{_cond_badge(r['long_met'], 'LONG')}</td>
-            <td>{_pos_badge(r['position'])}</td></tr>"""
+        trend_fx_html += f"""<tr data-testid="row-analysis-tfx-{r["symbol"].replace("/", "-")}">
+            <td style="font-weight:600;">{r["symbol"]}</td>
+            <td>{_fmt(r["close"], 5)}</td>
+            <td>{_fmt(r["hi50"], 5)} <span style="color:#64748b;font-size:11px;">({r["pct_from_hi"]:+.2f}%)</span></td>
+            <td><span style="color:{sma_color};font-weight:600;">{r["sma_bias"]}</span>
+                <span style="color:#64748b;font-size:11px;display:block;">{_fmt(r["sma50"], 5)} / {_fmt(r["sma100"], 5)}</span></td>
+            <td>{_fmt(r["atr100"], 5)}</td>
+            <td>{_cond_badge(r["long_met"], "LONG")}</td>
+            <td>{_pos_badge(r["position"])}</td></tr>"""
 
     h = data["hlc"]
-    hlc_window_badge = '<span class="badge status-active">IN WINDOW</span>' if h["window_active"] else '<span class="badge status-closed">OUTSIDE</span>'
-    hlc_holiday_badge = ' <span class="badge status-expired">HOLIDAY</span>' if h["holiday_blocked"] else ""
+    hlc_window_badge = (
+        '<span class="badge status-active">IN WINDOW</span>'
+        if h["window_active"]
+        else '<span class="badge status-closed">OUTSIDE</span>'
+    )
+    hlc_holiday_badge = (
+        ' <span class="badge status-expired">HOLIDAY</span>'
+        if h["holiday_blocked"]
+        else ""
+    )
     hlc_detail_html = ""
     if h["status"] == "ready":
-        sweep_below_badge = '<span class="badge buy" style="font-size:11px;">SWEPT</span>' if h.get('swept_below') else '<span class="badge" style="font-size:11px;background:rgba(100,116,139,0.15);color:#94a3b8;">NO SWEEP</span>'
-        sweep_above_badge = '<span class="badge sell" style="font-size:11px;">SWEPT</span>' if h.get('swept_above') else '<span class="badge" style="font-size:11px;background:rgba(100,116,139,0.15);color:#94a3b8;">NO SWEEP</span>'
+        sweep_below_badge = (
+            '<span class="badge buy" style="font-size:11px;">SWEPT</span>'
+            if h.get("swept_below")
+            else '<span class="badge" style="font-size:11px;background:rgba(100,116,139,0.15);color:#94a3b8;">NO SWEEP</span>'
+        )
+        sweep_above_badge = (
+            '<span class="badge sell" style="font-size:11px;">SWEPT</span>'
+            if h.get("swept_above")
+            else '<span class="badge" style="font-size:11px;background:rgba(100,116,139,0.15);color:#94a3b8;">NO SWEEP</span>'
+        )
         hlc_detail_html = f"""
         <div class="stats-grid" style="margin-top:12px;">
-            <div class="stat-card"><div class="stat-label">Current Price</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h['close'], 5)}</div></div>
-            <div class="stat-card"><div class="stat-label">Tokyo High (Close)</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h.get('tokyo_high'), 5)}</div><div style="margin-top:4px;">{sweep_above_badge}</div></div>
-            <div class="stat-card"><div class="stat-label">Tokyo Low (Close)</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h.get('tokyo_low'), 5)}</div><div style="margin-top:4px;">{sweep_below_badge}</div></div>
-            <div class="stat-card"><div class="stat-label">H1 ATR(100)</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h['h1_atr'], 6)}</div></div>
-            <div class="stat-card"><div class="stat-label">Prev Day High / Low</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h.get('prev_high'), 5)} / {_fmt(h.get('prev_low'), 5)}</div></div>
-            <div class="stat-card"><div class="stat-label">Session Candles</div><div class="stat-value" style="font-size:1.1rem;">Tokyo: {h.get('tokyo_candle_count', 0)} &middot; NY: {h.get('ny_candle_count', 0)}</div></div>
+            <div class="stat-card"><div class="stat-label">Current Price</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h["close"], 5)}</div></div>
+            <div class="stat-card"><div class="stat-label">Tokyo High (Close)</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h.get("tokyo_high"), 5)}</div><div style="margin-top:4px;">{sweep_above_badge}</div></div>
+            <div class="stat-card"><div class="stat-label">Tokyo Low (Close)</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h.get("tokyo_low"), 5)}</div><div style="margin-top:4px;">{sweep_below_badge}</div></div>
+            <div class="stat-card"><div class="stat-label">H1 ATR(100)</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h["h1_atr"], 6)}</div></div>
+            <div class="stat-card"><div class="stat-label">Prev Day High / Low</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(h.get("prev_high"), 5)} / {_fmt(h.get("prev_low"), 5)}</div></div>
+            <div class="stat-card"><div class="stat-label">Session Candles</div><div class="stat-value" style="font-size:1.1rem;">Tokyo: {h.get("tokyo_candle_count", 0)} &middot; NY: {h.get("ny_candle_count", 0)}</div></div>
         </div>
         <div style="font-weight:500;color:#94a3b8;font-size:13px;margin-top:16px;margin-bottom:6px;">Sweep &amp; Recover Conditions</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            {_cond_badge(h.get('swept_below', False), 'Swept Below Tokyo Low')}
-            {_cond_badge(h.get('recovered_above_low', False), 'Recovered Above Low')}
-            {_cond_badge(h.get('bullish_candle', False), 'Bullish H1 Candle')}
-            {_cond_badge(h.get('prev_low') is not None and h['close'] is not None and h['close'] > (h.get('prev_low') or 0), 'Above Prev Daily Low')}
-            {_cond_badge(h.get('long_met', False), 'ALL LONG MET')}
+            {_cond_badge(h.get("swept_below", False), "Swept Below Tokyo Low")}
+            {_cond_badge(h.get("recovered_above_low", False), "Recovered Above Low")}
+            {_cond_badge(h.get("bullish_candle", False), "Bullish H1 Candle")}
+            {_cond_badge(h.get("prev_low") is not None and h["close"] is not None and h["close"] > (h.get("prev_low") or 0), "Above Prev Daily Low")}
+            {_cond_badge(h.get("long_met", False), "ALL LONG MET")}
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-            {_cond_badge(h.get('swept_above', False), 'Swept Above Tokyo High')}
-            {_cond_badge(h.get('recovered_below_high', False), 'Recovered Below High')}
-            {_cond_badge(h.get('bearish_candle', False), 'Bearish H1 Candle')}
-            {_cond_badge(h.get('prev_high') is not None and h['close'] is not None and h['close'] < (h.get('prev_high') or float('inf')), 'Below Prev Daily High')}
-            {_cond_badge(h.get('short_met', False), 'ALL SHORT MET')}
+            {_cond_badge(h.get("swept_above", False), "Swept Above Tokyo High")}
+            {_cond_badge(h.get("recovered_below_high", False), "Recovered Below High")}
+            {_cond_badge(h.get("bearish_candle", False), "Bearish H1 Candle")}
+            {_cond_badge(h.get("prev_high") is not None and h["close"] is not None and h["close"] < (h.get("prev_high") or float("inf")), "Below Prev Daily High")}
+            {_cond_badge(h.get("short_met", False), "ALL SHORT MET")}
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-            {_cond_badge(h['window_active'] and not h['holiday_blocked'], 'TIME WINDOW (9:00/10:00 AM ET)', blocked=h['holiday_blocked'] or not h['window_active'])}
+            {_cond_badge(h["window_active"] and not h["holiday_blocked"], "TIME WINDOW (9:00/10:00 AM ET)", blocked=h["holiday_blocked"] or not h["window_active"])}
         </div>
-        <div style="margin-top:8px;">{_pos_badge(h['position'])}</div>"""
+        <div style="margin-top:8px;">{_pos_badge(h["position"])}</div>"""
     else:
-        hlc_detail_html = '<p style="color:#64748b;">Insufficient data for analysis.</p>'
+        hlc_detail_html = (
+            '<p style="color:#64748b;">Insufficient data for analysis.</p>'
+        )
 
     s = data["spx"]
-    spx_session_badge = '<span class="badge status-active">IN SESSION</span>' if s["in_session"] else '<span class="badge status-closed">OUTSIDE</span>'
+    spx_session_badge = (
+        '<span class="badge status-active">IN SESSION</span>'
+        if s["in_session"]
+        else '<span class="badge status-closed">OUTSIDE</span>'
+    )
     spx_detail_html = ""
     if s["status"] == "ready":
-        rsi_color = "#22c55e" if s["rsi20"] and s["rsi20"] > 70 else "#f59e0b" if s["rsi20"] and s["rsi20"] > 60 else "#94a3b8"
+        rsi_color = (
+            "#22c55e"
+            if s["rsi20"] and s["rsi20"] > 70
+            else "#f59e0b"
+            if s["rsi20"] and s["rsi20"] > 60
+            else "#94a3b8"
+        )
         spx_detail_html = f"""
         <div class="stats-grid" style="margin-top:12px;">
-            <div class="stat-card"><div class="stat-label">SPX Close (30m)</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(s['close'], 2)}</div></div>
-            <div class="stat-card"><div class="stat-label">RSI(20)</div><div class="stat-value" style="font-size:1.1rem;color:{rsi_color};">{_fmt(s['rsi20'], 2)}</div>
+            <div class="stat-card"><div class="stat-label">SPX Close (30m)</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(s["close"], 2)}</div></div>
+            <div class="stat-card"><div class="stat-label">RSI(20)</div><div class="stat-value" style="font-size:1.1rem;color:{rsi_color};">{_fmt(s["rsi20"], 2)}</div>
                 <div style="margin-top:4px;height:6px;background:#334155;border-radius:3px;position:relative;overflow:hidden;">
-                    <div style="position:absolute;left:0;top:0;height:100%;width:{min(s['rsi20'] or 0, 100):.0f}%;background:{rsi_color};border-radius:3px;"></div>
+                    <div style="position:absolute;left:0;top:0;height:100%;width:{min(s["rsi20"] or 0, 100):.0f}%;background:{rsi_color};border-radius:3px;"></div>
                 </div>
                 <div style="font-size:11px;color:#64748b;margin-top:2px;">Entry threshold: 70</div>
             </div>
             <div class="stat-card"><div class="stat-label">ARCA Session</div><div style="margin-top:8px;">{spx_session_badge}</div></div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
-            {_cond_badge(s['long_met'], 'RSI &gt; 70 (LONG)')}
-            {_cond_badge(s['in_session'], 'ARCA 09:30-15:30', blocked=not s['in_session'])}
+            {_cond_badge(s["long_met"], "RSI &gt; 70 (LONG)")}
+            {_cond_badge(s["in_session"], "ARCA 09:30-15:30", blocked=not s["in_session"])}
         </div>
-        <div style="margin-top:8px;">{_pos_badge(s['position'])}</div>"""
+        <div style="margin-top:8px;">{_pos_badge(s["position"])}</div>"""
     else:
-        spx_detail_html = '<p style="color:#64748b;">Insufficient 30m data for analysis.</p>'
+        spx_detail_html = (
+            '<p style="color:#64748b;">Insufficient 30m data for analysis.</p>'
+        )
 
     mtf_html = ""
     for r in data["mtf"]:
@@ -2781,11 +3203,11 @@ def _build_signal_analysis_html(data: dict) -> str:
                 icon = '<span style="color:#f59e0b;">&#9644;</span>'
             tf_cells += f'<td>{icon} <span style="font-size:11px;color:#94a3b8;">E20={_fmt(tfd["ema20"], dp)} E50={_fmt(tfd["ema50"], dp)}</span></td>'
 
-        mtf_html += f"""<tr data-testid="row-analysis-mtf-{r['symbol'].replace('/','-')}">
-            <td style="font-weight:600;">{r['symbol']}</td>
+        mtf_html += f"""<tr data-testid="row-analysis-mtf-{r["symbol"].replace("/", "-")}">
+            <td style="font-weight:600;">{r["symbol"]}</td>
             {tf_cells}
             <td>{sync_badge}</td>
-            <td>{_pos_badge(r['position'])}</td></tr>"""
+            <td>{_pos_badge(r["position"])}</td></tr>"""
 
     signal_dist_html = ""
     for sn, count in sorted(data["signal_counts"].items()):
@@ -2881,14 +3303,14 @@ def _build_users_html(current_user_id: int) -> str:
         role_bg = "rgba(59,130,246,0.15)" if role == "ADMIN" else "rgba(34,197,94,0.15)"
         role_badge = f'<span style="display:inline-block;padding:2px 10px;border-radius:9999px;font-size:11px;font-weight:600;color:{role_color};background:{role_bg};border:1px solid {role_color}33;">{role}</span>'
         rows += f"""
-        <tr data-testid="row-admin-{a['id']}">
-            <td>{a['id']}</td>
-            <td>{a['username']}{self_badge}</td>
+        <tr data-testid="row-admin-{a["id"]}">
+            <td>{a["id"]}</td>
+            <td>{a["username"]}{self_badge}</td>
             <td>{role_badge}</td>
-            <td>{a['created_at']}</td>
+            <td>{a["created_at"]}</td>
             <td>
-                <button class="btn btn-secondary btn-sm" onclick="editAdmin({a['id']}, '{a['username']}', '{role}')" data-testid="button-edit-admin-{a['id']}">Edit</button>
-                <button class="btn btn-danger btn-sm" onclick="deleteAdmin({a['id']}, '{a['username']}')" data-testid="button-delete-admin-{a['id']}" {'disabled style="opacity:0.5;cursor:not-allowed;"' if len(admins) <= 1 else ''}>Delete</button>
+                <button class="btn btn-secondary btn-sm" onclick="editAdmin({a["id"]}, '{a["username"]}', '{role}')" data-testid="button-edit-admin-{a["id"]}">Edit</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteAdmin({a["id"]}, '{a["username"]}')" data-testid="button-delete-admin-{a["id"]}" {'disabled style="opacity:0.5;cursor:not-allowed;"' if len(admins) <= 1 else ""}>Delete</button>
             </td>
         </tr>"""
 
@@ -4434,7 +4856,13 @@ async function loadSignalIntegrity() {
 def auth_status(request: Request):
     user = _get_session_user(request)
     if user:
-        return JSONResponse(content={"authenticated": True, "username": user.get("username", ""), "role": user.get("role", "CUSTOMER")})
+        return JSONResponse(
+            content={
+                "authenticated": True,
+                "username": user.get("username", ""),
+                "role": user.get("role", "CUSTOMER"),
+            }
+        )
     return JSONResponse(content={"authenticated": False})
 
 
@@ -4442,8 +4870,12 @@ def auth_status(request: Request):
 def login_page(request: Request, error: str = Query(""), registered: str = Query("")):
     user = _get_session_user(request)
     if user:
-        return RedirectResponse(url=request.scope.get("root_path", "") + "/admin/", status_code=302)
-    success = "Account created successfully! Please sign in." if registered == "1" else ""
+        return RedirectResponse(
+            url=request.scope.get("root_path", "") + "/admin/", status_code=302
+        )
+    success = (
+        "Account created successfully! Please sign in." if registered == "1" else ""
+    )
     return HTMLResponse(content=_build_login_page(error, success))
 
 
@@ -4461,7 +4893,14 @@ async def login_submit(request: Request):
     cleanup_expired_sessions()
     token = create_session(user["id"])
     response = RedirectResponse(url=base_path + "/admin/", status_code=302)
-    response.set_cookie(key="admin_session", value=token, httponly=True, samesite="lax", max_age=86400, path="/")
+    response.set_cookie(
+        key="admin_session",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        max_age=86400,
+        path="/",
+    )
     return response
 
 
@@ -4490,12 +4929,17 @@ def admin_dashboard(
         base_path = request.scope.get("root_path", "")
         return RedirectResponse(url=base_path + "/admin/login", status_code=302)
 
-    signals = get_all_signals(strategy_name=strategy_name, asset=asset, status=status, limit=200, max_age_days=92)
+    signals = get_all_signals(
+        strategy_name=strategy_name,
+        asset=asset,
+        status=status,
+        limit=200,
+        max_age_days=92,
+    )
     # Filter by asset_class in Python (DB column added via migration)
     if asset_class:
         signals = [
-            s for s in signals
-            if (s.get("asset_class") or "other") == asset_class
+            s for s in signals if (s.get("asset_class") or "other") == asset_class
         ]
     active_signals = get_active_signals()
     usage_stats = get_api_usage_stats()
@@ -4513,7 +4957,9 @@ def admin_dashboard(
     users_html = _build_users_html(user["user_id"])
 
     spx_data = _get_spx_momentum_data()
-    spx_signals = get_all_signals(strategy_name="sp500_momentum", limit=200, max_age_days=92)
+    spx_signals = get_all_signals(
+        strategy_name="sp500_momentum", limit=200, max_age_days=92
+    )
     spx_signal_rows = _signals_to_table_rows(spx_signals)
     spx_signal_count = len(spx_signals)
     spx_html = _build_spx_momentum_html(spx_data, spx_signal_rows, spx_signal_count)
@@ -4525,21 +4971,37 @@ def admin_dashboard(
     mtf_html = _build_mtf_ema_html(mtf_data, mtf_signal_rows, mtf_signal_count)
 
     fx_trend_data = _get_forex_trend_data()
-    fx_trend_signals = get_all_signals(strategy_name="trend_forex", limit=200, max_age_days=92)
+    fx_trend_signals = get_all_signals(
+        strategy_name="trend_forex", limit=200, max_age_days=92
+    )
     fx_trend_signal_rows = _signals_to_table_rows(fx_trend_signals)
     fx_trend_signal_count = len(fx_trend_signals)
-    forex_trend_html = _build_forex_trend_html(fx_trend_data, fx_trend_signal_rows, fx_trend_signal_count)
+    forex_trend_html = _build_forex_trend_html(
+        fx_trend_data, fx_trend_signal_rows, fx_trend_signal_count
+    )
 
     tf_data = _get_trend_following_data()
-    tf_signals_forex = get_all_signals(strategy_name="trend_following", limit=200, max_age_days=92)
-    tf_signals_non_forex = get_all_signals(strategy_name="trend_non_forex", limit=200, max_age_days=92)
-    tf_signals_combined = sorted(tf_signals_forex + tf_signals_non_forex, key=lambda s: s.get("id", 0), reverse=True)
+    tf_signals_forex = get_all_signals(
+        strategy_name="trend_following", limit=200, max_age_days=92
+    )
+    tf_signals_non_forex = get_all_signals(
+        strategy_name="trend_non_forex", limit=200, max_age_days=92
+    )
+    tf_signals_combined = sorted(
+        tf_signals_forex + tf_signals_non_forex,
+        key=lambda s: s.get("id", 0),
+        reverse=True,
+    )
     tf_signal_rows = _signals_to_table_rows(tf_signals_combined)
     tf_signal_count = len(tf_signals_combined)
-    trend_following_html = _build_trend_following_html(tf_data, tf_signal_rows, tf_signal_count)
+    trend_following_html = _build_trend_following_html(
+        tf_data, tf_signal_rows, tf_signal_count
+    )
 
     hlc_data = _get_hlc_fx_data()
-    hlc_signals = get_all_signals(strategy_name="highest_lowest_fx", limit=200, max_age_days=92)
+    hlc_signals = get_all_signals(
+        strategy_name="highest_lowest_fx", limit=200, max_age_days=92
+    )
     hlc_signal_rows = _signals_to_table_rows(hlc_signals)
     hlc_signal_count = len(hlc_signals)
     hlc_fx_html = _build_hlc_fx_html(hlc_data, hlc_signal_rows, hlc_signal_count)
@@ -4567,8 +5029,8 @@ def admin_dashboard(
         status_options += f'<option value="{s}" {selected}>{label}</option>'
 
     ASSET_CLASS_CHOICES = [
-        ("",       "All Asset Classes"),
-        ("forex",  "Forex"),
+        ("", "All Asset Classes"),
+        ("forex", "Forex"),
         ("crypto", "Crypto"),
         ("stocks", "Stocks"),
     ]
@@ -4586,7 +5048,20 @@ def admin_dashboard(
     user_role = user.get("role", "CUSTOMER")
     is_admin = user_role == "ADMIN"
 
-    if not is_admin and tab in ("analysis", "mtf", "trend_following", "spx", "forex_trend", "hlc_fx", "credits", "settings", "users", "notifications", "scheduler", "system"):
+    if not is_admin and tab in (
+        "analysis",
+        "mtf",
+        "trend_following",
+        "spx",
+        "forex_trend",
+        "hlc_fx",
+        "credits",
+        "settings",
+        "users",
+        "notifications",
+        "scheduler",
+        "system",
+    ):
         tab = "signals"
 
     def _sidebar_link(tab_name, label, svg, active_tab, testid):
@@ -4613,31 +5088,69 @@ def admin_dashboard(
     svg_key = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>'
     svg_book = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M8 7h6"/><path d="M8 11h8"/></svg>'
 
-    analysis_link = _sidebar_link("analysis", "Signal Analysis", svg_analysis, tab, "sidebar-analysis") if is_admin else ""
+    analysis_link = (
+        _sidebar_link(
+            "analysis", "Signal Analysis", svg_analysis, tab, "sidebar-analysis"
+        )
+        if is_admin
+        else ""
+    )
 
     strategies_block = ""
     if is_admin:
         strategies_block = '<div class="sidebar-group"><div class="sidebar-group-label">Strategies</div>'
         strategies_block += _sidebar_link("mtf", "MTF EMA", svg_mtf, tab, "sidebar-mtf")
-        strategies_block += _sidebar_link("trend_following", "Trend Non-Forex", svg_trend, tab, "sidebar-trend")
-        strategies_block += _sidebar_link("spx", "SP500 Momentum", svg_spx, tab, "sidebar-spx")
-        strategies_block += _sidebar_link("forex_trend", "Trend Forex", svg_globe, tab, "sidebar-forex-trend")
-        strategies_block += _sidebar_link("hlc_fx", "Highest/Lowest FX", svg_hlc, tab, "sidebar-hlc-fx")
+        strategies_block += _sidebar_link(
+            "trend_following", "Trend Non-Forex", svg_trend, tab, "sidebar-trend"
+        )
+        strategies_block += _sidebar_link(
+            "spx", "SP500 Momentum", svg_spx, tab, "sidebar-spx"
+        )
+        strategies_block += _sidebar_link(
+            "forex_trend", "Trend Forex", svg_globe, tab, "sidebar-forex-trend"
+        )
+        strategies_block += _sidebar_link(
+            "hlc_fx", "Highest/Lowest FX", svg_hlc, tab, "sidebar-hlc-fx"
+        )
         strategies_block += "</div>"
 
     system_group_label = "System" if is_admin else "Tools"
     admin_system_links = ""
     if is_admin:
-        admin_system_links += _sidebar_link("credits", f"Credit Monitor{alert_badge}", svg_credits, tab, "sidebar-credits")
-        admin_system_links += _sidebar_link("timezone", "Market Hours", svg_clock, tab, "sidebar-timezone")
-        admin_system_links += _sidebar_link("settings", "Settings", svg_settings, tab, "sidebar-settings")
-        admin_system_links += _sidebar_link("users", "User Settings", svg_users, tab, "sidebar-users")
-        admin_system_links += _sidebar_link("notifications", "Notifications", svg_bell, tab, "sidebar-notifications")
-        admin_system_links += _sidebar_link("apikeys", "Partner API Keys", svg_key, tab, "sidebar-apikeys")
-        admin_system_links += _sidebar_link("scheduler", "Scheduler Health", svg_calendar, tab, "sidebar-scheduler")
-        admin_system_links += _sidebar_link("system", "System Status", svg_shield, tab, "sidebar-system")
-        admin_system_links += _sidebar_link("recovery", "Recovery Logs", svg_calendar, tab, "sidebar-recovery")
-        admin_system_links += _sidebar_link("assets", "Asset Management", svg_settings, tab, "sidebar-assets")
+        admin_system_links += _sidebar_link(
+            "credits",
+            f"Credit Monitor{alert_badge}",
+            svg_credits,
+            tab,
+            "sidebar-credits",
+        )
+        admin_system_links += _sidebar_link(
+            "timezone", "Market Hours", svg_clock, tab, "sidebar-timezone"
+        )
+        admin_system_links += _sidebar_link(
+            "settings", "Settings", svg_settings, tab, "sidebar-settings"
+        )
+        admin_system_links += _sidebar_link(
+            "users", "User Settings", svg_users, tab, "sidebar-users"
+        )
+        admin_system_links += _sidebar_link(
+            "notifications", "Notifications", svg_bell, tab, "sidebar-notifications"
+        )
+        admin_system_links += _sidebar_link(
+            "apikeys", "Partner API Keys", svg_key, tab, "sidebar-apikeys"
+        )
+        admin_system_links += _sidebar_link(
+            "scheduler", "Scheduler Health", svg_calendar, tab, "sidebar-scheduler"
+        )
+        admin_system_links += _sidebar_link(
+            "system", "System Status", svg_shield, tab, "sidebar-system"
+        )
+        admin_system_links += _sidebar_link(
+            "recovery", "Recovery Logs", svg_calendar, tab, "sidebar-recovery"
+        )
+        admin_system_links += _sidebar_link(
+            "assets", "Asset Management", svg_settings, tab, "sidebar-assets"
+        )
 
     admin_mobile_tabs = ""
     if is_admin:
@@ -4707,7 +5220,7 @@ def admin_dashboard(
                 {_mobile_tab("api_catalog", "API", tab)}
             </div>
 
-            <div id="tab-signals" class="tab-content {'hidden' if tab != 'signals' else ''}">
+            <div id="tab-signals" class="tab-content {"hidden" if tab != "signals" else ""}">
             <div class="section">
                 <h2>Trading Signals</h2>
                 <div class="filter-bar">
@@ -4720,7 +5233,7 @@ def admin_dashboard(
                             {asset_class_options}
                         </select>
                         <input type="text" name="symbol" placeholder="Asset (e.g. EUR/USD)"
-                               value="{asset or ''}" style="width:160px;">
+                               value="{asset or ""}" style="width:160px;">
                         <button type="submit" class="btn btn-primary">Filter</button>
                     </form>
                 </div>
@@ -4752,7 +5265,7 @@ def admin_dashboard(
             </div>
         </div>
 
-        <div id="tab-analysis" class="tab-content {'hidden' if tab != 'analysis' else ''}">
+        <div id="tab-analysis" class="tab-content {"hidden" if tab != "analysis" else ""}">
             <div class="section">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
                     <h2 style="margin-bottom:0;">Market Pulse</h2>
@@ -4769,63 +5282,63 @@ def admin_dashboard(
             </div>
         </div>
 
-        <div id="tab-mtf" class="tab-content {'hidden' if tab != 'mtf' else ''}">
+        <div id="tab-mtf" class="tab-content {"hidden" if tab != "mtf" else ""}">
             <div class="section">
                 <h2>Multi-Timeframe EMA Strategy</h2>
                 {mtf_html}
             </div>
         </div>
 
-        <div id="tab-spx" class="tab-content {'hidden' if tab != 'spx' else ''}">
+        <div id="tab-spx" class="tab-content {"hidden" if tab != "spx" else ""}">
             <div class="section">
                 <h2>SPX 500 Momentum Strategy</h2>
                 {spx_html}
             </div>
         </div>
 
-        <div id="tab-forex_trend" class="tab-content {'hidden' if tab != 'forex_trend' else ''}">
+        <div id="tab-forex_trend" class="tab-content {"hidden" if tab != "forex_trend" else ""}">
             <div class="section">
                 <h2>Forex Trend Following Strategy</h2>
                 {forex_trend_html}
             </div>
         </div>
 
-        <div id="tab-trend_following" class="tab-content {'hidden' if tab != 'trend_following' else ''}">
+        <div id="tab-trend_following" class="tab-content {"hidden" if tab != "trend_following" else ""}">
             <div class="section">
                 <h2>Trend Following Strategy</h2>
                 {trend_following_html}
             </div>
         </div>
 
-        <div id="tab-hlc_fx" class="tab-content {'hidden' if tab != 'hlc_fx' else ''}">
+        <div id="tab-hlc_fx" class="tab-content {"hidden" if tab != "hlc_fx" else ""}">
             <div class="section">
                 <h2>Highest/Lowest Close FX Strategy</h2>
                 {hlc_fx_html}
             </div>
         </div>
 
-        <div id="tab-credits" class="tab-content {'hidden' if tab != 'credits' else ''}">
+        <div id="tab-credits" class="tab-content {"hidden" if tab != "credits" else ""}">
             <div class="section">
                 <h2>FCSAPI Credit Monitor</h2>
                 {credit_html}
             </div>
         </div>
 
-        <div id="tab-timezone" class="tab-content {'hidden' if tab != 'timezone' else ''}">
+        <div id="tab-timezone" class="tab-content {"hidden" if tab != "timezone" else ""}">
             <div class="section">
                 <h2>Market Hours & Timezone</h2>
                 {timezone_html}
             </div>
         </div>
 
-        <div id="tab-settings" class="tab-content {'hidden' if tab != 'settings' else ''}">
+        <div id="tab-settings" class="tab-content {"hidden" if tab != "settings" else ""}">
             <div class="section">
                 <h2>Settings</h2>
                 {settings_html}
             </div>
         </div>
 
-        <div id="tab-users" class="tab-content {'hidden' if tab != 'users' else ''}">
+        <div id="tab-users" class="tab-content {"hidden" if tab != "users" else ""}">
             <div class="section" style="margin-bottom:20px;">
                 <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:10px;">
                     <div>
@@ -4844,7 +5357,7 @@ def admin_dashboard(
                 {users_html}
             </div>
         </div>
-        <div id="tab-notifications" class="tab-content {'hidden' if tab != 'notifications' else ''}">
+        <div id="tab-notifications" class="tab-content {"hidden" if tab != "notifications" else ""}">
             <div class="section">
                 <h2>Notification Settings</h2>
                 <p style="color:#94a3b8;margin-bottom:20px;">Configure webhook notifications for trading alerts, system events, and warnings. Notifications are sent to Discord, Slack, or any generic webhook endpoint.</p>
@@ -4933,7 +5446,7 @@ def admin_dashboard(
                 </div>
             </div>
         </div>
-        <div id="tab-apikeys" class="tab-content {'hidden' if tab != 'apikeys' else ''}">
+        <div id="tab-apikeys" class="tab-content {"hidden" if tab != "apikeys" else ""}">
             <div class="section">
                 <h2>Partner API Keys</h2>
                 <p style="color:#94a3b8;margin-bottom:20px;">Manage API keys for DailyForex frontend and partner integrations. Keys with valid <code style="background:#1e293b;padding:2px 6px;border-radius:4px;font-size:13px;">X-API-KEY</code> headers get higher rate limits and bypass standard IP-based throttling.</p>
@@ -5035,7 +5548,7 @@ def admin_dashboard(
             </div>
         </div>
 
-        <div id="tab-scheduler" class="tab-content {'hidden' if tab != 'scheduler' else ''}">
+        <div id="tab-scheduler" class="tab-content {"hidden" if tab != "scheduler" else ""}">
             <div class="section">
                 <h2>Scheduler Health</h2>
                 <p style="color:#94a3b8;margin-bottom:20px;">Monitor APScheduler status, job execution history, and watchdog heartbeat.</p>
@@ -5096,7 +5609,7 @@ def admin_dashboard(
                 </div>
             </div>
         </div>
-        <div id="tab-system" class="tab-content {'hidden' if tab != 'system' else ''}">
+        <div id="tab-system" class="tab-content {"hidden" if tab != "system" else ""}">
             <div class="section">
                 <h2>System Status</h2>
                 <p style="color:#94a3b8;margin-bottom:20px;">Overview of all monitoring, alerting, and production hardening layers.</p>
@@ -5314,7 +5827,7 @@ def admin_dashboard(
                 </div>
             </div>
         </div>
-        <div id="tab-recovery" class="tab-content {'hidden' if tab != 'recovery' else ''}">
+        <div id="tab-recovery" class="tab-content {"hidden" if tab != "recovery" else ""}">
             <div class="section">
                 <h2>Recovery Logs</h2>
                 <p style="color:#94a3b8;margin-bottom:20px;">Audit trail of all missed-window recovery events. Shows when strategies were automatically backfilled on startup.</p>
@@ -5361,7 +5874,7 @@ def admin_dashboard(
                 </div>
             </div>
         </div>
-        <div id="tab-api_catalog" class="tab-content {'hidden' if tab != 'api_catalog' else ''}">
+        <div id="tab-api_catalog" class="tab-content {"hidden" if tab != "api_catalog" else ""}">
             <div class="section">
                 <h2>API Catalog</h2>
                 <p style="color:#94a3b8;margin-bottom:8px;">Complete reference of all Public API v1 endpoints. All endpoints are read-only (except cache flush) and serve data from the local SQLite database.</p>
@@ -5625,7 +6138,7 @@ def admin_dashboard(
             </div>
         </div>
 
-        <div id="tab-assets" class="tab-content {'hidden' if tab != 'assets' else ''}">
+        <div id="tab-assets" class="tab-content {"hidden" if tab != "assets" else ""}">
             <div class="section">
                 <h2>Asset Management</h2>
                 <p style="color:#94a3b8;margin-bottom:20px;">Add, remove, and verify assets per strategy. All changes take effect on the next scheduled evaluation cycle. Assets are tested against the live FCSAPI feed before being saved.</p>
@@ -5722,10 +6235,10 @@ def admin_dashboard(
             </div>
         </div>
 
-        <div id="tab-wordpress" class="tab-content {'hidden' if tab != 'wordpress' else ''}">
+        <div id="tab-wordpress" class="tab-content {"hidden" if tab != "wordpress" else ""}">
             <div class="section">
                 <h2>WordPress Credentials</h2>
-                <p style="color:#94a3b8;margin-bottom:16px;">{'Manage all WordPress site connections for signal publishing.' if is_admin else 'Manage your WordPress site connections for signal publishing.'} Passwords are encrypted at rest.</p>
+                <p style="color:#94a3b8;margin-bottom:16px;">{"Manage all WordPress site connections for signal publishing." if is_admin else "Manage your WordPress site connections for signal publishing."} Passwords are encrypted at rest.</p>
 
                 <div style="display:flex;gap:12px;margin-bottom:24px;">
                     <button class="btn btn-primary" onclick="document.getElementById('ucms-add-form').style.display='block'" data-testid="btn-ucms-add">Add WordPress Site</button>
@@ -5760,7 +6273,7 @@ def admin_dashboard(
                     <thead>
                         <tr>
                             <th>ID</th>
-                            {'<th>Owner</th>' if is_admin else ''}
+                            {"<th>Owner</th>" if is_admin else ""}
                             <th>Site URL</th>
                             <th>WP Username</th>
                             <th>Status</th>
@@ -5769,7 +6282,7 @@ def admin_dashboard(
                         </tr>
                     </thead>
                     <tbody id="ucms-body">
-                        <tr><td colspan="{'7' if is_admin else '6'}" style="text-align:center;color:#64748b;">Loading...</td></tr>
+                        <tr><td colspan="{"7" if is_admin else "6"}" style="text-align:center;color:#64748b;">Loading...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -5885,7 +6398,7 @@ def admin_dashboard(
 
         </main>
     </div>
-    <script>var IS_ADMIN = {'true' if is_admin else 'false'};</script>
+    <script>var IS_ADMIN = {"true" if is_admin else "false"};</script>
     <script>{ADMIN_JS}</script>
 </body>
 </html>"""
@@ -5904,7 +6417,9 @@ def _admin_role_guard(request: Request):
     if not user:
         return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
     if user.get("role") != "ADMIN":
-        return JSONResponse(content={"error": "Forbidden: Admin access required"}, status_code=403)
+        return JSONResponse(
+            content={"error": "Forbidden: Admin access required"}, status_code=403
+        )
     return None
 
 
@@ -5920,21 +6435,35 @@ def export_signals(
     if guard:
         return guard
 
-    signals = get_all_signals(strategy_name=strategy, asset=symbol, status=status, limit=500)
+    signals = get_all_signals(
+        strategy_name=strategy, asset=symbol, status=status, limit=500
+    )
 
     if format == "json":
         content = json.dumps(signals, indent=2, default=str)
         return StreamingResponse(
             io.BytesIO(content.encode()),
             media_type="application/json",
-            headers={"Content-Disposition": f"attachment; filename=signals_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"},
+            headers={
+                "Content-Disposition": f"attachment; filename=signals_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+            },
         )
 
     output = io.StringIO()
     if signals:
-        fields = ["asset", "direction", "entry_price", "stop_loss", "take_profit",
-                  "atr_at_entry", "strategy_name", "status", "signal_timestamp", "created_at",
-                  "updated_at"]
+        fields = [
+            "asset",
+            "direction",
+            "entry_price",
+            "stop_loss",
+            "take_profit",
+            "atr_at_entry",
+            "strategy_name",
+            "status",
+            "signal_timestamp",
+            "created_at",
+            "updated_at",
+        ]
         writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         for s in signals:
@@ -5944,7 +6473,9 @@ def export_signals(
     return StreamingResponse(
         io.BytesIO(output.getvalue().encode()),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=signals_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"},
+        headers={
+            "Content-Disposition": f"attachment; filename=signals_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+        },
     )
 
 
@@ -5973,9 +6504,13 @@ def save_api_key(request: Request, body: dict = Body(...)):
         return guard
     api_key = body.get("api_key", "").strip()
     if not api_key:
-        return JSONResponse(content={"success": False, "error": "API key cannot be empty"})
+        return JSONResponse(
+            content={"success": False, "error": "API key cannot be empty"}
+        )
     set_setting("fcsapi_key", api_key)
-    return JSONResponse(content={"success": True, "message": "API key saved successfully"})
+    return JSONResponse(
+        content={"success": True, "message": "API key saved successfully"}
+    )
 
 
 @router.post("/api/settings/portfolio-value")
@@ -5983,7 +6518,11 @@ def save_portfolio_value(request: Request, body: dict = Body(...)):
     guard = _admin_role_guard(request)
     if guard:
         return guard
-    val = body.get("value", "").strip() if isinstance(body.get("value"), str) else str(body.get("value", ""))
+    val = (
+        body.get("value", "").strip()
+        if isinstance(body.get("value"), str)
+        else str(body.get("value", ""))
+    )
     try:
         float(val)
     except (ValueError, TypeError):
@@ -5998,6 +6537,7 @@ def test_api_connection(request: Request):
     if guard:
         return guard
     from trading_engine.fcsapi_client import FCSAPIClient
+
     client = FCSAPIClient()
     result = client.test_connection()
     return JSONResponse(content=result)
@@ -6013,10 +6553,12 @@ def get_settings(request: Request):
     has_db_key = bool(db_key)
     has_env_key = bool(env_key)
     source = "database" if has_db_key else ("environment" if has_env_key else "none")
-    return JSONResponse(content={
-        "api_key_configured": has_db_key or has_env_key,
-        "key_source": source,
-    })
+    return JSONResponse(
+        content={
+            "api_key_configured": has_db_key or has_env_key,
+            "key_source": source,
+        }
+    )
 
 
 @router.get("/api/settings/registration")
@@ -6050,12 +6592,24 @@ def api_create_admin(request: Request, body: dict = Body(...)):
     if role not in ("ADMIN", "CUSTOMER"):
         role = "CUSTOMER"
     if not username or not password:
-        return JSONResponse(content={"success": False, "error": "Username and password are required."})
+        return JSONResponse(
+            content={"success": False, "error": "Username and password are required."}
+        )
     if len(password) < 4:
-        return JSONResponse(content={"success": False, "error": "Password must be at least 4 characters."})
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": "Password must be at least 4 characters.",
+            }
+        )
     admin_id = create_admin(username, password, role=role)
     if admin_id is None:
-        return JSONResponse(content={"success": False, "error": f'Username "{username}" already exists.'})
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": f'Username "{username}" already exists.',
+            }
+        )
     return JSONResponse(content={"success": True, "id": admin_id})
 
 
@@ -6070,9 +6624,16 @@ def api_update_admin(request: Request, admin_id: int, body: dict = Body(...)):
     if role and role not in ("ADMIN", "CUSTOMER"):
         role = None
     if not username:
-        return JSONResponse(content={"success": False, "error": "Username cannot be empty."})
+        return JSONResponse(
+            content={"success": False, "error": "Username cannot be empty."}
+        )
     if password and len(password) < 4:
-        return JSONResponse(content={"success": False, "error": "Password must be at least 4 characters."})
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": "Password must be at least 4 characters.",
+            }
+        )
     existing = get_admin_by_id(admin_id)
     if not existing:
         return JSONResponse(content={"success": False, "error": "User not found."})
@@ -6080,10 +6641,22 @@ def api_update_admin(request: Request, admin_id: int, body: dict = Body(...)):
         all_users = get_all_admins()
         admin_count = sum(1 for u in all_users if u.get("role") == "ADMIN")
         if admin_count <= 1:
-            return JSONResponse(content={"success": False, "error": "Cannot demote the last admin user."})
-    success = update_admin(admin_id, username=username, password=password if password else None, role=role)
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "error": "Cannot demote the last admin user.",
+                }
+            )
+    success = update_admin(
+        admin_id, username=username, password=password if password else None, role=role
+    )
     if not success:
-        return JSONResponse(content={"success": False, "error": f'Username "{username}" already exists.'})
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": f'Username "{username}" already exists.',
+            }
+        )
     return JSONResponse(content={"success": True})
 
 
@@ -6097,7 +6670,9 @@ def api_delete_admin(request: Request, admin_id: int):
         return JSONResponse(content={"success": False, "error": "Admin not found."})
     success = delete_admin(admin_id)
     if not success:
-        return JSONResponse(content={"success": False, "error": "Cannot delete the last admin user."})
+        return JSONResponse(
+            content={"success": False, "error": "Cannot delete the last admin user."}
+        )
     return JSONResponse(content={"success": True})
 
 
@@ -6125,6 +6700,7 @@ def api_security_stats(request: Request):
     if guard:
         return guard
     from trading_engine.security_middleware import get_security_stats
+
     return JSONResponse(content=get_security_stats())
 
 
@@ -6137,6 +6713,7 @@ def api_security_unblock(request: Request, body: dict = Body(...)):
     if not ip:
         return JSONResponse(content={"success": False, "error": "IP address required"})
     from trading_engine.security_middleware import unblock_ip
+
     result = unblock_ip(ip)
     return JSONResponse(content={"success": result, "ip": ip})
 
@@ -6148,6 +6725,7 @@ def api_list_partner_keys(request: Request):
         return guard
     keys = list_partner_api_keys()
     from trading_engine.security_middleware import REQUIRE_API_KEY
+
     return JSONResponse(content={"keys": keys, "require_api_key": REQUIRE_API_KEY})
 
 
@@ -6164,9 +6742,16 @@ def api_create_partner_key(request: Request, body: dict = Body(...)):
         return JSONResponse(content={"error": "Invalid tier"}, status_code=400)
     rate_limit = int(body.get("rate_limit_per_minute", 120))
     user = _get_session_user(request)
-    result = create_partner_api_key(label=label, tier=tier, rate_limit=rate_limit, created_by=user["user_id"] if user else None)
+    result = create_partner_api_key(
+        label=label,
+        tier=tier,
+        rate_limit=rate_limit,
+        created_by=user["user_id"] if user else None,
+    )
     if not result:
-        return JSONResponse(content={"error": "Failed to create API key"}, status_code=500)
+        return JSONResponse(
+            content={"error": "Failed to create API key"}, status_code=500
+        )
     return JSONResponse(content=result)
 
 
@@ -6196,6 +6781,7 @@ def api_storage_stats(request: Request):
         return guard
     from trading_engine.utils.system_monitor import get_storage_stats
     from trading_engine.database import get_last_successful_execution
+
     stats = get_storage_stats()
     nfx = get_last_successful_execution("trend_non_forex")
     tfx = get_last_successful_execution("trend_forex")
@@ -6215,13 +6801,19 @@ def api_storage_purge(request: Request, body: dict = Body(...)):
         return guard
     days = body.get("days_threshold")
     if days is None:
-        return JSONResponse(content={"error": "days_threshold is required"}, status_code=400)
+        return JSONResponse(
+            content={"error": "days_threshold is required"}, status_code=400
+        )
     try:
         days = int(days)
     except (TypeError, ValueError):
-        return JSONResponse(content={"error": "days_threshold must be an integer"}, status_code=400)
+        return JSONResponse(
+            content={"error": "days_threshold must be an integer"}, status_code=400
+        )
     if days < 1:
-        return JSONResponse(content={"error": "days_threshold must be at least 1"}, status_code=400)
+        return JSONResponse(
+            content={"error": "days_threshold must be at least 1"}, status_code=400
+        )
     allowed = (90, 180, 365)
     if days not in allowed:
         return JSONResponse(
@@ -6229,6 +6821,7 @@ def api_storage_purge(request: Request, body: dict = Body(...)):
             status_code=400,
         )
     from trading_engine.utils.storage_manager import purge_signals
+
     try:
         result = purge_signals(days)
         return JSONResponse(content=result)
@@ -6262,12 +6855,17 @@ def api_watchdog_status(request: Request):
     from trading_engine.engine.watchdog import is_watchdog_manually_disabled
     from trading_engine.utils.quota_manager import is_watchdog_disabled_by_quota
     from trading_engine.credit_control import is_api_blocked
-    return JSONResponse(content={
-        "admin_disabled": is_watchdog_manually_disabled(),
-        "quota_disabled": is_watchdog_disabled_by_quota(),
-        "credit_blocked": is_api_blocked(),
-        "effectively_running": not is_watchdog_manually_disabled() and not is_watchdog_disabled_by_quota() and not is_api_blocked(),
-    })
+
+    return JSONResponse(
+        content={
+            "admin_disabled": is_watchdog_manually_disabled(),
+            "quota_disabled": is_watchdog_disabled_by_quota(),
+            "credit_blocked": is_api_blocked(),
+            "effectively_running": not is_watchdog_manually_disabled()
+            and not is_watchdog_disabled_by_quota()
+            and not is_api_blocked(),
+        }
+    )
 
 
 @router.post("/api/watchdog/toggle")
@@ -6275,15 +6873,21 @@ def api_watchdog_toggle(request: Request):
     guard = _admin_role_guard(request)
     if guard:
         return guard
-    from trading_engine.engine.watchdog import is_watchdog_manually_disabled, set_watchdog_manual_override
+    from trading_engine.engine.watchdog import (
+        is_watchdog_manually_disabled,
+        set_watchdog_manual_override,
+    )
+
     current = is_watchdog_manually_disabled()
     set_watchdog_manual_override(not current)
     new_state = not current
-    return JSONResponse(content={
-        "success": True,
-        "admin_disabled": new_state,
-        "message": f"Watchdog {'disabled' if new_state else 'enabled'} by admin",
-    })
+    return JSONResponse(
+        content={
+            "success": True,
+            "admin_disabled": new_state,
+            "message": f"Watchdog {'disabled' if new_state else 'enabled'} by admin",
+        }
+    )
 
 
 @router.post("/api/system/terminate-background")
@@ -6292,25 +6896,28 @@ def api_terminate_background(request: Request):
     if guard:
         return guard
     import subprocess
+
     results = []
     for pattern in ["watchdog", "check_proximity"]:
         try:
             proc = subprocess.run(
-                ["pkill", "-f", pattern],
-                capture_output=True, text=True, timeout=5
+                ["pkill", "-f", pattern], capture_output=True, text=True, timeout=5
             )
             results.append({"pattern": pattern, "returncode": proc.returncode})
         except Exception as e:
             results.append({"pattern": pattern, "error": str(e)})
 
     from trading_engine.engine.watchdog import set_watchdog_manual_override
+
     set_watchdog_manual_override(True)
 
-    return JSONResponse(content={
-        "success": True,
-        "message": "Watchdog disabled and termination signals sent",
-        "pkill_results": results,
-    })
+    return JSONResponse(
+        content={
+            "success": True,
+            "message": "Watchdog disabled and termination signals sent",
+            "pkill_results": results,
+        }
+    )
 
 
 @router.get("/api/quota-status")
@@ -6320,6 +6927,7 @@ def api_quota_status(request: Request):
         return guard
     from trading_engine.utils.quota_manager import check_budget_health, get_quota_status
     from trading_engine.credit_control import get_monthly_projection
+
     health = check_budget_health()
     raw = get_quota_status()
     projection = get_monthly_projection()
@@ -6327,7 +6935,9 @@ def api_quota_status(request: Request):
     health["daily_avg_burn"] = projection.get("daily_rate", 0)
     remaining = health.get("remaining_credits", 0)
     daily_rate = projection.get("daily_rate", 0)
-    health["est_days_remaining"] = round(remaining / daily_rate, 1) if daily_rate > 0 else 999
+    health["est_days_remaining"] = (
+        round(remaining / daily_rate, 1) if daily_rate > 0 else 999
+    )
     return JSONResponse(content=health)
 
 
@@ -6337,6 +6947,7 @@ def api_quota_check(request: Request):
     if guard:
         return guard
     from trading_engine.utils.quota_manager import check_budget_health
+
     health = check_budget_health()
     return JSONResponse(content={"success": True, "health": health})
 
@@ -6378,7 +6989,9 @@ def api_market_pulse(request: Request):
             detail = alert.get("status", "Approaching entry level")
             result.append({"symbol": symbol, "status": "approaching", "detail": detail})
         else:
-            result.append({"symbol": symbol, "status": "neutral", "detail": "Monitoring"})
+            result.append(
+                {"symbol": symbol, "status": "neutral", "detail": "Monitoring"}
+            )
 
     return JSONResponse(content={"assets": result})
 
@@ -6389,6 +7002,7 @@ def api_recovery_logs(request: Request, limit: int = Query(50, ge=1, le=200)):
     if guard:
         return guard
     from trading_engine.database import get_recovery_notifications
+
     logs = get_recovery_notifications(limit)
     return JSONResponse(content={"logs": logs, "count": len(logs)})
 
@@ -6400,6 +7014,7 @@ def api_delete_recovery_log(request: Request, log_id: int):
         return guard
     from trading_engine.database import SessionFactory
     from trading_engine.models import RecoveryNotification
+
     session = SessionFactory()
     try:
         record = session.query(RecoveryNotification).filter_by(id=log_id).first()
@@ -6421,6 +7036,7 @@ def api_get_notification_config(request: Request):
     if guard:
         return guard
     from trading_engine.notifications import get_full_config, NOTIFICATION_CATEGORIES
+
     config = get_full_config()
     config["category_descriptions"] = NOTIFICATION_CATEGORIES
     return JSONResponse(content=config)
@@ -6432,8 +7048,10 @@ def api_update_notification_config(request: Request, body: dict = Body(...)):
     if guard:
         return guard
     from trading_engine.notifications import (
-        configure_webhook, set_notifications_enabled,
-        set_category_enabled, get_full_config,
+        configure_webhook,
+        set_notifications_enabled,
+        set_category_enabled,
+        get_full_config,
     )
     from trading_engine.database import set_setting
     import json as _json
@@ -6455,6 +7073,7 @@ def api_update_notification_config(request: Request, body: dict = Body(...)):
     if "categories" in body and isinstance(body["categories"], dict):
         from trading_engine.notifications import get_category_settings
         from trading_engine.database import get_setting as _get_setting
+
         existing_raw = _get_setting("notification_categories")
         try:
             existing_cats = _json.loads(existing_raw) if existing_raw else {}
@@ -6474,11 +7093,14 @@ def api_get_webhook(request: Request):
     if guard:
         return guard
     from trading_engine.notifications import get_webhook_url
+
     url = get_webhook_url()
-    return JSONResponse(content={
-        "configured": bool(url),
-        "url": (url[:20] + "..." + url[-10:]) if url and len(url) > 30 else url,
-    })
+    return JSONResponse(
+        content={
+            "configured": bool(url),
+            "url": (url[:20] + "..." + url[-10:]) if url and len(url) > 30 else url,
+        }
+    )
 
 
 @router.post("/api/webhook")
@@ -6488,6 +7110,7 @@ def api_set_webhook(request: Request, body: dict = Body(...)):
         return guard
     from trading_engine.notifications import configure_webhook
     from trading_engine.database import set_setting
+
     url = body.get("url", "").strip()
     if url:
         configure_webhook(url)
@@ -6505,8 +7128,12 @@ def api_test_webhook(request: Request):
     if guard:
         return guard
     from trading_engine.notifications import send_alert, get_webhook_url
+
     if not get_webhook_url():
-        return JSONResponse(content={"status": "error", "message": "No webhook configured"}, status_code=400)
+        return JSONResponse(
+            content={"status": "error", "message": "No webhook configured"},
+            status_code=400,
+        )
     send_alert(
         "Webhook Test",
         "This is a test notification from the AI Signals Trading Engine. If you see this, webhook delivery is working.",
@@ -6522,15 +7149,22 @@ def api_retry_publish(request: Request, signal_id: int):
     if guard:
         return guard
     from trading_engine.services.cms_publisher import publish_signal_to_all
+
     results = publish_signal_to_all(signal_id)
     if not results:
         return JSONResponse(
-            content={"status": "error", "message": "No active WordPress configurations found. Add credentials in the WordPress tab."},
+            content={
+                "status": "error",
+                "message": "No active WordPress configurations found. Add credentials in the WordPress tab.",
+            },
             status_code=503,
         )
     any_ok = any(r["status"] in ("ok", "skipped") for r in results)
     status_code = 200 if any_ok else 500
-    return JSONResponse(content={"status": "ok" if any_ok else "error", "results": results}, status_code=status_code)
+    return JSONResponse(
+        content={"status": "ok" if any_ok else "error", "results": results},
+        status_code=status_code,
+    )
 
 
 @router.post("/api/signals/{signal_id}/update-wp")
@@ -6539,15 +7173,22 @@ def api_update_wp_post(request: Request, signal_id: int):
     if guard:
         return guard
     from trading_engine.services.cms_publisher import update_closed_signal_on_all
+
     results = update_closed_signal_on_all(signal_id)
     if not results:
         return JSONResponse(
-            content={"status": "error", "message": "No active WordPress configurations found. Add credentials in the WordPress tab."},
+            content={
+                "status": "error",
+                "message": "No active WordPress configurations found. Add credentials in the WordPress tab.",
+            },
             status_code=503,
         )
     any_ok = any(r["status"] == "ok" for r in results)
     status_code = 200 if any_ok else 500
-    return JSONResponse(content={"status": "ok" if any_ok else "error", "results": results}, status_code=status_code)
+    return JSONResponse(
+        content={"status": "ok" if any_ok else "error", "results": results},
+        status_code=status_code,
+    )
 
 
 @router.get("/api/user-cms-configs")
@@ -6557,7 +7198,12 @@ def api_list_user_cms_configs(request: Request):
         return guard
     user = _get_session_user(request)
     from trading_engine.database import get_all_user_cms_configs
-    scope_user_id = None if user and user.get("role") == "ADMIN" else (user["user_id"] if user else None)
+
+    scope_user_id = (
+        None
+        if user and user.get("role") == "ADMIN"
+        else (user["user_id"] if user else None)
+    )
     return JSONResponse(content=get_all_user_cms_configs(user_id=scope_user_id))
 
 
@@ -6570,8 +7216,12 @@ def api_create_user_cms_config(request: Request, body: dict = Body(...)):
     required = ["site_url", "wp_username", "app_password"]
     for f in required:
         if not body.get(f, "").strip():
-            return JSONResponse(content={"status": "error", "message": f"Missing required field: {f}"}, status_code=400)
+            return JSONResponse(
+                content={"status": "error", "message": f"Missing required field: {f}"},
+                status_code=400,
+            )
     from trading_engine.database import create_user_cms_config
+
     try:
         if user.get("role") == "ADMIN" and body.get("user_id"):
             body["user_id"] = body["user_id"]
@@ -6580,7 +7230,9 @@ def api_create_user_cms_config(request: Request, body: dict = Body(...)):
         config_id = create_user_cms_config(body)
         return JSONResponse(content={"status": "ok", "id": config_id})
     except Exception as e:
-        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+        return JSONResponse(
+            content={"status": "error", "message": str(e)}, status_code=500
+        )
 
 
 @router.get("/api/strategy-assets")
@@ -6591,7 +7243,11 @@ def api_list_strategy_assets(
     guard = _admin_role_guard(request)
     if guard:
         return guard
-    assets = get_strategy_assets_full(strategy_name=strategy)
+    assets = [
+        a
+        for a in get_strategy_assets_full(strategy_name=strategy)
+        if a.get("is_active") is True or a.get("is_active") == 1
+    ]
     return JSONResponse(content={"assets": assets, "count": len(assets)})
 
 
@@ -6604,15 +7260,14 @@ def api_test_strategy_asset(
     if guard:
         return guard
     from trading_engine import engine_registry
+
     engine = engine_registry.get_engine()
     if engine is None:
         return JSONResponse(
             content={"supported": False, "reason": "Engine not available"},
             status_code=503,
         )
-    result = engine.cache.api_client.test_symbol_coverage(
-        symbol.upper().strip()
-    )
+    result = engine.cache.api_client.test_symbol_coverage(symbol.upper().strip())
     return JSONResponse(content=result)
 
 
@@ -6632,8 +7287,11 @@ def api_add_strategy_asset(
     sub_category = body.get("sub_category", "").strip() or None
 
     VALID_STRATEGIES = {
-        "mtf_ema", "trend_non_forex", "trend_forex",
-        "sp500_momentum", "highest_lowest_fx",
+        "mtf_ema",
+        "trend_non_forex",
+        "trend_forex",
+        "sp500_momentum",
+        "highest_lowest_fx",
     }
     VALID_CLASSES = {"forex", "crypto", "stocks"}
     VALID_SUB_CATEGORIES = {"indices", "commodities", "crypto", "forex"}
@@ -6645,25 +7303,62 @@ def api_add_strategy_asset(
         )
     if strategy_name not in VALID_STRATEGIES:
         return JSONResponse(
-            content={"success": False,
-                     "error": f"Invalid strategy. Must be one of: {', '.join(VALID_STRATEGIES)}"},
+            content={
+                "success": False,
+                "error": f"Invalid strategy. Must be one of: {', '.join(VALID_STRATEGIES)}",
+            },
             status_code=400,
         )
     if asset_class not in VALID_CLASSES:
         return JSONResponse(
-            content={"success": False,
-                     "error": f"Invalid asset_class. Must be one of: {', '.join(VALID_CLASSES)}"},
+            content={
+                "success": False,
+                "error": f"Invalid asset_class. Must be one of: {', '.join(VALID_CLASSES)}",
+            },
             status_code=400,
         )
-    if strategy_name == "mtf_ema" and sub_category \
-            and sub_category not in VALID_SUB_CATEGORIES:
+    if (
+        strategy_name == "mtf_ema"
+        and sub_category
+        and sub_category not in VALID_SUB_CATEGORIES
+    ):
         return JSONResponse(
-            content={"success": False,
-                     "error": "Invalid sub_category for mtf_ema. "
-                              "Must be one of: indices, commodities, crypto, forex"},
+            content={
+                "success": False,
+                "error": "Invalid sub_category for mtf_ema. "
+                "Must be one of: indices, commodities, crypto, forex",
+            },
             status_code=400,
         )
+    # Auto-verify symbol against FCSAPI before saving
+    from trading_engine import engine_registry
 
+    engine = engine_registry.get_engine()
+    if engine is None:
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": "Engine not ready — retry in a few seconds",
+            },
+            status_code=503,
+        )
+    verified = False
+    test_result = engine.cache.api_client.test_symbol_coverage(symbol)
+    if not test_result.get("supported"):
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": f"{symbol} is not supported by FCSAPI on the current plan. Reason: {test_result.get('reason', 'unknown')}",
+            },
+            status_code=400,
+        )
+    verified = True
+    logger.info(
+        f"[ADMIN] FCSAPI auto-verify passed for {symbol} | "
+        f"api_symbol={test_result.get('api_symbol')} | "
+        f"class={test_result.get('asset_class')} | "
+        f"sample_close={test_result.get('sample_close')}"
+    )
     asset_id = add_strategy_asset(
         strategy_name=strategy_name,
         symbol=symbol,
@@ -6671,12 +7366,14 @@ def api_add_strategy_asset(
         sub_category=sub_category,
         added_by=user.get("username", "admin") if user else "admin",
         notes=notes if notes else None,
-        fcsapi_verified=False,
+        fcsapi_verified=verified,
     )
     if asset_id is None:
         return JSONResponse(
-            content={"success": False,
-                     "error": f"{symbol} already exists in {strategy_name}"},
+            content={
+                "success": False,
+                "error": f"{symbol} already exists in {strategy_name}",
+            },
             status_code=409,
         )
     logger.info(
@@ -6757,17 +7454,20 @@ def api_sync_strategy_assets_dedup(request: Request):
     if guard:
         return guard
     from trading_engine.database import sync_strategy_assets_dedup
+
     try:
         result = sync_strategy_assets_dedup()
-        return JSONResponse(content={
-            "success": True,
-            "resolved": result,
-            "message": (
-                f"Sync complete. {result['total']} conflict(s) resolved: "
-                f"{result['mtf_vs_forex']} mtf/forex, "
-                f"{result['mtf_vs_non_forex']} mtf/non-forex."
-            ),
-        })
+        return JSONResponse(
+            content={
+                "success": True,
+                "resolved": result,
+                "message": (
+                    f"Sync complete. {result['total']} conflict(s) resolved: "
+                    f"{result['mtf_vs_forex']} mtf/forex, "
+                    f"{result['mtf_vs_non_forex']} mtf/non-forex."
+                ),
+            }
+        )
     except Exception as e:
         return JSONResponse(
             content={"success": False, "error": str(e)},
@@ -6782,23 +7482,39 @@ def api_delete_user_cms_config(request: Request, config_id: int):
         return guard
     user = _get_session_user(request)
     from trading_engine.database import delete_user_cms_config
-    owner_filter = None if user and user.get("role") == "ADMIN" else (user["user_id"] if user else None)
+
+    owner_filter = (
+        None
+        if user and user.get("role") == "ADMIN"
+        else (user["user_id"] if user else None)
+    )
     if delete_user_cms_config(config_id, user_id=owner_filter):
         return JSONResponse(content={"status": "ok"})
-    return JSONResponse(content={"status": "error", "message": "Config not found"}, status_code=404)
+    return JSONResponse(
+        content={"status": "error", "message": "Config not found"}, status_code=404
+    )
 
 
 @router.put("/api/user-cms-configs/{config_id}")
-def api_update_user_cms_config(request: Request, config_id: int, body: dict = Body(...)):
+def api_update_user_cms_config(
+    request: Request, config_id: int, body: dict = Body(...)
+):
     guard = _auth_guard(request)
     if guard:
         return guard
     user = _get_session_user(request)
     from trading_engine.database import update_user_cms_config
-    owner_filter = None if user and user.get("role") == "ADMIN" else (user["user_id"] if user else None)
+
+    owner_filter = (
+        None
+        if user and user.get("role") == "ADMIN"
+        else (user["user_id"] if user else None)
+    )
     if update_user_cms_config(config_id, body, user_id=owner_filter):
         return JSONResponse(content={"status": "ok"})
-    return JSONResponse(content={"status": "error", "message": "Config not found"}, status_code=404)
+    return JSONResponse(
+        content={"status": "error", "message": "Config not found"}, status_code=404
+    )
 
 
 @router.post("/api/wordpress/validate-credentials")
@@ -6810,11 +7526,17 @@ def api_validate_wp_credentials(request: Request, body: dict = Body(...)):
     wp_username = body.get("wp_username", "").strip()
     app_password = body.get("app_password", "").strip()
     if not site_url or not wp_username or not app_password:
-        return JSONResponse(content={"status": "error", "message": "All fields required"}, status_code=400)
+        return JSONResponse(
+            content={"status": "error", "message": "All fields required"},
+            status_code=400,
+        )
     from trading_engine.services.wp_connection import verify_wp_connection
+
     ok, message, site_name = verify_wp_connection(site_url, wp_username, app_password)
     if ok:
-        return JSONResponse(content={"status": "ok", "message": message, "site_name": site_name or ""})
+        return JSONResponse(
+            content={"status": "ok", "message": message, "site_name": site_name or ""}
+        )
     return JSONResponse(content={"status": "error", "message": message})
 
 
@@ -6825,12 +7547,19 @@ def api_test_user_cms_config(request: Request, config_id: int):
         return guard
     from trading_engine.database import get_user_cms_config_decrypted
     from trading_engine.services.wp_connection import verify_wp_connection
+
     cred = get_user_cms_config_decrypted(config_id)
     if not cred:
-        return JSONResponse(content={"status": "error", "message": "Config not found"}, status_code=404)
-    ok, message, site_name = verify_wp_connection(cred["site_url"], cred["wp_username"], cred["app_password"])
+        return JSONResponse(
+            content={"status": "error", "message": "Config not found"}, status_code=404
+        )
+    ok, message, site_name = verify_wp_connection(
+        cred["site_url"], cred["wp_username"], cred["app_password"]
+    )
     if ok:
-        return JSONResponse(content={"status": "ok", "message": message, "site_name": site_name or ""})
+        return JSONResponse(
+            content={"status": "ok", "message": message, "site_name": site_name or ""}
+        )
     return JSONResponse(content={"status": "error", "message": message})
 
 
@@ -6843,22 +7572,31 @@ def api_check_exits_trend_non_forex(request: Request):
         return guard
     user = _get_session_user(request)
     from trading_engine import engine_registry
+
     engine = engine_registry.get_engine()
     if engine is None:
-        return JSONResponse(content={"error": "Strategy engine not available"}, status_code=503)
+        return JSONResponse(
+            content={"error": "Strategy engine not available"}, status_code=503
+        )
     logger.info(
         f"[ADMIN] Manual trend_non_forex exit check triggered by user={user.get('username')}"
     )
     try:
         exits = engine.trend_non_forex_strategy.check_exits()
-        logger.info(f"[ADMIN] Manual exit check complete: {len(exits)} position(s) closed")
-        return JSONResponse(content={
-            "status": "ok",
-            "exits_triggered": len(exits),
-            "closed": exits,
-        })
+        logger.info(
+            f"[ADMIN] Manual exit check complete: {len(exits)} position(s) closed"
+        )
+        return JSONResponse(
+            content={
+                "status": "ok",
+                "exits_triggered": len(exits),
+                "closed": exits,
+            }
+        )
     except Exception as e:
-        logger.error(f"[ADMIN] Manual trend_non_forex exit check failed: {e}", exc_info=True)
+        logger.error(
+            f"[ADMIN] Manual trend_non_forex exit check failed: {e}", exc_info=True
+        )
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
@@ -6871,27 +7609,31 @@ def debug_mtf_open_positions(request: Request):
     from trading_engine.database import get_all_open_positions, get_active_signals
 
     positions = get_all_open_positions(strategy_name="mtf_ema")
-    signals   = get_active_signals(strategy_name="mtf_ema")
+    signals = get_active_signals(strategy_name="mtf_ema")
 
     sig_map = {s["asset"]: s for s in signals}
 
     result = []
     for pos in positions:
         sig = sig_map.get(pos["asset"], {})
-        result.append({
-            "asset":          pos["asset"],
-            "direction":      pos["direction"],
-            "entry_price":    pos["entry_price"],
-            "opened_at":      str(pos.get("opened_at", "")),
-            "signal_id":      sig.get("id"),
-            "signal_stop":    sig.get("stop_loss"),
-            "signal_created": str(sig.get("created_at", "")),
-        })
+        result.append(
+            {
+                "asset": pos["asset"],
+                "direction": pos["direction"],
+                "entry_price": pos["entry_price"],
+                "opened_at": str(pos.get("opened_at", "")),
+                "signal_id": sig.get("id"),
+                "signal_stop": sig.get("stop_loss"),
+                "signal_created": str(sig.get("created_at", "")),
+            }
+        )
 
-    return JSONResponse(content={
-        "count":     len(result),
-        "positions": result,
-    })
+    return JSONResponse(
+        content={
+            "count": len(result),
+            "positions": result,
+        }
+    )
 
 
 @router.post("/api/admin/close-stale-mtf-longs")
@@ -6902,15 +7644,18 @@ def admin_close_stale_mtf_longs(request: Request):
     if guard:
         return guard
     from trading_engine.database import close_stale_mtf_ema_longs
+
     try:
         close_stale_mtf_ema_longs()
-        return JSONResponse(content={
-            "success": True,
-            "message": (
-                "Stale MTF EMA LONG positions closed. "
-                "SHORT signals will fire on next :01 ET tick."
-            ),
-        })
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": (
+                    "Stale MTF EMA LONG positions closed. "
+                    "SHORT signals will fire on next :01 ET tick."
+                ),
+            }
+        )
     except Exception as e:
         logger.error(f"[ADMIN] close_stale_mtf_longs failed: {e}", exc_info=True)
         return JSONResponse(
@@ -6942,36 +7687,38 @@ def debug_open_signals(request: Request, asset: str):
             .all()
         )
 
-    return JSONResponse(content={
-        "asset": asset_decoded,
-        "open_signals": [
-            {
-                "id": s.id,
-                "strategy_name": s.strategy_name,
-                "direction": s.direction,
-                "entry_price": s.entry_price,
-                "stop_loss": s.stop_loss,
-                "signal_timestamp": s.signal_timestamp,
-                "created_at": str(s.created_at),
-            }
-            for s in sigs
-        ],
-        "open_positions": [
-            {
-                "id": p.id,
-                "strategy_name": p.strategy_name,
-                "direction": p.direction,
-                "entry_price": p.entry_price,
-                "atr_at_entry": p.atr_at_entry,
-                "opened_at": str(p.opened_at),
-            }
-            for p in pos
-        ],
-        "signal_count": len(sigs),
-        "position_count": len(pos),
-        "cross_strategy": len(set(s.strategy_name for s in sigs)) > 1,
-        "multi_direction": len(set(s.direction for s in sigs)) > 1,
-    })
+    return JSONResponse(
+        content={
+            "asset": asset_decoded,
+            "open_signals": [
+                {
+                    "id": s.id,
+                    "strategy_name": s.strategy_name,
+                    "direction": s.direction,
+                    "entry_price": s.entry_price,
+                    "stop_loss": s.stop_loss,
+                    "signal_timestamp": s.signal_timestamp,
+                    "created_at": str(s.created_at),
+                }
+                for s in sigs
+            ],
+            "open_positions": [
+                {
+                    "id": p.id,
+                    "strategy_name": p.strategy_name,
+                    "direction": p.direction,
+                    "entry_price": p.entry_price,
+                    "atr_at_entry": p.atr_at_entry,
+                    "opened_at": str(p.opened_at),
+                }
+                for p in pos
+            ],
+            "signal_count": len(sigs),
+            "position_count": len(pos),
+            "cross_strategy": len(set(s.strategy_name for s in sigs)) > 1,
+            "multi_direction": len(set(s.direction for s in sigs)) > 1,
+        }
+    )
 
 
 @router.get("/api/debug/all-open-signals")
@@ -6991,34 +7738,32 @@ def debug_all_open_signals(request: Request):
             .order_by(Signal.asset, Signal.id.desc())
             .all()
         )
-        all_pos = (
-            session.query(OpenPosition)
-            .order_by(OpenPosition.asset)
-            .all()
-        )
+        all_pos = session.query(OpenPosition).order_by(OpenPosition.asset).all()
 
     sigs_by_asset: dict = defaultdict(list)
     for s in all_sigs:
-        sigs_by_asset[s.asset].append({
-            "id": s.id,
-            "strategy_name": s.strategy_name,
-            "direction": s.direction,
-            "entry_price": s.entry_price,
-            "created_at": str(s.created_at),
-        })
+        sigs_by_asset[s.asset].append(
+            {
+                "id": s.id,
+                "strategy_name": s.strategy_name,
+                "direction": s.direction,
+                "entry_price": s.entry_price,
+                "created_at": str(s.created_at),
+            }
+        )
 
     pos_by_asset: dict = defaultdict(list)
     for p in all_pos:
-        pos_by_asset[p.asset].append({
-            "id": p.id,
-            "strategy_name": p.strategy_name,
-            "direction": p.direction,
-            "entry_price": p.entry_price,
-        })
+        pos_by_asset[p.asset].append(
+            {
+                "id": p.id,
+                "strategy_name": p.strategy_name,
+                "direction": p.direction,
+                "entry_price": p.entry_price,
+            }
+        )
 
-    all_assets = sorted(
-        set(list(sigs_by_asset.keys()) + list(pos_by_asset.keys()))
-    )
+    all_assets = sorted(set(list(sigs_by_asset.keys()) + list(pos_by_asset.keys())))
 
     problems = []
     clean = []
@@ -7048,16 +7793,18 @@ def debug_all_open_signals(request: Request):
         else:
             clean.append(asset_name)
 
-    return JSONResponse(content={
-        "total_assets": len(all_assets),
-        "assets_with_problems": len(problems),
-        "clean_assets": clean,
-        "problems": problems,
-        "totals": {
-            "open_signals": len(all_sigs),
-            "open_positions": len(all_pos),
-        },
-    })
+    return JSONResponse(
+        content={
+            "total_assets": len(all_assets),
+            "assets_with_problems": len(problems),
+            "clean_assets": clean,
+            "problems": problems,
+            "totals": {
+                "open_signals": len(all_sigs),
+                "open_positions": len(all_pos),
+            },
+        }
+    )
 
 
 @router.post("/api/force-close-position")
@@ -7070,16 +7817,23 @@ def api_force_close_position(request: Request, body: dict = Body(...)):
         return guard
     user = _get_session_user(request)
     from trading_engine.database import (
-        get_active_signals, close_signal, close_position, get_open_position
+        get_active_signals,
+        close_signal,
+        close_position,
+        get_open_position,
     )
 
     strategy_name = body.get("strategy_name")
     asset = body.get("asset")
     exit_price = body.get("exit_price")
-    exit_reason = body.get("exit_reason", f"Admin force-close by {user.get('username')}")
+    exit_reason = body.get(
+        "exit_reason", f"Admin force-close by {user.get('username')}"
+    )
 
     if not strategy_name or not asset:
-        return JSONResponse(content={"error": "strategy_name and asset are required"}, status_code=400)
+        return JSONResponse(
+            content={"error": "strategy_name and asset are required"}, status_code=400
+        )
 
     pos = get_open_position(strategy_name, asset)
     if not pos:
@@ -7102,14 +7856,18 @@ def api_force_close_position(request: Request, body: dict = Body(...)):
         logger.info(f"[ADMIN] Closed signal #{sig['id']} for {asset}")
 
     close_position(strategy_name, asset)
-    logger.info(f"[ADMIN] Closed open position #{pos['id']} for {strategy_name}/{asset}")
+    logger.info(
+        f"[ADMIN] Closed open position #{pos['id']} for {strategy_name}/{asset}"
+    )
 
-    return JSONResponse(content={
-        "status": "closed",
-        "position_id": pos["id"],
-        "strategy_name": strategy_name,
-        "asset": asset,
-        "exit_price": exit_price,
-        "exit_reason": exit_reason,
-        "signals_closed": closed_sigs,
-    })
+    return JSONResponse(
+        content={
+            "status": "closed",
+            "position_id": pos["id"],
+            "strategy_name": strategy_name,
+            "asset": asset,
+            "exit_price": exit_price,
+            "exit_reason": exit_reason,
+            "signals_closed": closed_sigs,
+        }
+    )

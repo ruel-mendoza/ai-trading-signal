@@ -25,20 +25,33 @@ from trading_engine.database import (
 logger = logging.getLogger("trading_engine.strategy.trend_non_forex")
 
 STRATEGY_NAME = "trend_non_forex"
-TARGET_SYMBOLS = [
-    # ── Commodity ETFs ──────────────────────────────────────
-    "CORN", "SOYB", "WEAT", "CANE", "WOOD",
-    "USO", "UNG", "UGA",
-    "SGOL", "SIVR", "CPER", "PPLT", "PALL",
-    "DBB", "SLX",
-    # ── Crypto altcoins (moved from mtf_ema, LONG_ONLY) ────
-    "BNB/USD",  "XRP/USD",  "SOL/USD",  "TRX/USD",  "DOGE/USD",
-    "ADA/USD",  "TON/USD",  "SHIB/USD", "AVAX/USD", "LINK/USD",
-    "LTC/USD",  "DOT/USD",  "BCH/USD",  "UNI/USD",
-    "ATOM/USD", "XLM/USD",  "HBAR/USD", "ICP/USD",  "APT/USD",
-    "NEAR/USD", "ARB/USD",  "OP/USD",   "SUI/USD",  "INJ/USD",
-    "CRO/USD",
-]
+
+
+def _load_symbols() -> list[str]:
+    """Load active symbols from DB at module load time.
+    Falls back to hardcoded list only if DB raises an exception.
+    """
+    try:
+        from trading_engine.database import get_strategy_assets
+        symbols = get_strategy_assets(STRATEGY_NAME, active_only=True)
+        if symbols:
+            return symbols
+    except Exception:
+        pass
+    return [
+        "CORN", "SOYB", "WEAT", "CANE", "WOOD",
+        "USO", "UNG", "UGA", "SGOL", "SIVR", "CPER",
+        "PPLT", "PALL", "DBB", "SLX",
+        "BNB/USD", "XRP/USD", "SOL/USD", "TRX/USD",
+        "DOGE/USD", "ADA/USD", "TON/USD", "SHIB/USD",
+        "AVAX/USD", "LINK/USD", "LTC/USD", "DOT/USD",
+        "BCH/USD", "UNI/USD", "ATOM/USD", "XLM/USD",
+        "HBAR/USD", "ICP/USD", "APT/USD", "NEAR/USD",
+        "ARB/USD", "OP/USD", "SUI/USD", "INJ/USD", "CRO/USD",
+    ]
+
+
+TARGET_SYMBOLS = _load_symbols()
 
 # ETF-only subset used for stock/latest batch fetching
 _ETF_SYMBOLS = [s for s in TARGET_SYMBOLS if "/" not in s]
@@ -46,11 +59,11 @@ _ETF_SYMBOLS = [s for s in TARGET_SYMBOLS if "/" not in s]
 _CRYPTO_ALTCOINS = [s for s in TARGET_SYMBOLS if "/" in s]
 
 SHORT_ELIGIBLE_SYMBOLS = [
-    "USO",   # Oil ETF — can trend down sharply
-    "UNG",   # Natural gas ETF
-    "UGA",   # Gasoline ETF
-    "DBB",   # Base metals — can trend down
-    "SLX",   # Steel ETF
+    "USO",  # Oil ETF — can trend down sharply
+    "UNG",  # Natural gas ETF
+    "UGA",  # Gasoline ETF
+    "DBB",  # Base metals — can trend down
+    "SLX",  # Steel ETF
 ]
 
 TIMEFRAME = "D1"
@@ -71,7 +84,9 @@ EVAL_WINDOW_MINUTES = 5
 ET_ZONE = pytz.timezone("America/New_York")
 
 
-def _calculate_quantity(portfolio_value: float, atr: float, atr_mult: float = TRAILING_STOP_ATR_MULT) -> Optional[float]:
+def _calculate_quantity(
+    portfolio_value: float, atr: float, atr_mult: float = TRAILING_STOP_ATR_MULT
+) -> Optional[float]:
     """QC algo: quantity = (portfolio_value × RISK_PCT) / (atr_mult × ATR).
 
     Returns None if ATR is zero or portfolio_value is not provided.
@@ -85,18 +100,13 @@ def _calculate_quantity(portfolio_value: float, atr: float, atr_mult: float = TR
 def get_active_symbols() -> list[str]:
     try:
         from trading_engine.database import get_strategy_assets
-        symbols = get_strategy_assets(
-            STRATEGY_NAME, active_only=True
-        )
+
+        symbols = get_strategy_assets(STRATEGY_NAME, active_only=True)
         if symbols:
             return symbols
-        logger.warning(
-            "[TREND-NONFX] DB empty — using hardcoded fallback"
-        )
+        logger.warning("[TREND-NONFX] DB empty — using hardcoded fallback")
     except Exception as e:
-        logger.error(
-            f"[TREND-NONFX] DB load failed: {e} — fallback"
-        )
+        logger.error(f"[TREND-NONFX] DB load failed: {e} — fallback")
     return list(TARGET_SYMBOLS)
 
 
@@ -191,7 +201,9 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             )
             try:
                 api_client = self.cache.api_client
-                advance_results = api_client.get_advance_data([asset], period="1d", merge="latest,profile")
+                advance_results = api_client.get_advance_data(
+                    [asset], period="1d", merge="latest,profile"
+                )
                 logger.debug(
                     f"[TREND-NONFX] {asset} | advance endpoint returned {len(advance_results)} result(s): "
                     f"{[r.get('symbol') for r in advance_results]}"
@@ -227,11 +239,14 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                 )
             except Exception as e:
                 logger.error(
-                    f"[TREND-NONFX] {asset} | Advance index price request failed: {e}", exc_info=True
+                    f"[TREND-NONFX] {asset} | Advance index price request failed: {e}",
+                    exc_info=True,
                 )
             return None
 
-        logger.info(f"[TREND-NONFX] {asset} | Not in batch cache, fetching individually via stock/latest")
+        logger.info(
+            f"[TREND-NONFX] {asset} | Not in batch cache, fetching individually via stock/latest"
+        )
         try:
             api_client = self.cache.api_client
             single_result = api_client.get_stock_latest_prices([asset], batch_size=1)
@@ -252,7 +267,10 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                     f"Keys in response: {list(single_result.keys())}"
                 )
         except Exception as e:
-            logger.error(f"[TREND-NONFX] {asset} | stock/latest request failed: {e}", exc_info=True)
+            logger.error(
+                f"[TREND-NONFX] {asset} | stock/latest request failed: {e}",
+                exc_info=True,
+            )
         return None
 
     def evaluate(
@@ -262,31 +280,33 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
         df: pd.DataFrame,
         open_position_data: Optional[dict],
     ) -> SignalResult:
-        mode_label = (
-            "LONG+SHORT" if asset in SHORT_ELIGIBLE_SYMBOLS
-            else "LONG_ONLY"
-        )
+        mode_label = "LONG+SHORT" if asset in SHORT_ELIGIBLE_SYMBOLS else "LONG_ONLY"
         logger.info(f"[TREND-NONFX] ====== Evaluating {asset} ({mode_label}) ======")
 
-        if asset not in TARGET_SYMBOLS:
-            logger.info(f"[TREND-NONFX] {asset} | Not a target ETF asset - skipping")
-            return SignalResult()
-
         from trading_engine.fcsapi_client import is_symbol_supported
+
         if not is_symbol_supported(asset):
-            logger.warning(f"[TREND-NONFX] {asset} | Symbol not supported by current data provider plan - skipping")
+            logger.warning(
+                f"[TREND-NONFX] {asset} | Symbol not supported by current data provider plan - skipping"
+            )
             return SignalResult()
 
         if not self._is_eval_window():
-            logger.info(f"[TREND-NONFX] {asset} | Outside 4:01 PM ET eval window - skipping")
+            logger.info(
+                f"[TREND-NONFX] {asset} | Outside 4:01 PM ET eval window - skipping"
+            )
             return SignalResult()
 
         advance_quote = self._get_advance_price(asset)
         if advance_quote is None:
-            logger.warning(f"[TREND-NONFX] {asset} | Cannot get real-time price from v4 advance - skipping")
+            logger.warning(
+                f"[TREND-NONFX] {asset} | Cannot get real-time price from v4 advance - skipping"
+            )
             return SignalResult()
 
-        logger.info(f"[TREND-NONFX] {asset} | Daily candles: {len(df)} (need {MIN_BARS_REQUIRED})")
+        logger.info(
+            f"[TREND-NONFX] {asset} | Daily candles: {len(df)} (need {MIN_BARS_REQUIRED})"
+        )
         if len(df) < MIN_BARS_REQUIRED:
             logger.warning(
                 f"[TREND-NONFX] {asset} | INSUFFICIENT DATA - have {len(df)}, need {MIN_BARS_REQUIRED}"
@@ -308,21 +328,32 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
 
         if any(v is None for v in [sma50_val, sma100_val, atr_val]):
             none_list = []
-            if sma50_val is None: none_list.append("SMA50")
-            if sma100_val is None: none_list.append("SMA100")
-            if atr_val is None: none_list.append("ATR100")
-            logger.warning(f"[TREND-NONFX] {asset} | Indicators returned None: {none_list}")
+            if sma50_val is None:
+                none_list.append("SMA50")
+            if sma100_val is None:
+                none_list.append("SMA100")
+            if atr_val is None:
+                none_list.append("ATR100")
+            logger.warning(
+                f"[TREND-NONFX] {asset} | Indicators returned None: {none_list}"
+            )
             return SignalResult()
 
-        prior_closes = closes[-(LOOKBACK_DAYS + 1):-1]
+        prior_closes = closes[-(LOOKBACK_DAYS + 1) : -1]
         highest_50d = max(prior_closes)
 
         sma50_above_sma100 = sma50_val > sma100_val
         close_above_highest = current_close >= highest_50d
 
-        logger.info(f"[TREND-NONFX] {asset} | close={current_close:.5f} (v4 advance pre-close)")
-        logger.info(f"[TREND-NONFX] {asset} | SMA(50)={sma50_val:.5f} | SMA(100)={sma100_val:.5f} | ATR_live(100)={atr_val:.5f}")
-        logger.info(f"[TREND-NONFX] {asset} | {LOOKBACK_DAYS}-day highest close={highest_50d:.5f}")
+        logger.info(
+            f"[TREND-NONFX] {asset} | close={current_close:.5f} (v4 advance pre-close)"
+        )
+        logger.info(
+            f"[TREND-NONFX] {asset} | SMA(50)={sma50_val:.5f} | SMA(100)={sma100_val:.5f} | ATR_live(100)={atr_val:.5f}"
+        )
+        logger.info(
+            f"[TREND-NONFX] {asset} | {LOOKBACK_DAYS}-day highest close={highest_50d:.5f}"
+        )
         logger.info(
             f"[TREND-NONFX] {asset} | LONG check: close >= highest_close={close_above_highest} "
             f"AND SMA50 > SMA100={sma50_above_sma100} (LONG_ONLY mode)"
@@ -357,7 +388,9 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
 
         if close_above_highest and sma50_above_sma100:
             if open_position_data and open_position_data.get("direction") == "BUY":
-                logger.info(f"[TREND-NONFX] {asset} | IDEMPOTENCY: Existing open LONG position - skipping")
+                logger.info(
+                    f"[TREND-NONFX] {asset} | IDEMPOTENCY: Existing open LONG position - skipping"
+                )
                 return SignalResult()
 
             if has_any_open_signal_for_asset(asset):
@@ -385,7 +418,9 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             stop_loss_distance = TRAILING_STOP_ATR_MULT * atr_val
             stop_loss = current_close - stop_loss_distance
 
-            logger.info(f"[TREND-NONFX] {asset} | ALL CONDITIONS MET: LONG (4:01 PM ET)")
+            logger.info(
+                f"[TREND-NONFX] {asset} | ALL CONDITIONS MET: LONG (4:01 PM ET)"
+            )
             logger.info(
                 f"[TREND-NONFX] {asset} | ATR_live({ATR_PERIOD}) = {atr_val:.6f} (dynamic — recalculated each bar)"
             )
@@ -397,13 +432,18 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             portfolio_value = None
             try:
                 from trading_engine.database import get_setting as _get_setting
+
                 pv_str = _get_setting("portfolio_value")
                 if pv_str:
                     portfolio_value = float(pv_str)
             except Exception:
                 pass
 
-            suggested_qty = _calculate_quantity(portfolio_value, atr_val) if portfolio_value else None
+            suggested_qty = (
+                _calculate_quantity(portfolio_value, atr_val)
+                if portfolio_value
+                else None
+            )
 
             signal = {
                 "strategy_name": STRATEGY_NAME,
@@ -422,16 +462,20 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             close_opposite_signal_if_exists(STRATEGY_NAME, asset, "BUY")
             signal_id = insert_signal(signal)
             if signal_id:
-                db_open_position({
-                    "asset": asset,
-                    "strategy_name": STRATEGY_NAME,
-                    "direction": "BUY",
-                    "entry_price": current_close,
-                    # atr_at_entry omitted — None is allowed for dynamic ATR strategies
-                })
+                db_open_position(
+                    {
+                        "asset": asset,
+                        "strategy_name": STRATEGY_NAME,
+                        "direction": "BUY",
+                        "entry_price": current_close,
+                        # atr_at_entry omitted — None is allowed for dynamic ATR strategies
+                    }
+                )
                 signal["id"] = signal_id
                 signal["status"] = "OPEN"
-                logger.info(f"[TREND-NONFX] {asset} | Signal stored with id={signal_id}")
+                logger.info(
+                    f"[TREND-NONFX] {asset} | Signal stored with id={signal_id}"
+                )
                 return SignalResult(
                     action=Action.ENTRY,
                     direction=Direction.LONG,
@@ -440,10 +484,12 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                     metadata={"signal": signal},
                 )
         else:
-            logger.info(f"[TREND-NONFX] {asset} | No LONG entry conditions met — checking SHORT eligibility")
+            logger.info(
+                f"[TREND-NONFX] {asset} | No LONG entry conditions met — checking SHORT eligibility"
+            )
 
         if asset in SHORT_ELIGIBLE_SYMBOLS:
-            lowest_50d = min(closes[-(LOOKBACK_DAYS + 1):-1])
+            lowest_50d = min(closes[-(LOOKBACK_DAYS + 1) : -1])
             sma50_below_sma100 = sma50_val < sma100_val
             close_below_lowest = current_close <= lowest_50d
 
@@ -454,7 +500,9 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
 
             if close_below_lowest and sma50_below_sma100:
                 if open_position_data and open_position_data.get("direction") == "SELL":
-                    logger.info(f"[TREND-NONFX] {asset} | IDEMPOTENCY: Existing open SHORT position - skipping")
+                    logger.info(
+                        f"[TREND-NONFX] {asset} | IDEMPOTENCY: Existing open SHORT position - skipping"
+                    )
                     return SignalResult()
 
                 if has_any_open_signal_for_asset(asset):
@@ -466,11 +514,15 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                     return SignalResult()
 
                 if has_open_signal(STRATEGY_NAME, asset):
-                    logger.info(f"[TREND-NONFX] {asset} | IDEMPOTENCY: Open signal exists — duplicate blocked")
+                    logger.info(
+                        f"[TREND-NONFX] {asset} | IDEMPOTENCY: Open signal exists — duplicate blocked"
+                    )
                     return SignalResult()
 
                 if signal_exists(STRATEGY_NAME, asset, signal_timestamp):
-                    logger.info(f"[TREND-NONFX] {asset} | Signal already exists for {signal_timestamp} — blocked")
+                    logger.info(
+                        f"[TREND-NONFX] {asset} | Signal already exists for {signal_timestamp} — blocked"
+                    )
                     return SignalResult()
 
                 stop_loss_distance = TRAILING_STOP_ATR_MULT * atr_val
@@ -479,13 +531,18 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                 portfolio_value = None
                 try:
                     from trading_engine.database import get_setting as _get_setting
+
                     pv_str = _get_setting("portfolio_value")
                     if pv_str:
                         portfolio_value = float(pv_str)
                 except Exception:
                     pass
 
-                suggested_qty = _calculate_quantity(portfolio_value, atr_val) if portfolio_value else None
+                suggested_qty = (
+                    _calculate_quantity(portfolio_value, atr_val)
+                    if portfolio_value
+                    else None
+                )
 
                 logger.info(f"[TREND-NONFX] {asset} | ALL SHORT CONDITIONS MET")
                 logger.info(
@@ -513,16 +570,20 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                 close_opposite_signal_if_exists(STRATEGY_NAME, asset, "SELL")
                 signal_id = insert_signal(signal)
                 if signal_id:
-                    db_open_position({
-                        "asset": asset,
-                        "strategy_name": STRATEGY_NAME,
-                        "direction": "SELL",
-                        "entry_price": current_close,
-                        # atr_at_entry omitted — None is allowed for dynamic ATR strategies
-                    })
+                    db_open_position(
+                        {
+                            "asset": asset,
+                            "strategy_name": STRATEGY_NAME,
+                            "direction": "SELL",
+                            "entry_price": current_close,
+                            # atr_at_entry omitted — None is allowed for dynamic ATR strategies
+                        }
+                    )
                     signal["id"] = signal_id
                     signal["status"] = "OPEN"
-                    logger.info(f"[TREND-NONFX] {asset} | SHORT signal stored with id={signal_id}")
+                    logger.info(
+                        f"[TREND-NONFX] {asset} | SHORT signal stored with id={signal_id}"
+                    )
                     return SignalResult(
                         action=Action.ENTRY,
                         direction=Direction.SHORT,
@@ -554,7 +615,7 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             ts_raw = sig.get("signal_timestamp") or ""
 
             is_orphaned = asset not in position_assets
-            is_legacy = asset not in TARGET_SYMBOLS
+            is_legacy = asset not in get_active_symbols()
 
             if not is_orphaned and not is_legacy:
                 continue
@@ -563,14 +624,18 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             try:
                 entry_time = datetime.strptime(str(ts_raw)[:19], "%Y-%m-%dT%H:%M:%S")
                 entry_time = pytz.timezone("America/New_York").localize(entry_time)
-                now_et = datetime.now(pytz.utc).astimezone(pytz.timezone("America/New_York"))
+                now_et = datetime.now(pytz.utc).astimezone(
+                    pytz.timezone("America/New_York")
+                )
                 hours_open = (now_et - entry_time).total_seconds() / 3600
             except (ValueError, TypeError):
                 pass
 
             reason_tag = []
             if is_legacy:
-                reason_tag.append(f"asset '{asset}' removed from strategy TARGET_SYMBOLS")
+                reason_tag.append(
+                    f"asset '{asset}' removed from strategy TARGET_SYMBOLS"
+                )
             if is_orphaned:
                 reason_tag.append("no open_positions record (cleared on restart)")
 
@@ -582,7 +647,9 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             except Exception:
                 pass
 
-            hours_str = f"{hours_open:.1f}h" if hours_open is not None else "unknown duration"
+            hours_str = (
+                f"{hours_open:.1f}h" if hours_open is not None else "unknown duration"
+            )
             exit_reason = (
                 f"Orphaned/legacy signal close | {'; '.join(reason_tag)} | "
                 f"open for {hours_str}"
@@ -594,11 +661,15 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             close_signal(sig_id, exit_reason, exit_price=exit_price)
             if is_legacy and asset in position_assets:
                 close_position(STRATEGY_NAME, asset)
-            closed.append({
-                "asset": asset, "direction": direction,
-                "entry_price": entry_price, "exit_price": exit_price,
-                "exit_reason": "orphaned_or_legacy",
-            })
+            closed.append(
+                {
+                    "asset": asset,
+                    "direction": direction,
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "exit_reason": "orphaned_or_legacy",
+                }
+            )
 
         return closed
 
@@ -614,7 +685,9 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             )
 
         positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
-        logger.info(f"[TREND-NONFX-EXIT] ====== Checking exits (closing-rule gate) | {len(positions)} open position(s) ======")
+        logger.info(
+            f"[TREND-NONFX-EXIT] ====== Checking exits (closing-rule gate) | {len(positions)} open position(s) ======"
+        )
 
         if not positions:
             return closed_signals
@@ -624,17 +697,23 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             pos_id = pos["id"]
             entry_price = pos["entry_price"]
             direction = pos["direction"]
-            logger.info(f"[TREND-NONFX-EXIT] Position #{pos_id} | {asset} {direction} | entry={entry_price:.5f}")
+            logger.info(
+                f"[TREND-NONFX-EXIT] Position #{pos_id} | {asset} {direction} | entry={entry_price:.5f}"
+            )
 
             if direction not in ("BUY", "SELL"):
-                logger.info(f"[TREND-NONFX-EXIT] Position #{pos_id} | Unknown direction {direction} — skipping")
+                logger.info(
+                    f"[TREND-NONFX-EXIT] Position #{pos_id} | Unknown direction {direction} — skipping"
+                )
                 continue
 
             # ── STEP 1: Fetch candles and compute live ATR (QC algo: dynamic, not stored) ──
             try:
                 candles_for_atr = self.cache.get_candles(asset, TIMEFRAME, 300)
             except Exception as e:
-                logger.error(f"[TREND-NONFX-EXIT] Position #{pos_id} | Exception fetching candles for ATR: {e}")
+                logger.error(
+                    f"[TREND-NONFX-EXIT] Position #{pos_id} | Exception fetching candles for ATR: {e}"
+                )
                 continue
 
             if len(candles_for_atr) < ATR_PERIOD + 1:
@@ -645,13 +724,21 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                 continue
 
             closes_for_atr = [c["close"] for c in candles_for_atr]
-            highs_for_atr  = [c["high"]  for c in candles_for_atr]
-            lows_for_atr   = [c["low"]   for c in candles_for_atr]
-            atr_values_exit = IndicatorEngine.atr(highs_for_atr, lows_for_atr, closes_for_atr, ATR_PERIOD)
-            live_atr = atr_values_exit[-1] if atr_values_exit and atr_values_exit[-1] is not None else None
+            highs_for_atr = [c["high"] for c in candles_for_atr]
+            lows_for_atr = [c["low"] for c in candles_for_atr]
+            atr_values_exit = IndicatorEngine.atr(
+                highs_for_atr, lows_for_atr, closes_for_atr, ATR_PERIOD
+            )
+            live_atr = (
+                atr_values_exit[-1]
+                if atr_values_exit and atr_values_exit[-1] is not None
+                else None
+            )
 
             if live_atr is None:
-                logger.warning(f"[TREND-NONFX-EXIT] Position #{pos_id} | Live ATR returned None — skipping")
+                logger.warning(
+                    f"[TREND-NONFX-EXIT] Position #{pos_id} | Live ATR returned None — skipping"
+                )
                 continue
 
             logger.info(
@@ -673,7 +760,9 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                     f"Advance API returned None — using last cached candle"
                 )
                 if len(candles_for_atr) < 2:
-                    logger.warning(f"[TREND-NONFX-EXIT] Position #{pos_id} | Insufficient candles for price fallback")
+                    logger.warning(
+                        f"[TREND-NONFX-EXIT] Position #{pos_id} | Insufficient candles for price fallback"
+                    )
                     continue
                 current_close = candles_for_atr[-1]["close"]
                 logger.info(
@@ -683,8 +772,14 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
 
             # ── STEP 3: QC ratchet trailing stop ──
             # Retrieve the stored stop_loss from the open signal (persisted between runs)
-            active_sigs_for_stop = get_active_signals(strategy_name=STRATEGY_NAME, asset=asset)
-            stored_stop = active_sigs_for_stop[0].get("stop_loss") if active_sigs_for_stop else None
+            active_sigs_for_stop = get_active_signals(
+                strategy_name=STRATEGY_NAME, asset=asset
+            )
+            stored_stop = (
+                active_sigs_for_stop[0].get("stop_loss")
+                if active_sigs_for_stop
+                else None
+            )
 
             if direction == "SELL":
                 # SHORT: stop moves DOWN (lower stop is better for shorts — tighter above price)
@@ -720,13 +815,23 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                         f"Closing-rule SHORT exit | 4:01 PM close={current_close:.5f} >= "
                         f"SL_level={trailing_stop:.5f} ({TRAILING_STOP_ATR_MULT}×ATR_live={live_atr:.6f})"
                     )
-                    logger.info(f"[TREND-NONFX-EXIT] Position #{pos_id} | EXIT: SHORT closing-rule gate triggered")
+                    logger.info(
+                        f"[TREND-NONFX-EXIT] Position #{pos_id} | EXIT: SHORT closing-rule gate triggered"
+                    )
                     for sig in active_sigs_for_stop:
                         close_signal(sig["id"], exit_reason)
                     close_position(STRATEGY_NAME, asset)
-                    closed_signals.append({**pos, "exit_price": current_close, "exit_reason": "closing_rule_short"})
+                    closed_signals.append(
+                        {
+                            **pos,
+                            "exit_price": current_close,
+                            "exit_reason": "closing_rule_short",
+                        }
+                    )
                 else:
-                    logger.info(f"[TREND-NONFX-EXIT] Position #{pos_id} | Holding SHORT — close below SL level")
+                    logger.info(
+                        f"[TREND-NONFX-EXIT] Position #{pos_id} | Holding SHORT — close below SL level"
+                    )
                 continue
 
             # BUY: stop moves UP (higher stop is better for longs — tighter below price)
@@ -763,12 +868,18 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                     f"Closing-rule exit | 4:01 PM close={current_close:.5f} <= "
                     f"SL_level={trailing_stop:.5f} ({TRAILING_STOP_ATR_MULT}×ATR_live={live_atr:.6f})"
                 )
-                logger.info(f"[TREND-NONFX-EXIT] Position #{pos_id} | EXIT: closing-rule gate triggered")
+                logger.info(
+                    f"[TREND-NONFX-EXIT] Position #{pos_id} | EXIT: closing-rule gate triggered"
+                )
                 for sig in active_sigs_for_stop:
                     close_signal(sig["id"], exit_reason)
                 close_position(STRATEGY_NAME, asset)
-                closed_signals.append({**pos, "exit_price": current_close, "exit_reason": "closing_rule"})
+                closed_signals.append(
+                    {**pos, "exit_price": current_close, "exit_reason": "closing_rule"}
+                )
             else:
-                logger.info(f"[TREND-NONFX-EXIT] Position #{pos_id} | Holding BUY — close above SL level")
+                logger.info(
+                    f"[TREND-NONFX-EXIT] Position #{pos_id} | Holding BUY — close above SL level"
+                )
 
         return closed_signals

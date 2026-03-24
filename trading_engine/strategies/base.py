@@ -51,8 +51,7 @@ class SignalResult:
 class BaseStrategy(ABC):
     @property
     @abstractmethod
-    def name(self) -> str:
-        ...
+    def name(self) -> str: ...
 
     @abstractmethod
     def evaluate(
@@ -61,5 +60,18 @@ class BaseStrategy(ABC):
         timeframe: str,
         df: pd.DataFrame,
         open_position: Optional[dict],
-    ) -> SignalResult:
-        ...
+    ) -> SignalResult: ...
+
+    def check_exits(self) -> list[dict]:
+        """Check all open positions for this strategy and close any that have
+        met their exit conditions.
+
+        Default implementation returns an empty list — strategies with
+        time-based, indicator-based, or trailing-stop exits must override
+        this method.
+
+        Returns:
+            List of closed position dicts, each containing at minimum:
+              asset, direction, entry_price, exit_price, exit_reason
+        """
+        return []

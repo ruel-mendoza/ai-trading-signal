@@ -17,9 +17,11 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.pool import QueuePool
 
+
 def _invalidate_signal_cache():
     try:
         from trading_engine.api_v1 import invalidate_signal_caches
+
         invalidate_signal_caches()
     except Exception:
         pass
@@ -28,6 +30,7 @@ def _invalidate_signal_cache():
 def _ws_broadcast_new(signal_dict: dict):
     try:
         from trading_engine.websocket import broadcaster
+
         broadcaster.broadcast_signal_new(signal_dict)
     except Exception:
         pass
@@ -36,6 +39,7 @@ def _ws_broadcast_new(signal_dict: dict):
 def _ws_broadcast_closed(signal_id: int, exit_reason: str = "", exit_price=None):
     try:
         from trading_engine.websocket import broadcaster
+
         broadcaster.broadcast_signal_closed(signal_id, exit_reason, exit_price)
     except Exception:
         pass
@@ -67,51 +71,87 @@ logger = logging.getLogger("trading_engine.database")
 
 _ASSET_CLASS_MAP: dict[str, str] = {
     # ── Forex (pairs) ──────────────────────────────────
-    "EUR/USD": "forex",  "GBP/USD": "forex",  "USD/JPY": "forex",
-    "USD/CAD": "forex",  "AUD/USD": "forex",  "NZD/USD": "forex",
-    "USD/CHF": "forex",  "EUR/GBP": "forex",
+    "EUR/USD": "forex",
+    "GBP/USD": "forex",
+    "USD/JPY": "forex",
+    "USD/CAD": "forex",
+    "AUD/USD": "forex",
+    "NZD/USD": "forex",
+    "USD/CHF": "forex",
+    "EUR/GBP": "forex",
     # ── Forex (spot commodities) ───────────────────────
-    "XAU/USD": "forex",  "XAG/USD": "forex",  "XPT/USD": "forex",
-    "XPD/USD": "forex",  "XCU/USD": "forex",  "OSX":     "forex",
+    "XAU/USD": "forex",
+    "XAG/USD": "forex",
+    "XPT/USD": "forex",
+    "XPD/USD": "forex",
+    "XCU/USD": "forex",
+    "OSX": "forex",
     "NATGAS/USD": "forex",
-    "CORN/USD": "forex", "SOYBEAN/USD": "forex",
-    "WHEAT/USD": "forex","SUGAR/USD": "forex",
+    "CORN/USD": "forex",
+    "SOYBEAN/USD": "forex",
+    "WHEAT/USD": "forex",
+    "SUGAR/USD": "forex",
     # ── Forex (commodity ETFs) ─────────────────────────
-    "USO":  "forex", "UNG":  "forex", "UGA":  "forex",
-    "DBB":  "forex", "SLX":  "forex",
-    "SGOL": "forex", "SIVR": "forex", "CPER": "forex",
-    "PPLT": "forex", "PALL": "forex",
-    "CORN": "forex", "SOYB": "forex", "WEAT": "forex",
-    "CANE": "forex", "WOOD": "forex",
+    "USO": "forex",
+    "UNG": "forex",
+    "UGA": "forex",
+    "DBB": "forex",
+    "SLX": "forex",
+    "SGOL": "forex",
+    "SIVR": "forex",
+    "CPER": "forex",
+    "PPLT": "forex",
+    "PALL": "forex",
+    "CORN": "forex",
+    "SOYB": "forex",
+    "WEAT": "forex",
+    "CANE": "forex",
+    "WOOD": "forex",
     # ── Forex (indices) ────────────────────────────────
-    "SPX": "forex", "NDX": "forex", "RUT": "forex",
+    "SPX": "forex",
+    "NDX": "forex",
+    "RUT": "forex",
     "DJI": "forex",
     # ── Crypto ─────────────────────────────────────────
-    "BTC/USD": "crypto", "ETH/USD": "crypto",
-    "LTC/USD": "crypto", "XRP/USD": "crypto",
-    "BNB/USD": "crypto", "ETHUSD":  "crypto",
-    "BTCUSD":  "crypto",
+    "BTC/USD": "crypto",
+    "ETH/USD": "crypto",
+    "LTC/USD": "crypto",
+    "XRP/USD": "crypto",
+    "BNB/USD": "crypto",
+    "ETHUSD": "crypto",
+    "BTCUSD": "crypto",
     # Altcoins — Tier 1
-    "SOL/USD":  "crypto", "DOGE/USD": "crypto",
-    "ADA/USD":  "crypto", "AVAX/USD": "crypto",
+    "SOL/USD": "crypto",
+    "DOGE/USD": "crypto",
+    "ADA/USD": "crypto",
+    "AVAX/USD": "crypto",
     "LINK/USD": "crypto",
-    "DOT/USD":  "crypto", "BCH/USD":  "crypto",
-    "XLM/USD":  "crypto", "ATOM/USD": "crypto",
-    "UNI/USD":  "crypto",
+    "DOT/USD": "crypto",
+    "BCH/USD": "crypto",
+    "XLM/USD": "crypto",
+    "ATOM/USD": "crypto",
+    "UNI/USD": "crypto",
     # Altcoins — Tier 2
-    "TON/USD":  "crypto", "SHIB/USD": "crypto",
-    "HBAR/USD": "crypto", "NEAR/USD": "crypto",
-    "ICP/USD":  "crypto", "CRO/USD":  "crypto",
+    "TON/USD": "crypto",
+    "SHIB/USD": "crypto",
+    "HBAR/USD": "crypto",
+    "NEAR/USD": "crypto",
+    "ICP/USD": "crypto",
+    "CRO/USD": "crypto",
     # Altcoins — Tier 3
-    "APT/USD":  "crypto", "ARB/USD":  "crypto",
-    "OP/USD":   "crypto", "SUI/USD":  "crypto",
-    "INJ/USD":  "crypto", "TRX/USD":  "crypto",
+    "APT/USD": "crypto",
+    "ARB/USD": "crypto",
+    "OP/USD": "crypto",
+    "SUI/USD": "crypto",
+    "INJ/USD": "crypto",
+    "TRX/USD": "crypto",
 }
 
 
 def _get_asset_class(symbol: str) -> str:
     """Return the asset class label for a symbol. Falls back to 'other' for unmapped symbols."""
     return _ASSET_CLASS_MAP.get(symbol, "other")
+
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "trading_data.db")
 DATABASE_URL = os.environ.get("TRADING_ENGINE_DB_URL", f"sqlite:///{DB_PATH}")
@@ -124,7 +164,9 @@ engine = create_engine(
     pool_timeout=30,
     pool_pre_ping=True,
     echo=False,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+    connect_args={"check_same_thread": False}
+    if DATABASE_URL.startswith("sqlite")
+    else {},
 )
 
 SessionFactory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -187,12 +229,16 @@ def check_db_health() -> dict:
 
         status = {
             "status": "healthy",
-            "database_url": DATABASE_URL.split("///")[-1] if "sqlite" in DATABASE_URL else "(configured)",
+            "database_url": DATABASE_URL.split("///")[-1]
+            if "sqlite" in DATABASE_URL
+            else "(configured)",
             "tables": tables,
             "table_count": len(tables),
             "pool": pool_status,
         }
-        logger.info(f"[DB] Health check passed: {len(tables)} tables, pool={pool_status}")
+        logger.info(
+            f"[DB] Health check passed: {len(tables)} tables, pool={pool_status}"
+        )
         return status
     except Exception as e:
         logger.error(f"[DB] Health check FAILED: {e}")
@@ -216,18 +262,26 @@ def _migrate_schema():
             try:
                 conn.execute(text(f"SELECT {column} FROM {table} LIMIT 1"))
             except Exception:
-                logger.info(f"[DB] MIGRATE: Adding column {table}.{column} ({col_type})")
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+                logger.info(
+                    f"[DB] MIGRATE: Adding column {table}.{column} ({col_type})"
+                )
+                conn.execute(
+                    text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+                )
                 conn.commit()
 
         try:
-            result = conn.execute(text(
-                "SELECT id FROM admin_users WHERE role IS NULL"
-            )).fetchall()
+            result = conn.execute(
+                text("SELECT id FROM admin_users WHERE role IS NULL")
+            ).fetchall()
             if result:
-                conn.execute(text("UPDATE admin_users SET role = 'ADMIN' WHERE role IS NULL"))
+                conn.execute(
+                    text("UPDATE admin_users SET role = 'ADMIN' WHERE role IS NULL")
+                )
                 conn.commit()
-                logger.info(f"[DB] MIGRATE: Set {len(result)} existing user(s) to ADMIN role")
+                logger.info(
+                    f"[DB] MIGRATE: Set {len(result)} existing user(s) to ADMIN role"
+                )
         except Exception:
             pass
 
@@ -244,6 +298,7 @@ def _migrate_schema():
 
 def _purge_unsupported_symbols():
     from trading_engine.fcsapi_client import UNSUPPORTED_SYMBOLS
+
     if not UNSUPPORTED_SYMBOLS:
         return
     with _get_session() as session:
@@ -251,7 +306,11 @@ def _purge_unsupported_symbols():
             for sym in UNSUPPORTED_SYMBOLS:
                 c_del = session.query(Candle).filter_by(asset=sym).delete()
                 s_del = session.query(Signal).filter(Signal.asset == sym).delete()
-                p_del = session.query(OpenPosition).filter(OpenPosition.asset == sym).delete()
+                p_del = (
+                    session.query(OpenPosition)
+                    .filter(OpenPosition.asset == sym)
+                    .delete()
+                )
                 m_del = session.query(CacheMetadata).filter_by(asset=sym).delete()
                 if c_del or s_del or p_del or m_del:
                     logger.info(
@@ -283,14 +342,12 @@ def purge_matic_usd():
             for sig in open_sigs:
                 sig.status = "CLOSED"
                 sig.exit_reason = (
-                    "Symbol permanently removed — "
-                    "MATIC/USD not supported by FCSAPI"
+                    "Symbol permanently removed — MATIC/USD not supported by FCSAPI"
                 )
             if open_sigs:
                 session.commit()
                 logger.info(
-                    f"[DB] purge_matic_usd: closed "
-                    f"{len(open_sigs)} open signal(s)"
+                    f"[DB] purge_matic_usd: closed {len(open_sigs)} open signal(s)"
                 )
 
             # Step 2: Delete open positions
@@ -301,10 +358,7 @@ def purge_matic_usd():
             )
             if pos:
                 session.commit()
-                logger.info(
-                    f"[DB] purge_matic_usd: deleted "
-                    f"{pos} open position(s)"
-                )
+                logger.info(f"[DB] purge_matic_usd: deleted {pos} open position(s)")
 
             # Step 3: Hard delete all strategy_assets rows
             sa = (
@@ -314,10 +368,7 @@ def purge_matic_usd():
             )
             if sa:
                 session.commit()
-                logger.info(
-                    f"[DB] purge_matic_usd: deleted "
-                    f"{sa} strategy_asset row(s)"
-                )
+                logger.info(f"[DB] purge_matic_usd: deleted {sa} strategy_asset row(s)")
 
             # Step 4: Delete all candles
             c = (
@@ -327,10 +378,7 @@ def purge_matic_usd():
             )
             if c:
                 session.commit()
-                logger.info(
-                    f"[DB] purge_matic_usd: deleted "
-                    f"{c} candle row(s)"
-                )
+                logger.info(f"[DB] purge_matic_usd: deleted {c} candle row(s)")
 
             # Step 5: Delete cache metadata
             m = (
@@ -340,10 +388,7 @@ def purge_matic_usd():
             )
             if m:
                 session.commit()
-                logger.info(
-                    f"[DB] purge_matic_usd: deleted "
-                    f"{m} cache metadata row(s)"
-                )
+                logger.info(f"[DB] purge_matic_usd: deleted {m} cache metadata row(s)")
 
             logger.info(
                 "[DB] purge_matic_usd: complete — "
@@ -353,9 +398,38 @@ def purge_matic_usd():
 
         except Exception as e:
             session.rollback()
-            logger.error(
-                f"[DB] purge_matic_usd failed: {e}"
+            logger.error(f"[DB] purge_matic_usd failed: {e}")
+
+
+def _migrate_add_dji():
+    """One-time migration: add DJI to mtf_ema if not already present.
+    Safe to call on every startup — no-ops if DJI already exists.
+    """
+    with _get_session() as session:
+        try:
+            existing = (
+                session.query(StrategyAsset)
+                .filter_by(strategy_name="mtf_ema", symbol="DJI")
+                .first()
             )
+            if existing:
+                return
+            session.add(
+                StrategyAsset(
+                    strategy_name="mtf_ema",
+                    symbol="DJI",
+                    asset_class="forex",
+                    sub_category="indices",
+                    is_active=1,
+                    fcsapi_verified=1,
+                    added_by="system_seed",
+                )
+            )
+            session.commit()
+            logger.info("[DB] _migrate_add_dji: inserted DJI into mtf_ema")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] _migrate_add_dji failed: {e}")
 
 
 def close_stale_manual_signals():
@@ -364,18 +438,26 @@ def close_stale_manual_signals():
     Idempotent — safe to call on every startup.
     """
     KNOWN_STRATEGIES = {
-        "mtf_ema", "trend_forex", "trend_non_forex",
-        "sp500_momentum", "highest_lowest_fx", "trend_following",
+        "mtf_ema",
+        "trend_forex",
+        "trend_non_forex",
+        "sp500_momentum",
+        "highest_lowest_fx",
+        "trend_following",
     }
     cutoff = (datetime.utcnow() - timedelta(days=7)).isoformat()
 
     with _get_session() as session:
         try:
-            stale = session.query(Signal).filter(
-                Signal.status == "OPEN",
-                Signal.created_at <= cutoff,
-                Signal.strategy_name.notin_(KNOWN_STRATEGIES),
-            ).all()
+            stale = (
+                session.query(Signal)
+                .filter(
+                    Signal.status == "OPEN",
+                    Signal.created_at <= cutoff,
+                    Signal.strategy_name.notin_(KNOWN_STRATEGIES),
+                )
+                .all()
+            )
 
             if not stale:
                 logger.info("[DB] close_stale_manual_signals: no stale signals found")
@@ -383,7 +465,9 @@ def close_stale_manual_signals():
 
             for sig in stale:
                 sig.status = "CLOSED"
-                sig.exit_reason = "Auto-closed: stale manual/AI signal predates strategy engine"
+                sig.exit_reason = (
+                    "Auto-closed: stale manual/AI signal predates strategy engine"
+                )
                 logger.info(
                     f"[DB] close_stale_manual_signals: closing signal #{sig.id} | "
                     f"asset={sig.asset} | direction={sig.direction} | "
@@ -391,7 +475,9 @@ def close_stale_manual_signals():
                 )
 
             session.commit()
-            logger.info(f"[DB] close_stale_manual_signals: closed {len(stale)} stale signal(s)")
+            logger.info(
+                f"[DB] close_stale_manual_signals: closed {len(stale)} stale signal(s)"
+            )
             _invalidate_signal_cache()
 
         except Exception as e:
@@ -406,12 +492,17 @@ def close_specific_stale_signals():
     Idempotent — safe to call on every startup, no-op if already closed.
     """
     STALE_TARGETS = [
-        ("XAG/USD", "SELL", 24.75,   "AI signal Mar 4 — wrong price level"),
-        ("USD/JPY", "SELL", 154.80,  "AI signal Feb 22 — stale"),
-        ("XAU/USD", "BUY",  2340.50, "AI signal Feb 22 — stale, lower entry than engine"),
-        ("GBP/USD", "SELL", 1.29,    "AI signal Mar 4 — stale"),
-        ("EUR/USD", "SELL", 1.075,   "AI signal Mar 2 — stale"),
-        ("BTC/USD", "BUY",  67500.0, "AI signal Feb 22 — stale"),
+        ("XAG/USD", "SELL", 24.75, "AI signal Mar 4 — wrong price level"),
+        ("USD/JPY", "SELL", 154.80, "AI signal Feb 22 — stale"),
+        (
+            "XAU/USD",
+            "BUY",
+            2340.50,
+            "AI signal Feb 22 — stale, lower entry than engine",
+        ),
+        ("GBP/USD", "SELL", 1.29, "AI signal Mar 4 — stale"),
+        ("EUR/USD", "SELL", 1.075, "AI signal Mar 2 — stale"),
+        ("BTC/USD", "BUY", 67500.0, "AI signal Feb 22 — stale"),
     ]
 
     with _get_session() as session:
@@ -420,13 +511,17 @@ def close_specific_stale_signals():
             for asset, direction, entry_px, note in STALE_TARGETS:
                 lower = entry_px * 0.99
                 upper = entry_px * 1.01
-                sigs = session.query(Signal).filter(
-                    Signal.status == "OPEN",
-                    Signal.asset == asset,
-                    Signal.direction == direction,
-                    Signal.entry_price >= lower,
-                    Signal.entry_price <= upper,
-                ).all()
+                sigs = (
+                    session.query(Signal)
+                    .filter(
+                        Signal.status == "OPEN",
+                        Signal.asset == asset,
+                        Signal.direction == direction,
+                        Signal.entry_price >= lower,
+                        Signal.entry_price <= upper,
+                    )
+                    .all()
+                )
                 for sig in sigs:
                     sig.status = "CLOSED"
                     sig.exit_reason = f"Auto-closed: {note}"
@@ -437,7 +532,9 @@ def close_specific_stale_signals():
                     closed += 1
             session.commit()
             if closed:
-                logger.info(f"[DB] close_specific_stale_signals: closed {closed} signal(s)")
+                logger.info(
+                    f"[DB] close_specific_stale_signals: closed {closed} signal(s)"
+                )
                 _invalidate_signal_cache()
             else:
                 logger.info(
@@ -473,16 +570,20 @@ def close_stale_mtf_ema_longs(h4_ema50_map: Optional[dict] = None) -> None:
     with _get_session() as session:
         try:
             total_sigs = 0
-            total_pos  = 0
+            total_pos = 0
 
             for asset, h4_ema50 in h4_ema50_map.items():
                 # Close open LONG signals
-                sigs = session.query(Signal).filter(
-                    Signal.asset == asset,
-                    Signal.direction == "BUY",
-                    Signal.status == "OPEN",
-                    Signal.strategy_name == STRATEGY,
-                ).all()
+                sigs = (
+                    session.query(Signal)
+                    .filter(
+                        Signal.asset == asset,
+                        Signal.direction == "BUY",
+                        Signal.status == "OPEN",
+                        Signal.strategy_name == STRATEGY,
+                    )
+                    .all()
+                )
 
                 for sig in sigs:
                     sig.status = "CLOSED"
@@ -499,11 +600,15 @@ def close_stale_mtf_ema_longs(h4_ema50_map: Optional[dict] = None) -> None:
                     total_sigs += 1
 
                 # Delete open position records
-                pos_rows = session.query(OpenPosition).filter(
-                    OpenPosition.asset == asset,
-                    OpenPosition.direction == "BUY",
-                    OpenPosition.strategy_name == STRATEGY,
-                ).all()
+                pos_rows = (
+                    session.query(OpenPosition)
+                    .filter(
+                        OpenPosition.asset == asset,
+                        OpenPosition.direction == "BUY",
+                        OpenPosition.strategy_name == STRATEGY,
+                    )
+                    .all()
+                )
 
                 for p in pos_rows:
                     logger.info(
@@ -548,21 +653,16 @@ def has_any_open_signal_for_asset(
     (e.g. mtf_ema and sp500_momentum can both hold open signals on SPX simultaneously).
     """
     with _get_session() as session:
-        q = (
-            session.query(
-                Signal.id,
-                Signal.strategy_name,
-                Signal.direction,
-            )
-            .filter(
-                Signal.asset == asset,
-                Signal.status == "OPEN",
-            )
+        q = session.query(
+            Signal.id,
+            Signal.strategy_name,
+            Signal.direction,
+        ).filter(
+            Signal.asset == asset,
+            Signal.status == "OPEN",
         )
         if exclude_strategies:
-            q = q.filter(
-                Signal.strategy_name.notin_(exclude_strategies)
-            )
+            q = q.filter(Signal.strategy_name.notin_(exclude_strategies))
         row = q.first()
         if row:
             logger.debug(
@@ -645,9 +745,7 @@ def close_opposite_signal_if_exists(
 
         except Exception as e:
             session.rollback()
-            logger.error(
-                f"[DB] close_opposite_signal_if_exists failed: {e}"
-            )
+            logger.error(f"[DB] close_opposite_signal_if_exists failed: {e}")
             return False
 
 
@@ -659,12 +757,21 @@ def _backfill_asset_class():
     """
     with _get_session() as session:
         try:
-            rows = session.query(Signal).filter(
-                Signal.asset_class.in_(
-                    [None, "other", "stocks",
-                     "commodities", "indices"]   # old category names
+            rows = (
+                session.query(Signal)
+                .filter(
+                    Signal.asset_class.in_(
+                        [
+                            None,
+                            "other",
+                            "stocks",
+                            "commodities",
+                            "indices",
+                        ]  # old category names
+                    )
                 )
-            ).all()
+                .all()
+            )
             updated = 0
             for sig in rows:
                 mapped = _ASSET_CLASS_MAP.get(sig.asset)
@@ -674,13 +781,10 @@ def _backfill_asset_class():
             if updated:
                 session.commit()
                 logger.info(
-                    f"[DB] Backfilled asset_class for "
-                    f"{updated} existing signal(s)"
+                    f"[DB] Backfilled asset_class for {updated} existing signal(s)"
                 )
             else:
-                logger.info(
-                    "[DB] asset_class backfill: all signals already classified"
-                )
+                logger.info("[DB] asset_class backfill: all signals already classified")
         except Exception as e:
             session.rollback()
             logger.error(f"[DB] asset_class backfill failed: {e}")
@@ -695,7 +799,7 @@ def init_db():
     _backfill_asset_class()
     seed_strategy_assets()
     purge_matic_usd()
-    sync_strategy_assets_dedup()
+    _migrate_add_dji()
 
     with _get_session() as session:
         _seed_default_admin(session)
@@ -714,26 +818,32 @@ def upsert_candles(asset: str, timeframe: str, candles: list[dict]):
         try:
             for c in candles:
                 ts = c.get("timestamp") or c.get("open_time")
-                existing = session.query(Candle).filter_by(
-                    asset=asset, timeframe=timeframe, timestamp=ts
-                ).first()
+                existing = (
+                    session.query(Candle)
+                    .filter_by(asset=asset, timeframe=timeframe, timestamp=ts)
+                    .first()
+                )
                 if existing:
                     existing.open = c["open"]
                     existing.high = c["high"]
                     existing.low = c["low"]
                     existing.close = c["close"]
                 else:
-                    session.add(Candle(
-                        asset=asset,
-                        timeframe=timeframe,
-                        timestamp=ts,
-                        open=c["open"],
-                        high=c["high"],
-                        low=c["low"],
-                        close=c["close"],
-                    ))
+                    session.add(
+                        Candle(
+                            asset=asset,
+                            timeframe=timeframe,
+                            timestamp=ts,
+                            open=c["open"],
+                            high=c["high"],
+                            low=c["low"],
+                            close=c["close"],
+                        )
+                    )
             session.commit()
-            logger.debug(f"[DB] Upserted {len(candles)} candles for {asset}/{timeframe}")
+            logger.debug(
+                f"[DB] Upserted {len(candles)} candles for {asset}/{timeframe}"
+            )
         except Exception as e:
             session.rollback()
             logger.error(f"[DB] Upsert candles failed: {e}")
@@ -761,22 +871,30 @@ def get_candles(asset: str, timeframe: str, limit: int = 300) -> list[dict]:
         ]
 
 
-def update_cache_metadata(asset: str, timeframe: str, last_candle_close: Optional[str] = None):
+def update_cache_metadata(
+    asset: str, timeframe: str, last_candle_close: Optional[str] = None
+):
     now = datetime.utcnow().isoformat()
     with _get_session() as session:
         try:
-            existing = session.query(CacheMetadata).filter_by(asset=asset, timeframe=timeframe).first()
+            existing = (
+                session.query(CacheMetadata)
+                .filter_by(asset=asset, timeframe=timeframe)
+                .first()
+            )
             if existing:
                 existing.last_fetched = now
                 if last_candle_close is not None:
                     existing.last_candle_close = last_candle_close
             else:
-                session.add(CacheMetadata(
-                    asset=asset,
-                    timeframe=timeframe,
-                    last_fetched=now,
-                    last_candle_close=last_candle_close,
-                ))
+                session.add(
+                    CacheMetadata(
+                        asset=asset,
+                        timeframe=timeframe,
+                        last_fetched=now,
+                        last_candle_close=last_candle_close,
+                    )
+                )
             session.commit()
         except Exception as e:
             session.rollback()
@@ -786,9 +904,16 @@ def update_cache_metadata(asset: str, timeframe: str, last_candle_close: Optiona
 
 def get_cache_metadata(asset: str, timeframe: str) -> Optional[dict]:
     with _get_session() as session:
-        row = session.query(CacheMetadata).filter_by(asset=asset, timeframe=timeframe).first()
+        row = (
+            session.query(CacheMetadata)
+            .filter_by(asset=asset, timeframe=timeframe)
+            .first()
+        )
         if row:
-            return {"last_fetched": row.last_fetched, "last_candle_close": row.last_candle_close}
+            return {
+                "last_fetched": row.last_fetched,
+                "last_candle_close": row.last_candle_close,
+            }
         return None
 
 
@@ -823,11 +948,15 @@ def has_open_signal(strategy_name: str, asset: str) -> bool:
 def insert_signal(signal: dict) -> Optional[int]:
     with _get_session() as session:
         try:
-            existing = session.query(Signal.id).filter_by(
-                strategy_name=signal["strategy_name"],
-                asset=signal["asset"],
-                signal_timestamp=signal["signal_timestamp"],
-            ).first()
+            existing = (
+                session.query(Signal.id)
+                .filter_by(
+                    strategy_name=signal["strategy_name"],
+                    asset=signal["asset"],
+                    signal_timestamp=signal["signal_timestamp"],
+                )
+                .first()
+            )
             if existing:
                 logger.warning(
                     f"[DB] IDEMPOTENCY | Signal already exists for "
@@ -850,7 +979,9 @@ def insert_signal(signal: dict) -> Optional[int]:
             )
             session.add(obj)
             session.commit()
-            logger.info(f"[DB] Inserted signal #{obj.id}: {signal['strategy_name']} {signal['direction']} {signal['asset']}")
+            logger.info(
+                f"[DB] Inserted signal #{obj.id}: {signal['strategy_name']} {signal['direction']} {signal['asset']}"
+            )
             _invalidate_signal_cache()
             broadcast_data = {**signal, "id": obj.id, "status": "OPEN"}
             if obj.created_at:
@@ -863,7 +994,9 @@ def insert_signal(signal: dict) -> Optional[int]:
             return None
 
 
-def get_active_signals(strategy_name: Optional[str] = None, asset: Optional[str] = None) -> list[dict]:
+def get_active_signals(
+    strategy_name: Optional[str] = None, asset: Optional[str] = None
+) -> list[dict]:
     """Return all OPEN signals, deduplicated to max(id) per (strategy_name, asset).
 
     Deduplication contract: only one OPEN signal per (strategy_name + asset) is
@@ -873,11 +1006,13 @@ def get_active_signals(strategy_name: Optional[str] = None, asset: Optional[str]
     with _get_session() as session:
         from sqlalchemy import func
 
-        latest_open_subq = session.query(
-            func.max(Signal.id).label("max_id")
-        ).filter(Signal.status == "OPEN")
+        latest_open_subq = session.query(func.max(Signal.id).label("max_id")).filter(
+            Signal.status == "OPEN"
+        )
         if strategy_name:
-            latest_open_subq = latest_open_subq.filter(Signal.strategy_name == strategy_name)
+            latest_open_subq = latest_open_subq.filter(
+                Signal.strategy_name == strategy_name
+            )
         if asset:
             latest_open_subq = latest_open_subq.filter(Signal.asset == asset)
         latest_open_subq = latest_open_subq.group_by(
@@ -911,7 +1046,9 @@ def get_active_signals(strategy_name: Optional[str] = None, asset: Optional[str]
         return list(seen_assets.values())
 
 
-def close_signal(signal_id: int, exit_reason: str = "", exit_price: Optional[float] = None):
+def close_signal(
+    signal_id: int, exit_reason: str = "", exit_price: Optional[float] = None
+):
     with _get_session() as session:
         try:
             sig = session.query(Signal).filter_by(id=signal_id).first()
@@ -921,7 +1058,9 @@ def close_signal(signal_id: int, exit_reason: str = "", exit_price: Optional[flo
                 if exit_price is not None:
                     sig.exit_price = exit_price
                 session.commit()
-                logger.info(f"[DB] Closed signal #{signal_id}: {exit_reason} | exit_price={exit_price}")
+                logger.info(
+                    f"[DB] Closed signal #{signal_id}: {exit_reason} | exit_price={exit_price}"
+                )
                 _invalidate_signal_cache()
                 _ws_broadcast_closed(signal_id, exit_reason, exit_price)
         except Exception as e:
@@ -943,7 +1082,9 @@ def update_signal_wp_fields(signal_id: int, fields: dict):
         try:
             sig = session.query(Signal).filter_by(id=signal_id).first()
             if not sig:
-                logger.warning(f"[DB] update_signal_wp_fields: Signal #{signal_id} not found")
+                logger.warning(
+                    f"[DB] update_signal_wp_fields: Signal #{signal_id} not found"
+                )
                 return
             for key in ("wp_post_id", "publish_status", "wp_last_sync"):
                 if key in fields:
@@ -980,26 +1121,31 @@ def get_all_signals(
     with _get_session() as session:
         from sqlalchemy import func, or_, text as sa_text
 
-        latest_closed_subq = session.query(
-            func.max(Signal.id).label("max_id")
-        ).filter(Signal.status == "CLOSED")
+        latest_closed_subq = session.query(func.max(Signal.id).label("max_id")).filter(
+            Signal.status == "CLOSED"
+        )
         if strategy_name:
-            latest_closed_subq = latest_closed_subq.filter(Signal.strategy_name == strategy_name)
+            latest_closed_subq = latest_closed_subq.filter(
+                Signal.strategy_name == strategy_name
+            )
         if asset:
             latest_closed_subq = latest_closed_subq.filter(Signal.asset == asset)
         if max_age_days is not None:
             latest_closed_subq = latest_closed_subq.filter(
-                Signal.signal_timestamp >= sa_text(f"datetime('now', '-{int(max_age_days)} days')")
+                Signal.signal_timestamp
+                >= sa_text(f"datetime('now', '-{int(max_age_days)} days')")
             )
         latest_closed_subq = latest_closed_subq.group_by(
             Signal.strategy_name, Signal.asset, Signal.direction
         ).subquery()
 
-        latest_open_subq = session.query(
-            func.max(Signal.id).label("max_id")
-        ).filter(Signal.status == "OPEN")
+        latest_open_subq = session.query(func.max(Signal.id).label("max_id")).filter(
+            Signal.status == "OPEN"
+        )
         if strategy_name:
-            latest_open_subq = latest_open_subq.filter(Signal.strategy_name == strategy_name)
+            latest_open_subq = latest_open_subq.filter(
+                Signal.strategy_name == strategy_name
+            )
         if asset:
             latest_open_subq = latest_open_subq.filter(Signal.asset == asset)
         latest_open_subq = latest_open_subq.group_by(
@@ -1013,18 +1159,16 @@ def get_all_signals(
             q = q.filter(Signal.asset == asset)
 
         if status == "CLOSED":
-            q = q.filter(Signal.id.in_(
-                session.query(latest_closed_subq.c.max_id)
-            ))
+            q = q.filter(Signal.id.in_(session.query(latest_closed_subq.c.max_id)))
         elif status == "OPEN":
-            q = q.filter(Signal.id.in_(
-                session.query(latest_open_subq.c.max_id)
-            ))
+            q = q.filter(Signal.id.in_(session.query(latest_open_subq.c.max_id)))
         else:
-            q = q.filter(or_(
-                Signal.id.in_(session.query(latest_open_subq.c.max_id)),
-                Signal.id.in_(session.query(latest_closed_subq.c.max_id)),
-            ))
+            q = q.filter(
+                or_(
+                    Signal.id.in_(session.query(latest_open_subq.c.max_id)),
+                    Signal.id.in_(session.query(latest_closed_subq.c.max_id)),
+                )
+            )
 
         q = q.order_by(Signal.created_at.desc()).limit(limit)
         rows = q.all()
@@ -1055,6 +1199,7 @@ def purge_old_closed_signals(days: int = 92) -> dict:
     Returns: {"deleted_signals": N, "deleted_cms_posts": M, "cutoff_date": "YYYY-MM-DD"}
     """
     from datetime import timedelta, date
+
     cutoff = (date.today() - timedelta(days=days)).isoformat()
 
     with _get_session() as session:
@@ -1070,6 +1215,7 @@ def purge_old_closed_signals(days: int = 92) -> dict:
             deleted_cms = 0
             if old_ids:
                 from trading_engine.models import SignalCmsPost
+
                 deleted_cms = (
                     session.query(SignalCmsPost)
                     .filter(SignalCmsPost.signal_id.in_(old_ids))
@@ -1097,8 +1243,15 @@ def purge_old_closed_signals(days: int = 92) -> dict:
             return result
         except Exception as e:
             session.rollback()
-            logger.error(f"[DB] PURGE: Failed to purge old closed signals: {e}", exc_info=True)
-            return {"deleted_signals": 0, "deleted_cms_posts": 0, "cutoff_date": cutoff, "error": str(e)}
+            logger.error(
+                f"[DB] PURGE: Failed to purge old closed signals: {e}", exc_info=True
+            )
+            return {
+                "deleted_signals": 0,
+                "deleted_cms_posts": 0,
+                "cutoff_date": cutoff,
+                "error": str(e),
+            }
 
 
 def _signal_to_dict(sig: Signal) -> dict:
@@ -1132,7 +1285,9 @@ def update_signal_stop_loss(signal_id: int, new_stop_loss: float):
             if sig:
                 sig.stop_loss = new_stop_loss
                 session.commit()
-                logger.debug(f"[DB] Updated stop_loss for signal #{signal_id}: {new_stop_loss}")
+                logger.debug(
+                    f"[DB] Updated stop_loss for signal #{signal_id}: {new_stop_loss}"
+                )
         except Exception as e:
             session.rollback()
             logger.error(f"[DB] update_signal_stop_loss failed for #{signal_id}: {e}")
@@ -1151,10 +1306,14 @@ def open_position(position: dict) -> Optional[int]:
 
     with _get_session() as session:
         try:
-            existing = session.query(OpenPosition).filter_by(
-                asset=position["asset"],
-                strategy_name=position["strategy_name"],
-            ).first()
+            existing = (
+                session.query(OpenPosition)
+                .filter_by(
+                    asset=position["asset"],
+                    strategy_name=position["strategy_name"],
+                )
+                .first()
+            )
             if existing:
                 logger.warning(
                     f"[DB] Open position already exists for {position['asset']}/{position['strategy_name']} "
@@ -1168,12 +1327,18 @@ def open_position(position: dict) -> Optional[int]:
                 direction=position["direction"],
                 entry_price=position["entry_price"],
                 atr_at_entry=atr_value,
-                highest_price_since_entry=position["entry_price"] if position["direction"] == "BUY" else None,
-                lowest_price_since_entry=position["entry_price"] if position["direction"] == "SELL" else None,
+                highest_price_since_entry=position["entry_price"]
+                if position["direction"] == "BUY"
+                else None,
+                lowest_price_since_entry=position["entry_price"]
+                if position["direction"] == "SELL"
+                else None,
             )
             session.add(obj)
             session.commit()
-            logger.info(f"[DB] Opened position #{obj.id}: {position['strategy_name']} {position['direction']} {position['asset']}")
+            logger.info(
+                f"[DB] Opened position #{obj.id}: {position['strategy_name']} {position['direction']} {position['asset']}"
+            )
             return obj.id
         except Exception as e:
             session.rollback()
@@ -1183,15 +1348,19 @@ def open_position(position: dict) -> Optional[int]:
 
 def get_open_position(strategy_name: str, asset: str) -> Optional[dict]:
     with _get_session() as session:
-        pos = session.query(OpenPosition).filter_by(
-            asset=asset, strategy_name=strategy_name
-        ).first()
+        pos = (
+            session.query(OpenPosition)
+            .filter_by(asset=asset, strategy_name=strategy_name)
+            .first()
+        )
         if pos:
             return _position_to_dict(pos)
         return None
 
 
-def get_all_open_positions(strategy_name: Optional[str] = None, asset: Optional[str] = None) -> list[dict]:
+def get_all_open_positions(
+    strategy_name: Optional[str] = None, asset: Optional[str] = None
+) -> list[dict]:
     with _get_session() as session:
         q = session.query(OpenPosition)
         if strategy_name:
@@ -1203,16 +1372,24 @@ def get_all_open_positions(strategy_name: Optional[str] = None, asset: Optional[
         return [_position_to_dict(r) for r in rows]
 
 
-def update_position_tracking(position_id: int, highest_price: Optional[float] = None, lowest_price: Optional[float] = None):
+def update_position_tracking(
+    position_id: int,
+    highest_price: Optional[float] = None,
+    lowest_price: Optional[float] = None,
+):
     with _get_session() as session:
         try:
             pos = session.query(OpenPosition).filter_by(id=position_id).first()
             if not pos:
                 return
             if highest_price is not None:
-                pos.highest_price_since_entry = max(pos.highest_price_since_entry or 0, highest_price)
+                pos.highest_price_since_entry = max(
+                    pos.highest_price_since_entry or 0, highest_price
+                )
             if lowest_price is not None:
-                pos.lowest_price_since_entry = min(pos.lowest_price_since_entry or 999999, lowest_price)
+                pos.lowest_price_since_entry = min(
+                    pos.lowest_price_since_entry or 999999, lowest_price
+                )
             session.commit()
         except Exception as e:
             session.rollback()
@@ -1223,9 +1400,11 @@ def update_position_tracking(position_id: int, highest_price: Optional[float] = 
 def close_position(strategy_name: str, asset: str) -> bool:
     with _get_session() as session:
         try:
-            pos = session.query(OpenPosition).filter_by(
-                asset=asset, strategy_name=strategy_name
-            ).first()
+            pos = (
+                session.query(OpenPosition)
+                .filter_by(asset=asset, strategy_name=strategy_name)
+                .first()
+            )
             if pos:
                 session.delete(pos)
                 session.commit()
@@ -1240,9 +1419,11 @@ def close_position(strategy_name: str, asset: str) -> bool:
 
 def has_open_position(strategy_name: str, asset: str) -> bool:
     with _get_session() as session:
-        pos = session.query(OpenPosition.id).filter_by(
-            asset=asset, strategy_name=strategy_name
-        ).first()
+        pos = (
+            session.query(OpenPosition.id)
+            .filter_by(asset=asset, strategy_name=strategy_name)
+            .first()
+        )
         return pos is not None
 
 
@@ -1284,10 +1465,12 @@ def set_setting(key: str, value: str):
 def log_api_usage(endpoint: str, credits_used: int = 1):
     with _get_session() as session:
         try:
-            session.add(APIUsageLog(
-                endpoint=endpoint,
-                credits_used=credits_used,
-            ))
+            session.add(
+                APIUsageLog(
+                    endpoint=endpoint,
+                    credits_used=credits_used,
+                )
+            )
             session.commit()
         except Exception as e:
             session.rollback()
@@ -1299,18 +1482,30 @@ def get_api_usage_stats() -> dict:
 
     with _get_session() as session:
         now = datetime.utcnow()
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        month_start = now.replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        ).isoformat()
         day_ago = (now - timedelta(days=1)).isoformat()
 
-        monthly_total = session.execute(
-            text("SELECT COALESCE(SUM(credits_used), 0) as total FROM api_usage_log WHERE timestamp >= :start"),
-            {"start": month_start},
-        ).scalar() or 0
+        monthly_total = (
+            session.execute(
+                text(
+                    "SELECT COALESCE(SUM(credits_used), 0) as total FROM api_usage_log WHERE timestamp >= :start"
+                ),
+                {"start": month_start},
+            ).scalar()
+            or 0
+        )
 
-        daily_total = session.execute(
-            text("SELECT COALESCE(SUM(credits_used), 0) as total FROM api_usage_log WHERE timestamp >= :start"),
-            {"start": day_ago},
-        ).scalar() or 0
+        daily_total = (
+            session.execute(
+                text(
+                    "SELECT COALESCE(SUM(credits_used), 0) as total FROM api_usage_log WHERE timestamp >= :start"
+                ),
+                {"start": day_ago},
+            ).scalar()
+            or 0
+        )
 
         by_endpoint_rows = session.execute(
             text("""
@@ -1320,7 +1515,9 @@ def get_api_usage_stats() -> dict:
             """),
             {"start": month_start},
         ).fetchall()
-        by_endpoint = [{"endpoint": r[0], "count": r[1], "credits": r[2]} for r in by_endpoint_rows]
+        by_endpoint = [
+            {"endpoint": r[0], "count": r[1], "credits": r[2]} for r in by_endpoint_rows
+        ]
 
         thirty_days_ago = (now - timedelta(days=30)).isoformat()
         daily_rows = session.execute(
@@ -1380,7 +1577,9 @@ def _hash_password(password: str) -> str:
 def _verify_password(password: str, stored_hash: str) -> bool:
     try:
         salt, h = stored_hash.split(":")
-        computed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100000).hex()
+        computed = hashlib.pbkdf2_hmac(
+            "sha256", password.encode(), salt.encode(), 100000
+        ).hex()
         return secrets.compare_digest(computed, h)
     except (ValueError, AttributeError):
         return False
@@ -1399,7 +1598,12 @@ def authenticate_admin(username: str, password: str) -> Optional[dict]:
     with _get_session() as session:
         user = session.query(AdminUser).filter_by(username=username).first()
         if user and _verify_password(password, user.password_hash):
-            return {"id": user.id, "username": user.username, "role": user.role or "CUSTOMER", "created_at": user.created_at}
+            return {
+                "id": user.id,
+                "username": user.username,
+                "role": user.role or "CUSTOMER",
+                "created_at": user.created_at,
+            }
         return None
 
 
@@ -1449,7 +1653,10 @@ def validate_session(token: str) -> Optional[dict]:
 def delete_session(token: str):
     with _get_session() as session:
         try:
-            session.execute(text("DELETE FROM admin_sessions WHERE token = :token"), {"token": token})
+            session.execute(
+                text("DELETE FROM admin_sessions WHERE token = :token"),
+                {"token": token},
+            )
             session.commit()
         except Exception as e:
             session.rollback()
@@ -1475,14 +1682,28 @@ def cleanup_expired_sessions():
 def get_all_admins() -> list[dict]:
     with _get_session() as session:
         rows = session.query(AdminUser).order_by(AdminUser.id).all()
-        return [{"id": r.id, "username": r.username, "role": r.role or "CUSTOMER", "created_at": r.created_at} for r in rows]
+        return [
+            {
+                "id": r.id,
+                "username": r.username,
+                "role": r.role or "CUSTOMER",
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ]
 
 
 def get_user_by_username(username: str) -> Optional[dict]:
     with _get_session() as session:
         user = session.query(AdminUser).filter_by(username=username).first()
         if user:
-            return {"id": user.id, "username": user.username, "email": user.email, "role": user.role or "CUSTOMER", "created_at": user.created_at}
+            return {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "role": user.role or "CUSTOMER",
+                "created_at": user.created_at,
+            }
         return None
 
 
@@ -1490,15 +1711,33 @@ def get_user_by_email(email: str) -> Optional[dict]:
     with _get_session() as session:
         user = session.query(AdminUser).filter(AdminUser.email == email).first()
         if user:
-            return {"id": user.id, "username": user.username, "email": user.email, "role": user.role or "CUSTOMER", "created_at": user.created_at}
+            return {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "role": user.role or "CUSTOMER",
+                "created_at": user.created_at,
+            }
         return None
 
 
-def create_admin(username: str, password: str, email: Optional[str] = None, full_name: Optional[str] = None, role: str = "CUSTOMER") -> Optional[int]:
+def create_admin(
+    username: str,
+    password: str,
+    email: Optional[str] = None,
+    full_name: Optional[str] = None,
+    role: str = "CUSTOMER",
+) -> Optional[int]:
     pw_hash = _hash_password(password)
     with _get_session() as session:
         try:
-            user = AdminUser(username=username, password_hash=pw_hash, email=email, full_name=full_name, role=role)
+            user = AdminUser(
+                username=username,
+                password_hash=pw_hash,
+                email=email,
+                full_name=full_name,
+                role=role,
+            )
             session.add(user)
             session.commit()
             logger.info(f"[DB] Created user: {username} (role={role})")
@@ -1508,7 +1747,12 @@ def create_admin(username: str, password: str, email: Optional[str] = None, full
             return None
 
 
-def update_admin(admin_id: int, username: Optional[str] = None, password: Optional[str] = None, role: Optional[str] = None) -> bool:
+def update_admin(
+    admin_id: int,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    role: Optional[str] = None,
+) -> bool:
     with _get_session() as session:
         try:
             user = session.query(AdminUser).filter_by(id=admin_id).first()
@@ -1533,8 +1777,13 @@ def delete_admin(admin_id: int) -> bool:
             count = session.query(AdminUser).count()
             if count <= 1:
                 return False
-            session.execute(text("DELETE FROM admin_sessions WHERE user_id = :uid"), {"uid": admin_id})
-            result = session.execute(text("DELETE FROM admin_users WHERE id = :uid"), {"uid": admin_id})
+            session.execute(
+                text("DELETE FROM admin_sessions WHERE user_id = :uid"),
+                {"uid": admin_id},
+            )
+            result = session.execute(
+                text("DELETE FROM admin_users WHERE id = :uid"), {"uid": admin_id}
+            )
             session.commit()
             deleted = result.rowcount > 0
             if deleted:
@@ -1550,7 +1799,12 @@ def get_admin_by_id(admin_id: int) -> Optional[dict]:
     with _get_session() as session:
         user = session.query(AdminUser).filter_by(id=admin_id).first()
         if user:
-            return {"id": user.id, "username": user.username, "role": user.role or "CUSTOMER", "created_at": user.created_at}
+            return {
+                "id": user.id,
+                "username": user.username,
+                "role": user.role or "CUSTOMER",
+                "created_at": user.created_at,
+            }
         return None
 
 
@@ -1558,7 +1812,9 @@ def _hash_api_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode()).hexdigest()
 
 
-def create_partner_api_key(label: str, tier: str = "standard", rate_limit: int = 120, created_by: int = None) -> dict:
+def create_partner_api_key(
+    label: str, tier: str = "standard", rate_limit: int = 120, created_by: int = None
+) -> dict:
     raw_key = "dfx_" + secrets.token_hex(24)
     key_hash = _hash_api_key(raw_key)
     with _get_session() as session:
@@ -1573,8 +1829,16 @@ def create_partner_api_key(label: str, tier: str = "standard", rate_limit: int =
             )
             session.add(rec)
             session.commit()
-            logger.info(f"[DB] Created partner API key id={rec.id} label={label} tier={tier}")
-            return {"id": rec.id, "key": raw_key, "label": label, "tier": tier, "rate_limit_per_minute": rate_limit}
+            logger.info(
+                f"[DB] Created partner API key id={rec.id} label={label} tier={tier}"
+            )
+            return {
+                "id": rec.id,
+                "key": raw_key,
+                "label": label,
+                "tier": tier,
+                "rate_limit_per_minute": rate_limit,
+            }
         except Exception as e:
             session.rollback()
             logger.error(f"[DB] Create partner API key failed: {e}")
@@ -1584,7 +1848,11 @@ def create_partner_api_key(label: str, tier: str = "standard", rate_limit: int =
 def validate_partner_api_key(raw_key: str) -> Optional[dict]:
     key_hash = _hash_api_key(raw_key)
     with _get_session() as session:
-        rec = session.query(PartnerApiKey).filter_by(key_hash=key_hash, is_active=1).first()
+        rec = (
+            session.query(PartnerApiKey)
+            .filter_by(key_hash=key_hash, is_active=1)
+            .first()
+        )
         if rec:
             rec.last_used_at = datetime.utcnow().isoformat()
             session.commit()
@@ -1663,9 +1931,14 @@ def create_job_log(job_id: str, strategy_name: str) -> int:
             return -1
 
 
-def finish_job_log(log_id: int, status: str, assets_evaluated: int = 0,
-                   signals_generated: int = 0, errors: int = 0,
-                   error_detail: Optional[str] = None):
+def finish_job_log(
+    log_id: int,
+    status: str,
+    assets_evaluated: int = 0,
+    signals_generated: int = 0,
+    errors: int = 0,
+    error_detail: Optional[str] = None,
+):
     finished_at = datetime.utcnow().isoformat()
     with _get_session() as session:
         try:
@@ -1722,15 +1995,14 @@ def get_scheduler_health_summary() -> dict:
     with _get_session() as session:
         total = session.query(SchedulerJobLog).count()
         last = (
-            session.query(SchedulerJobLog)
-            .order_by(SchedulerJobLog.id.desc())
-            .first()
+            session.query(SchedulerJobLog).order_by(SchedulerJobLog.id.desc()).first()
         )
         failed_24h = (
             session.query(SchedulerJobLog)
             .filter(
                 SchedulerJobLog.status.in_(["FAILED", "PARTIAL"]),
-                SchedulerJobLog.started_at >= (datetime.utcnow() - timedelta(hours=24)).isoformat(),
+                SchedulerJobLog.started_at
+                >= (datetime.utcnow() - timedelta(hours=24)).isoformat(),
             )
             .count()
         )
@@ -1738,7 +2010,8 @@ def get_scheduler_health_summary() -> dict:
             session.query(SchedulerJobLog)
             .filter(
                 SchedulerJobLog.status == "SUCCESS",
-                SchedulerJobLog.started_at >= (datetime.utcnow() - timedelta(hours=24)).isoformat(),
+                SchedulerJobLog.started_at
+                >= (datetime.utcnow() - timedelta(hours=24)).isoformat(),
             )
             .count()
         )
@@ -1781,11 +2054,18 @@ def compute_signal_metrics():
         groups = {}
         for s in all_signals:
             ts_dt = _parse_ts(s.signal_timestamp) or _parse_ts(s.created_at)
-            for period, cutoff in [("all_time", None), ("7d", cutoff_7d), ("30d", cutoff_30d)]:
+            for period, cutoff in [
+                ("all_time", None),
+                ("7d", cutoff_7d),
+                ("30d", cutoff_30d),
+            ]:
                 if cutoff and (ts_dt is None or ts_dt < cutoff):
                     continue
 
-                for key in [(s.strategy_name, None, period), (s.strategy_name, s.asset, period)]:
+                for key in [
+                    (s.strategy_name, None, period),
+                    (s.strategy_name, s.asset, period),
+                ]:
                     if key not in groups:
                         groups[key] = []
                     groups[key].append(s)
@@ -1816,7 +2096,9 @@ def compute_signal_metrics():
 
                 if s.signal_timestamp and s.updated_at:
                     try:
-                        t_open = datetime.fromisoformat(s.signal_timestamp.replace("Z", ""))
+                        t_open = datetime.fromisoformat(
+                            s.signal_timestamp.replace("Z", "")
+                        )
                         t_close = datetime.fromisoformat(s.updated_at.replace("Z", ""))
                         dur_hours = (t_close - t_open).total_seconds() / 3600
                         durations.append(dur_hours)
@@ -1855,28 +2137,32 @@ def compute_signal_metrics():
                 existing.last_signal_at = last_ts
                 existing.computed_at = now_iso
             else:
-                session.add(SignalMetrics(
-                    strategy_name=strategy,
-                    asset=asset,
-                    period=period,
-                    total_signals=total,
-                    open_signals=open_count,
-                    closed_signals=closed_count,
-                    won=won,
-                    lost=lost,
-                    win_rate=win_rate,
-                    avg_gain_pct=avg_gain,
-                    avg_loss_pct=avg_loss,
-                    best_gain_pct=best,
-                    worst_loss_pct=worst,
-                    avg_duration_hours=avg_dur,
-                    last_signal_at=last_ts,
-                    computed_at=now_iso,
-                ))
+                session.add(
+                    SignalMetrics(
+                        strategy_name=strategy,
+                        asset=asset,
+                        period=period,
+                        total_signals=total,
+                        open_signals=open_count,
+                        closed_signals=closed_count,
+                        won=won,
+                        lost=lost,
+                        win_rate=win_rate,
+                        avg_gain_pct=avg_gain,
+                        avg_loss_pct=avg_loss,
+                        best_gain_pct=best,
+                        worst_loss_pct=worst,
+                        avg_duration_hours=avg_dur,
+                        last_signal_at=last_ts,
+                        computed_at=now_iso,
+                    )
+                )
             count += 1
 
         session.commit()
-        logger.info(f"[METRICS] Computed {count} metric rows from {len(all_signals)} signals")
+        logger.info(
+            f"[METRICS] Computed {count} metric rows from {len(all_signals)} signals"
+        )
         return count
 
 
@@ -1945,18 +2231,21 @@ def get_all_signal_metrics() -> list[dict]:
         ]
 
 
-
 def get_user_cms_configs(user_id: int) -> list[dict]:
     with _get_session() as session:
-        rows = session.query(UserCmsConfig).filter_by(user_id=user_id).order_by(UserCmsConfig.id).all()
+        rows = (
+            session.query(UserCmsConfig)
+            .filter_by(user_id=user_id)
+            .order_by(UserCmsConfig.id)
+            .all()
+        )
         return [_user_cms_to_dict(r) for r in rows]
 
 
 def get_all_user_cms_configs(user_id: Optional[int] = None) -> list[dict]:
     with _get_session() as session:
-        q = (
-            session.query(UserCmsConfig, AdminUser.username)
-            .join(AdminUser, UserCmsConfig.user_id == AdminUser.id)
+        q = session.query(UserCmsConfig, AdminUser.username).join(
+            AdminUser, UserCmsConfig.user_id == AdminUser.id
         )
         if user_id is not None:
             q = q.filter(UserCmsConfig.user_id == user_id)
@@ -1966,6 +2255,7 @@ def get_all_user_cms_configs(user_id: Optional[int] = None) -> list[dict]:
 
 def create_user_cms_config(data: dict) -> int:
     from trading_engine.services.encryption import encrypt
+
     with _get_session() as session:
         try:
             obj = UserCmsConfig(
@@ -1977,7 +2267,9 @@ def create_user_cms_config(data: dict) -> int:
             )
             session.add(obj)
             session.commit()
-            logger.info(f"[DB] Created user CMS config #{obj.id} for user_id={data['user_id']}")
+            logger.info(
+                f"[DB] Created user CMS config #{obj.id} for user_id={data['user_id']}"
+            )
             return obj.id
         except Exception as e:
             session.rollback()
@@ -2004,7 +2296,9 @@ def delete_user_cms_config(config_id: int, user_id: Optional[int] = None) -> boo
             return False
 
 
-def update_user_cms_config(config_id: int, data: dict, user_id: Optional[int] = None) -> bool:
+def update_user_cms_config(
+    config_id: int, data: dict, user_id: Optional[int] = None
+) -> bool:
     with _get_session() as session:
         try:
             q = session.query(UserCmsConfig).filter_by(id=config_id)
@@ -2019,6 +2313,7 @@ def update_user_cms_config(config_id: int, data: dict, user_id: Optional[int] = 
                 row.wp_username = data["wp_username"]
             if "app_password" in data and data["app_password"]:
                 from trading_engine.services.encryption import encrypt
+
                 row.encrypted_app_password = encrypt(data["app_password"])
             if "is_active" in data:
                 row.is_active = 1 if data["is_active"] else 0
@@ -2031,8 +2326,11 @@ def update_user_cms_config(config_id: int, data: dict, user_id: Optional[int] = 
             return False
 
 
-def get_user_cms_config_decrypted(config_id: int, user_id: Optional[int] = None) -> Optional[dict]:
+def get_user_cms_config_decrypted(
+    config_id: int, user_id: Optional[int] = None
+) -> Optional[dict]:
     from trading_engine.services.encryption import decrypt
+
     with _get_session() as session:
         q = session.query(UserCmsConfig).filter_by(id=config_id)
         if user_id is not None:
@@ -2053,6 +2351,7 @@ def get_user_cms_config_decrypted(config_id: int, user_id: Optional[int] = None)
 
 def get_active_cms_configs_decrypted() -> list[dict]:
     from trading_engine.services.encryption import decrypt
+
     with _get_session() as session:
         rows = (
             session.query(UserCmsConfig)
@@ -2063,13 +2362,15 @@ def get_active_cms_configs_decrypted() -> list[dict]:
         results = []
         for row in rows:
             try:
-                results.append({
-                    "id": row.id,
-                    "user_id": row.user_id,
-                    "site_url": row.site_url,
-                    "wp_username": row.wp_username,
-                    "app_password": decrypt(row.encrypted_app_password),
-                })
+                results.append(
+                    {
+                        "id": row.id,
+                        "user_id": row.user_id,
+                        "site_url": row.site_url,
+                        "wp_username": row.wp_username,
+                        "app_password": decrypt(row.encrypted_app_password),
+                    }
+                )
             except Exception as e:
                 logger.error(f"[DB] Failed to decrypt CMS config #{row.id}: {e}")
         return results
@@ -2089,7 +2390,9 @@ def _user_cms_to_dict(row: UserCmsConfig) -> dict:
 
 def get_signal_cms_post(signal_id: int, cms_config_id: Optional[int]) -> Optional[dict]:
     with _get_session() as session:
-        q = session.query(SignalCmsPost).filter_by(signal_id=signal_id, cms_config_id=cms_config_id)
+        q = session.query(SignalCmsPost).filter_by(
+            signal_id=signal_id, cms_config_id=cms_config_id
+        )
         row = q.first()
         if not row:
             return None
@@ -2106,9 +2409,11 @@ def get_signal_cms_post(signal_id: int, cms_config_id: Optional[int]) -> Optiona
 def upsert_signal_cms_post(signal_id: int, cms_config_id: Optional[int], fields: dict):
     with _get_session() as session:
         try:
-            row = session.query(SignalCmsPost).filter_by(
-                signal_id=signal_id, cms_config_id=cms_config_id
-            ).first()
+            row = (
+                session.query(SignalCmsPost)
+                .filter_by(signal_id=signal_id, cms_config_id=cms_config_id)
+                .first()
+            )
             if not row:
                 row = SignalCmsPost(signal_id=signal_id, cms_config_id=cms_config_id)
                 session.add(row)
@@ -2121,39 +2426,51 @@ def upsert_signal_cms_post(signal_id: int, cms_config_id: Optional[int], fields:
             session.commit()
         except Exception as e:
             session.rollback()
-            logger.error(f"[DB] upsert_signal_cms_post failed signal={signal_id} config={cms_config_id}: {e}")
+            logger.error(
+                f"[DB] upsert_signal_cms_post failed signal={signal_id} config={cms_config_id}: {e}"
+            )
 
 
 def get_signal_cms_posts_for_signal(signal_id: int) -> list[dict]:
     with _get_session() as session:
         rows = session.query(SignalCmsPost).filter_by(signal_id=signal_id).all()
-        return [{
-            "id": r.id,
-            "signal_id": r.signal_id,
-            "cms_config_id": r.cms_config_id,
-            "wp_post_id": r.wp_post_id,
-            "publish_status": r.publish_status,
-            "last_sync": r.last_sync,
-        } for r in rows]
+        return [
+            {
+                "id": r.id,
+                "signal_id": r.signal_id,
+                "cms_config_id": r.cms_config_id,
+                "wp_post_id": r.wp_post_id,
+                "publish_status": r.publish_status,
+                "last_sync": r.last_sync,
+            }
+            for r in rows
+        ]
 
 
 def upsert_strategy_execution_log(strategy_name: str, status: str):
     now_iso = datetime.utcnow().isoformat()
     with _get_session() as session:
         try:
-            row = session.query(StrategyExecutionLog).filter_by(
-                strategy_name=strategy_name
-            ).order_by(StrategyExecutionLog.id.desc()).first()
+            row = (
+                session.query(StrategyExecutionLog)
+                .filter_by(strategy_name=strategy_name)
+                .order_by(StrategyExecutionLog.id.desc())
+                .first()
+            )
             if row and row.status == status:
                 row.last_run_at = now_iso
             else:
-                session.add(StrategyExecutionLog(
-                    strategy_name=strategy_name,
-                    last_run_at=now_iso,
-                    status=status,
-                ))
+                session.add(
+                    StrategyExecutionLog(
+                        strategy_name=strategy_name,
+                        last_run_at=now_iso,
+                        status=status,
+                    )
+                )
             session.commit()
-            logger.debug(f"[DB] strategy_execution_log upserted: {strategy_name} = {status}")
+            logger.debug(
+                f"[DB] strategy_execution_log upserted: {strategy_name} = {status}"
+            )
         except Exception as e:
             session.rollback()
             logger.error(f"[DB] upsert_strategy_execution_log failed: {e}")
@@ -2161,9 +2478,12 @@ def upsert_strategy_execution_log(strategy_name: str, status: str):
 
 def get_last_successful_execution(strategy_name: str) -> Optional[dict]:
     with _get_session() as session:
-        row = session.query(StrategyExecutionLog).filter_by(
-            strategy_name=strategy_name, status="SUCCESS"
-        ).order_by(StrategyExecutionLog.id.desc()).first()
+        row = (
+            session.query(StrategyExecutionLog)
+            .filter_by(strategy_name=strategy_name, status="SUCCESS")
+            .order_by(StrategyExecutionLog.id.desc())
+            .first()
+        )
         if not row:
             return None
         return {
@@ -2205,6 +2525,7 @@ def insert_recovery_notification(
 
 def get_recovery_notifications(limit: int = 50) -> list[dict]:
     import json as _json
+
     with _get_session() as session:
         rows = (
             session.query(RecoveryNotification)
@@ -2218,14 +2539,16 @@ def get_recovery_notifications(limit: int = 50) -> list[dict]:
                 assets = _json.loads(r.assets_affected)
             except Exception:
                 assets = r.assets_affected
-            results.append({
-                "id": r.id,
-                "strategy_name": r.strategy_name,
-                "missed_window_time": r.missed_window_time,
-                "execution_time": r.execution_time,
-                "assets_affected": assets,
-                "status": r.status,
-            })
+            results.append(
+                {
+                    "id": r.id,
+                    "strategy_name": r.strategy_name,
+                    "missed_window_time": r.missed_window_time,
+                    "execution_time": r.execution_time,
+                    "assets_affected": assets,
+                    "status": r.status,
+                }
+            )
         return results
 
 
@@ -2239,11 +2562,13 @@ def upsert_daily_close(symbol: str, close_date: str, close_price: float):
         if existing:
             existing.close_price = close_price
         else:
-            session.add(HistoricalDailyClose(
-                symbol=symbol,
-                close_date=close_date,
-                close_price=close_price,
-            ))
+            session.add(
+                HistoricalDailyClose(
+                    symbol=symbol,
+                    close_date=close_date,
+                    close_price=close_price,
+                )
+            )
         session.commit()
 
 
@@ -2258,11 +2583,13 @@ def bulk_upsert_daily_closes(rows: list[dict]):
             if existing:
                 existing.close_price = row["close_price"]
             else:
-                session.add(HistoricalDailyClose(
-                    symbol=row["symbol"],
-                    close_date=row["close_date"],
-                    close_price=row["close_price"],
-                ))
+                session.add(
+                    HistoricalDailyClose(
+                        symbol=row["symbol"],
+                        close_date=row["close_date"],
+                        close_price=row["close_price"],
+                    )
+                )
         session.commit()
 
 
@@ -2291,44 +2618,65 @@ def get_recent_daily_closes(symbol: str, n: int = 20) -> list[dict]:
 
 _STRATEGY_ASSET_SEEDS = {
     "mtf_ema": [
-        ("SPX",     "forex",  "indices"),
-        ("NDX",     "forex",  "indices"),
-        ("RUT",     "forex",  "indices"),
-        ("XAU/USD", "forex",  "commodities"),
-        ("XAG/USD", "forex",  "commodities"),
-        ("OSX",     "forex",  "commodities"),
+        ("SPX", "forex", "indices"),
+        ("NDX", "forex", "indices"),
+        ("RUT", "forex", "indices"),
+        ("DJI", "forex", "indices"),
+        ("XAU/USD", "forex", "commodities"),
+        ("XAG/USD", "forex", "commodities"),
+        ("OSX", "forex", "commodities"),
         ("BTC/USD", "crypto", "crypto"),
         ("ETH/USD", "crypto", "crypto"),
-        ("GBP/USD", "forex",  "forex"),
-        ("AUD/USD", "forex",  "forex"),
+        ("GBP/USD", "forex", "forex"),
+        ("AUD/USD", "forex", "forex"),
     ],
     "trend_non_forex": [
         # ── Commodity ETFs ──────────────────────────────
-        ("CORN",    "forex"), ("SOYB",    "forex"),
-        ("WEAT",    "forex"), ("CANE",    "forex"),
-        ("WOOD",    "forex"), ("USO",     "forex"),
-        ("UNG",     "forex"), ("UGA",     "forex"),
-        ("SGOL",    "forex"), ("SIVR",    "forex"),
-        ("CPER",    "forex"), ("PPLT",    "forex"),
-        ("PALL",    "forex"), ("DBB",     "forex"),
-        ("SLX",     "forex"),
+        ("CORN", "forex"),
+        ("SOYB", "forex"),
+        ("WEAT", "forex"),
+        ("CANE", "forex"),
+        ("WOOD", "forex"),
+        ("USO", "forex"),
+        ("UNG", "forex"),
+        ("UGA", "forex"),
+        ("SGOL", "forex"),
+        ("SIVR", "forex"),
+        ("CPER", "forex"),
+        ("PPLT", "forex"),
+        ("PALL", "forex"),
+        ("DBB", "forex"),
+        ("SLX", "forex"),
         # ── Crypto altcoins (LONG_ONLY) ─────────────────
-        ("BNB/USD",   "crypto"), ("XRP/USD",   "crypto"),
-        ("SOL/USD",   "crypto"), ("TRX/USD",   "crypto"),
-        ("DOGE/USD",  "crypto"), ("ADA/USD",   "crypto"),
-        ("TON/USD",   "crypto"), ("SHIB/USD",  "crypto"),
-        ("AVAX/USD",  "crypto"), ("LINK/USD",  "crypto"),
-        ("LTC/USD",   "crypto"),
-        ("DOT/USD",   "crypto"), ("BCH/USD",   "crypto"),
-        ("UNI/USD",   "crypto"), ("ATOM/USD",  "crypto"),
-        ("XLM/USD",   "crypto"), ("HBAR/USD",  "crypto"),
-        ("ICP/USD",   "crypto"), ("APT/USD",   "crypto"),
-        ("NEAR/USD",  "crypto"), ("ARB/USD",   "crypto"),
-        ("OP/USD",    "crypto"), ("SUI/USD",   "crypto"),
-        ("INJ/USD",   "crypto"), ("CRO/USD",   "crypto"),
+        ("BNB/USD", "crypto"),
+        ("XRP/USD", "crypto"),
+        ("SOL/USD", "crypto"),
+        ("TRX/USD", "crypto"),
+        ("DOGE/USD", "crypto"),
+        ("ADA/USD", "crypto"),
+        ("TON/USD", "crypto"),
+        ("SHIB/USD", "crypto"),
+        ("AVAX/USD", "crypto"),
+        ("LINK/USD", "crypto"),
+        ("LTC/USD", "crypto"),
+        ("DOT/USD", "crypto"),
+        ("BCH/USD", "crypto"),
+        ("UNI/USD", "crypto"),
+        ("ATOM/USD", "crypto"),
+        ("XLM/USD", "crypto"),
+        ("HBAR/USD", "crypto"),
+        ("ICP/USD", "crypto"),
+        ("APT/USD", "crypto"),
+        ("NEAR/USD", "crypto"),
+        ("ARB/USD", "crypto"),
+        ("OP/USD", "crypto"),
+        ("SUI/USD", "crypto"),
+        ("INJ/USD", "crypto"),
+        ("CRO/USD", "crypto"),
     ],
     "trend_forex": [
-        ("EUR/USD", "forex"), ("USD/JPY", "forex"),
+        ("EUR/USD", "forex"),
+        ("USD/JPY", "forex"),
     ],
     "sp500_momentum": [
         ("SPX", "forex"),
@@ -2340,40 +2688,28 @@ _STRATEGY_ASSET_SEEDS = {
 
 
 def seed_strategy_assets():
-    """Seed all hardcoded assets into strategy_assets table.
-
-    Rules:
-    - INSERT new rows that do not exist at all
-    - REACTIVATE rows only if is_active=0 AND added_by=system_seed
-    - NEVER reactivate rows where added_by=admin_removed
-    - DEACTIVATE rows in DB that are no longer in seeds AND
-      added_by=system_seed (stale seeds cleanup)
-    - DEACTIVATE known duplicate symbols from mtf_ema
-
-    Idempotent — safe to run multiple times.
+    """One-time bootstrap: seeds strategy_assets only if the table is empty.
+    Safe to call on every startup — skips entirely if any rows exist.
+    Fully idempotent.
     """
     with _get_session() as session:
         try:
-            seeded = 0
-            reactivated = 0
+            count = session.query(StrategyAsset).count()
+            if count > 0:
+                logger.info(
+                    f"[DB] seed_strategy_assets: DB already seeded "
+                    f"({count} rows) — skipping bootstrap"
+                )
+                return
 
+            seeded = 0
             for strategy_name, assets in _STRATEGY_ASSET_SEEDS.items():
                 for entry in assets:
-                    symbol      = entry[0]
+                    symbol = entry[0]
                     asset_class = entry[1]
-                    sub_cat     = entry[2] if len(entry) > 2 else None
-
-                    existing = (
-                        session.query(StrategyAsset)
-                        .filter_by(
-                            strategy_name=strategy_name,
-                            symbol=symbol,
-                        )
-                        .first()
-                    )
-
-                    if not existing:
-                        session.add(StrategyAsset(
+                    sub_cat = entry[2] if len(entry) > 2 else None
+                    session.add(
+                        StrategyAsset(
                             strategy_name=strategy_name,
                             symbol=symbol,
                             asset_class=asset_class,
@@ -2381,109 +2717,18 @@ def seed_strategy_assets():
                             is_active=1,
                             fcsapi_verified=1,
                             added_by="system_seed",
-                        ))
-                        seeded += 1
-                    elif (
-                        not existing.is_active
-                        and existing.added_by == "system_seed"
-                    ):
-                        existing.is_active = 1
-                        existing.sub_category = sub_cat
-                        reactivated += 1
-                        logger.info(
-                            f"[DB] seed_strategy_assets: reactivated "
-                            f"{strategy_name}/{symbol} (system_seed)"
                         )
-                    # added_by=admin_removed — respect admin decision, skip
+                    )
+                    seeded += 1
 
             session.commit()
-            if seeded:
-                logger.info(
-                    f"[DB] seed_strategy_assets: inserted "
-                    f"{seeded} new asset(s)"
-                )
-            if reactivated:
-                logger.info(
-                    f"[DB] seed_strategy_assets: reactivated "
-                    f"{reactivated} asset(s)"
-                )
-            if not seeded and not reactivated:
-                logger.info(
-                    "[DB] seed_strategy_assets: "
-                    "all seeds already present and active"
-                )
-
-            # ── Stale seed cleanup ──
-            # Deactivate system_seed rows no longer in _STRATEGY_ASSET_SEEDS
-            for strategy_name, assets in _STRATEGY_ASSET_SEEDS.items():
-                seed_symbols = {entry[0] for entry in assets}
-                stale_rows = (
-                    session.query(StrategyAsset)
-                    .filter(
-                        StrategyAsset.strategy_name == strategy_name,
-                        StrategyAsset.symbol.notin_(seed_symbols),
-                        StrategyAsset.is_active == 1,
-                        StrategyAsset.added_by == "system_seed",
-                    )
-                    .all()
-                )
-                for row in stale_rows:
-                    row.is_active = 0
-                    row.added_by = "admin_removed"
-                    logger.info(
-                        f"[DB] seed_strategy_assets: deactivated "
-                        f"stale seed {strategy_name}/{row.symbol} "
-                        f"(no longer in _STRATEGY_ASSET_SEEDS)"
-                    )
-                if stale_rows:
-                    session.commit()
-                    logger.info(
-                        f"[DB] seed_strategy_assets: deactivated "
-                        f"{len(stale_rows)} stale seed(s) "
-                        f"from {strategy_name}"
-                    )
-
-            # ── MTF EMA duplicate cleanup ──
-            # Deactivate known duplicates from mtf_ema that belong
-            # to other strategies
-            MTF_REMOVE = [
-                "ADA/USD",  "APT/USD",  "ARB/USD",  "ATOM/USD",
-                "AVAX/USD", "BCH/USD",  "BNB/USD",  "CRO/USD",
-                "DOGE/USD", "DOT/USD",  "HBAR/USD", "ICP/USD",
-                "INJ/USD",  "LINK/USD", "LTC/USD",
-                "NEAR/USD", "OP/USD",   "SHIB/USD", "SOL/USD",
-                "SUI/USD",  "TON/USD",  "TRX/USD",  "UNI/USD",
-                "XLM/USD",  "XRP/USD",  "EUR/USD",  "USD/JPY",
-            ]
-            mtf_dupes = (
-                session.query(StrategyAsset)
-                .filter(
-                    StrategyAsset.strategy_name == "mtf_ema",
-                    StrategyAsset.symbol.in_(MTF_REMOVE),
-                    StrategyAsset.is_active == 1,
-                )
-                .all()
+            logger.info(
+                f"[DB] seed_strategy_assets: bootstrapped {seeded} asset(s)"
             )
-            for row in mtf_dupes:
-                row.is_active = 0
-                row.added_by = "admin_removed"
-                logger.info(
-                    f"[DB] seed_strategy_assets: deactivated "
-                    f"mtf_ema/{row.symbol} (duplicate — "
-                    f"belongs to another strategy)"
-                )
-            if mtf_dupes:
-                session.commit()
-                logger.info(
-                    f"[DB] seed_strategy_assets: deactivated "
-                    f"{len(mtf_dupes)} duplicate(s) from mtf_ema"
-                )
 
         except Exception as e:
             session.rollback()
-            logger.error(
-                f"[DB] seed_strategy_assets failed: {e}"
-            )
+            logger.error(f"[DB] seed_strategy_assets failed: {e}")
 
 
 def sync_strategy_assets_dedup() -> dict:
@@ -2496,8 +2741,10 @@ def sync_strategy_assets_dedup() -> dict:
         try:
             # --- mtf_ema vs trend_forex ---
             forex_active = [
-                r.symbol for r in session.query(StrategyAsset)
-                .filter_by(strategy_name="trend_forex", is_active=1).all()
+                r.symbol
+                for r in session.query(StrategyAsset)
+                .filter_by(strategy_name="trend_forex", is_active=1)
+                .all()
             ]
             if forex_active:
                 mtf_forex_conflicts = (
@@ -2521,8 +2768,10 @@ def sync_strategy_assets_dedup() -> dict:
 
             # --- mtf_ema vs trend_non_forex ---
             non_forex_active = [
-                r.symbol for r in session.query(StrategyAsset)
-                .filter_by(strategy_name="trend_non_forex", is_active=1).all()
+                r.symbol
+                for r in session.query(StrategyAsset)
+                .filter_by(strategy_name="trend_non_forex", is_active=1)
+                .all()
             ]
             if non_forex_active:
                 mtf_non_forex_conflicts = (
@@ -2544,13 +2793,10 @@ def sync_strategy_assets_dedup() -> dict:
                 if mtf_non_forex_conflicts:
                     session.commit()
 
-            results["total"] = (
-                results["mtf_vs_forex"] + results["mtf_vs_non_forex"]
-            )
+            results["total"] = results["mtf_vs_forex"] + results["mtf_vs_non_forex"]
             if results["total"] > 0:
                 logger.info(
-                    f"[DB] sync_dedup complete: "
-                    f"{results['total']} conflict(s) resolved"
+                    f"[DB] sync_dedup complete: {results['total']} conflict(s) resolved"
                 )
             else:
                 logger.info("[DB] sync_dedup complete: no conflicts found")
@@ -2586,9 +2832,7 @@ def get_strategy_assets(
     Falls back to empty list — callers handle fallback.
     """
     with _get_session() as session:
-        q = session.query(StrategyAsset).filter_by(
-            strategy_name=strategy_name
-        )
+        q = session.query(StrategyAsset).filter_by(strategy_name=strategy_name)
         if active_only:
             q = q.filter_by(is_active=1)
         rows = q.order_by(StrategyAsset.symbol).all()
@@ -2657,14 +2901,21 @@ def add_strategy_asset(
                     existing.sub_category = sub_category
                     session.commit()
                     logger.info(
-                        f"[DB] Reactivated strategy asset: "
-                        f"{strategy_name}/{symbol}"
+                        f"[DB] Reactivated strategy asset: {strategy_name}/{symbol}"
                     )
                     return existing.id
-                logger.warning(
-                    f"[DB] add_strategy_asset: "
-                    f"{strategy_name}/{symbol} already exists"
-                )
+                # Asset exists and is active — update fcsapi_verified if it changed
+                if fcsapi_verified and not existing.fcsapi_verified:
+                    existing.fcsapi_verified = 1
+                    session.commit()
+                    logger.info(
+                        f"[DB] Updated fcsapi_verified for {strategy_name}/{symbol}"
+                    )
+                else:
+                    logger.warning(
+                        f"[DB] add_strategy_asset: "
+                        f"{strategy_name}/{symbol} already exists"
+                    )
                 return None
             obj = StrategyAsset(
                 strategy_name=strategy_name,
@@ -2679,8 +2930,7 @@ def add_strategy_asset(
             session.add(obj)
             session.commit()
             logger.info(
-                f"[DB] Added strategy asset: "
-                f"{strategy_name}/{symbol} ({asset_class})"
+                f"[DB] Added strategy asset: {strategy_name}/{symbol} ({asset_class})"
             )
             return obj.id
         except Exception as e:
@@ -2693,7 +2943,10 @@ def remove_strategy_asset(
     strategy_name: str,
     symbol: str,
 ) -> bool:
-    """Soft-delete: sets is_active=0."""
+    """Hard-delete a strategy asset row from the DB.
+    Always deletes the row completely regardless of added_by value.
+    Returns False if the row was not found.
+    """
     with _get_session() as session:
         try:
             row = (
@@ -2706,23 +2959,19 @@ def remove_strategy_asset(
             )
             if not row:
                 logger.warning(
-                    f"[DB] remove_strategy_asset: "
-                    f"not found: {strategy_name}/{symbol}"
+                    f"[DB] remove_strategy_asset: not found: "
+                    f"{strategy_name}/{symbol}"
                 )
                 return False
-            row.is_active = 0
-            row.added_by = "admin_removed"
+            session.delete(row)
             session.commit()
             logger.info(
-                f"[DB] Deactivated strategy asset: "
-                f"{strategy_name}/{symbol} (marked admin_removed)"
+                f"[DB] Deleted strategy asset: {strategy_name}/{symbol}"
             )
             return True
         except Exception as e:
             session.rollback()
-            logger.error(
-                f"[DB] remove_strategy_asset failed: {e}"
-            )
+            logger.error(f"[DB] remove_strategy_asset failed: {e}")
             return False
 
 

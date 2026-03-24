@@ -49,9 +49,6 @@ from trading_engine.admin import router as admin_router
 from trading_engine.api_v1 import router as api_v1_router
 from trading_engine.api.v1.public_signals import router as public_signals_router
 from trading_engine.api.v1.auth import router as auth_router
-from trading_engine.strategies.trend_forex import TARGET_SYMBOLS as TREND_FOREX_SYMBOLS
-from trading_engine.strategies.trend_non_forex import TARGET_SYMBOLS as TREND_NON_FOREX_SYMBOLS
-from trading_engine.strategies.multi_timeframe import ALL_ASSETS as MTF_EMA_ASSETS
 from trading_engine.notifications import (
     notify_strategy_failure, notify_scheduler_down, configure_webhook,
     set_notifications_enabled, set_category_enabled,
@@ -628,7 +625,12 @@ def _sync_performance_context():
     t0 = _time.monotonic()
     api = cache.api_client
 
-    all_symbols = list(TREND_FOREX_SYMBOLS) + list(TREND_NON_FOREX_SYMBOLS) + list(MTF_EMA_ASSETS)
+    from trading_engine.strategies.trend_forex import get_active_symbols as _tf_syms
+    from trading_engine.strategies.trend_non_forex import get_active_symbols as _tnf_syms
+    from trading_engine.strategies.multi_timeframe import get_all_mtf_assets as _mtf_syms
+
+    _trend_forex_set = set(_tf_syms())
+    all_symbols = list(_trend_forex_set) + list(_tnf_syms()) + list(_mtf_syms())
     seen = set()
     unique_symbols = []
     for s in all_symbols:
@@ -636,7 +638,7 @@ def _sync_performance_context():
             seen.add(s)
             unique_symbols.append(s)
 
-    forex_syms = [s for s in unique_symbols if s in TREND_FOREX_SYMBOLS or "/" in s]
+    forex_syms = [s for s in unique_symbols if s in _trend_forex_set or "/" in s]
     stock_syms = [s for s in unique_symbols if s not in forex_syms]
 
     results = {}
@@ -750,9 +752,11 @@ RECOVERY_STRATEGIES = [
 
 def _get_recovery_assets(strategy_name: str) -> list[str]:
     if strategy_name == "trend_forex":
-        return list(TREND_FOREX_SYMBOLS)
+        from trading_engine.strategies.trend_forex import get_active_symbols as _get
+        return _get()
     elif strategy_name == "trend_non_forex":
-        return list(TREND_NON_FOREX_SYMBOLS)
+        from trading_engine.strategies.trend_non_forex import get_active_symbols as _get
+        return _get()
     return []
 
 
