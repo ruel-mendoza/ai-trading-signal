@@ -49,7 +49,6 @@ from trading_engine.database import (
 from trading_engine.indicators import IndicatorEngine
 
 from trading_engine.strategies.trend_non_forex import (
-    TARGET_SYMBOLS as _TNF_TARGET_SYMBOLS,
     SHORT_ELIGIBLE_SYMBOLS as _TNF_SHORT_ELIGIBLE,
 )
 
@@ -58,6 +57,19 @@ _TNF_CRYPTO_ALTCOINS: set = set()
 from trading_engine.strategies.trend_forex import (
     TARGET_SYMBOLS as _TF_TARGET_SYMBOLS,
 )
+
+def _get_tnf_symbols() -> list:
+    try:
+        from trading_engine.database import get_strategy_assets
+        symbols = get_strategy_assets("trend_non_forex", active_only=True)
+        if symbols:
+            return symbols
+    except Exception:
+        pass
+    from trading_engine.strategies.trend_non_forex import TARGET_SYMBOLS
+    return list(TARGET_SYMBOLS)
+
+_TNF_TARGET_SYMBOLS = _get_tnf_symbols()
 
 router = APIRouter(prefix="/admin", tags=["admin"], include_in_schema=False)
 
@@ -1520,10 +1532,10 @@ def _get_trend_following_data() -> dict:
     ny_dst = bool(et_now.dst() and et_now.dst().total_seconds() > 0)
 
     from trading_engine.strategies.trend_non_forex import (
-        get_active_symbols as _get_tnf_symbols,
+        get_active_symbols as _get_tnf_active_symbols,
     )
 
-    non_forex_symbols = _get_tnf_symbols()
+    non_forex_symbols = _get_tnf_active_symbols()
     all_symbols = non_forex_symbols
 
     _SHORT_ELIGIBLE_SYMBOLS = _TNF_SHORT_ELIGIBLE
@@ -1891,7 +1903,7 @@ def _build_trend_following_html(
         <div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;">Non-Forex eval at 4:01 PM ET | Forex eval at 5:01 PM ET</div>
     </div>
     <div class="settings-section" style="margin-top:20px;">
-        <h3>Non-Forex Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG ONLY | {len(list(_TNF_TARGET_SYMBOLS))} ETFs</span></h3>
+        <h3>Non-Forex Breakout Conditions (D1) <span style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">LONG ONLY | {len(_get_tnf_symbols())} ETFs</span></h3>
         <div class="stats-grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));">
             {non_forex_cards}
         </div>
@@ -1921,7 +1933,7 @@ def _build_trend_following_html(
     <div class="timezone-note" style="margin-top:16px;">
         <strong>Strategy Rules (Trend Following &mdash; Commodity ETF | QuantConnect Validated):</strong>
         <ul>
-            <li><strong>LONG Entry (all {len(list(_TNF_TARGET_SYMBOLS))} ETFs):</strong> Close <strong>&ge;</strong> highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
+            <li><strong>LONG Entry (all {len(_get_tnf_symbols())} ETFs):</strong> Close <strong>&ge;</strong> highest close of last 50 days AND SMA(50) &gt; SMA(100)</li>
             <li><strong>SHORT Entry (USO, UNG, UGA, DBB, SLX only):</strong> Close <strong>&le;</strong> lowest close of last 50 days AND SMA(50) &lt; SMA(100)</li>
             <li><strong>ATR:</strong> <strong>Dynamic (live)</strong> &mdash; ATR(100) is recalculated on every evaluation bar from current candle data. ATR is <em>never</em> stored at entry. This matches the QC <code>self._atr[symbol].current.value</code> behavior exactly.</li>
             <li><strong>Trailing Stop (LONG):</strong> <code>new_stop = current_price &minus; (ATR &times; 3)</code> &mdash; ratcheted upward with <code>max(stored_stop, new_stop)</code>. Stop only moves in the trade&rsquo;s favour (never back down).</li>
@@ -3224,8 +3236,8 @@ def _build_signal_analysis_html(data: dict) -> str:
     </div>
 
     <div class="settings-section" style="margin-bottom:20px;">
-        <h3>Trend Non-Forex Command Center <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 4:01 PM ET | {len(list(_TNF_TARGET_SYMBOLS))} assets | LONG ONLY | 3&times;ATR(100) trailing stop</span></h3>
-        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG), confirmed by SMA(50) &gt; SMA(100) crossover | {len(list(_TNF_TARGET_SYMBOLS))} commodity ETFs</p>
+        <h3>Trend Non-Forex Command Center <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">Scheduler: 4:01 PM ET | {len(_get_tnf_symbols())} assets | LONG ONLY | 3&times;ATR(100) trailing stop</span></h3>
+        <p style="color:#94a3b8;font-size:13px;margin:4px 0 12px;">Entry: Close &gt; 50-day highest (LONG), confirmed by SMA(50) &gt; SMA(100) crossover | {len(_get_tnf_symbols())} commodity ETFs</p>
         <div style="overflow-x:auto;">
             <table class="data-table" data-testid="table-analysis-trend-nf">
                 <thead><tr>
@@ -7280,11 +7292,11 @@ def api_add_strategy_asset(
     if guard:
         return guard
     user = _get_session_user(request)
-    symbol = body.get("symbol", "").strip().upper()
-    strategy_name = body.get("strategy_name", "").strip()
-    asset_class = body.get("asset_class", "forex").strip()
-    notes = body.get("notes", "")
-    sub_category = body.get("sub_category", "").strip() or None
+    symbol = (body.get("symbol") or "").strip().upper()
+    strategy_name = (body.get("strategy_name") or "").strip()
+    asset_class = (body.get("asset_class") or "forex").strip()
+    notes = body.get("notes") or ""
+    sub_category = (body.get("sub_category") or "").strip() or None
 
     VALID_STRATEGIES = {
         "mtf_ema",
