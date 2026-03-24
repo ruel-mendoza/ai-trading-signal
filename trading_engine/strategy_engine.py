@@ -240,7 +240,7 @@ class StrategyEngine:
 
                 current_price = candles[-1]["close"]
                 direction = pos["direction"]
-                trailing_mult = 2.0 if strategy_name == STRATEGY_MTF_EMA else 3.0
+                trailing_mult = 3.0
 
                 if direction == "BUY":
                     update_position_tracking(pos["id"], highest_price=current_price)
