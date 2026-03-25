@@ -366,9 +366,20 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
             f"{ac_label}</span>"
         )
 
+        asset_ticker = s.get("asset", "")
+        full_name = s.get("full_name") or ""
+        if full_name:
+            asset_cell = (
+                f'<div style="font-weight:600;letter-spacing:0.02em;">{asset_ticker}</div>'
+                f'<div style="font-size:0.72rem;color:#94a3b8;margin-top:1px;'
+                f'white-space:normal;line-height:1.3;">{full_name}</div>'
+            )
+        else:
+            asset_cell = asset_ticker
+
         rows.append(f"""
         <tr>
-            <td>{s.get("asset", "")}</td>
+            <td>{asset_cell}</td>
             <td>{ac_badge}</td>
             <td><span class="badge {dir_class}">{direction}</span></td>
             <td>{entry_str}</td>
