@@ -1728,7 +1728,12 @@ def list_strategy_signals(
     status: Optional[str] = Query(None, description="Filter by status: OPEN, CLOSED"),
     limit: int = Query(100, ge=1, le=500),
 ):
+    from trading_engine.api_v1 import _get_exit_instruction
     signals = get_all_signals(strategy_name=strategy, asset=symbol, status=status, limit=limit)
+    for sig in signals:
+        sig["exit_instructions"] = _get_exit_instruction(
+            sig.get("strategy_name", ""), sig.get("direction", "")
+        )
     return {
         "signals": signals,
         "count": len(signals),

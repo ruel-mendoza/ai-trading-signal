@@ -76,6 +76,7 @@ export async function registerRoutes(
               createdAt: s.created_at,
               source: "strategy",
               strategyName: s.strategy_name,
+              exitInstructions: s.exit_instructions || null,
             }));
         }
       } catch (e) {

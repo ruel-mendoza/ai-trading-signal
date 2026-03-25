@@ -44,4 +44,5 @@ export type Signal = typeof signals.$inferSelect & {
   fullName?: string | null;
   source?: string;
   strategyName?: string;
+  exitInstructions?: string | null;
 };

@@ -26,6 +26,34 @@ from trading_engine.database import (
 
 logger = logging.getLogger("trading_engine.api_v1")
 
+# ── Exit instructions per strategy / direction ────────────────────────────────
+_EXIT_INSTRUCTIONS: dict[str, dict[str, str]] = {
+    "mtf_ema": {
+        "BUY":  "Exit when the H1 candle closes below the H1 EMA 20. The 2× ATR(100) trailing stop also acts as a hard floor — if price breaches it before the EMA crossover, the position is closed immediately.",
+        "SELL": "Exit when the H1 candle closes above the H1 EMA 20. The 2× ATR(100) trailing stop acts as a hard ceiling — if price breaches it before the EMA crossover, the position is closed immediately.",
+    },
+    "trend_forex": {
+        "_default": "Exit at 5:01 PM ET (1 min after NY close) if the daily close is at or below the ATR-based trailing stop. The trailing stop ratchets up as price advances and never moves against the trade.",
+    },
+    "trend_non_forex": {
+        "_default": "Exit at 4:01 PM ET if the daily close is at or below the 3× ATR(100) trailing stop. The stop tightens automatically as the highest observed close increases, locking in profit over time.",
+    },
+    "highest_lowest_fx": {
+        "_default": "Exit after 6 hours from entry, or immediately if the 2× ATR stop loss is hit — whichever comes first.",
+    },
+    "sp500_momentum": {
+        "_default": "Exit when the 30-minute RSI(20) falls below 70. No trailing stop is used — the RSI threshold is the sole exit trigger.",
+    },
+}
+
+
+def _get_exit_instruction(strategy: str, direction: str) -> Optional[str]:
+    """Return the exit instruction string for a strategy + direction combo."""
+    bucket = _EXIT_INSTRUCTIONS.get(strategy)
+    if not bucket:
+        return None
+    return bucket.get(direction) or bucket.get("_default")
+
 
 class SignalPublic(BaseModel):
     asset: str = Field(..., example="EUR/USD")
@@ -45,6 +73,7 @@ class SignalPublic(BaseModel):
     strategy: str = Field(..., example="mtf_ema")
     published_at: str = Field(..., example="2026-03-02T12:00:00Z")
     take_profit: Optional[float] = None
+    exit_instructions: Optional[str] = Field(None, description="Human-readable exit rule for this strategy and direction.")
     meta: Optional[dict] = None
 
 class SignalsLatestResponse(BaseModel):
@@ -65,6 +94,7 @@ class SignalLegacy(BaseModel):
     stop_loss: float
     take_profit: Optional[float] = None
     trailing_stop: bool
+    exit_instructions: Optional[str] = None
     status: str
     exit_price: Optional[float] = None
     exit_reason: Optional[str] = None
@@ -526,6 +556,7 @@ def _format_signal_public(s: dict, position: Optional[dict] = None) -> dict:
         "stop_loss": s["stop_loss"],
         "strategy": s["strategy_name"],
         "published_at": ts,
+        "exit_instructions": _get_exit_instruction(s.get("strategy_name", ""), s.get("direction", "")),
     }
     if s.get("take_profit") is not None:
         result["take_profit"] = s["take_profit"]
@@ -547,6 +578,7 @@ def _format_signal(s: dict) -> dict:
         "stop_loss": s["stop_loss"],
         "take_profit": s["take_profit"],
         "trailing_stop": s["take_profit"] is None,
+        "exit_instructions": _get_exit_instruction(s.get("strategy_name", ""), s.get("direction", "")),
         "status": s["status"],
         "exit_price": s.get("exit_price"),
         "exit_reason": s.get("exit_reason"),
