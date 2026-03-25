@@ -223,12 +223,21 @@ def get_full_name_for_asset(symbol: str) -> Optional[str]:
 
     Priority:
     1. Static _ASSET_NAME_MAP (forex, crypto, commodities, ETFs, indices)
-    2. strategy_assets.full_name DB column (NASDAQ stocks populated by nasdaq_sync)
-    3. None — callers should handle gracefully
+    2. _NDX100_COMPANY_NAMES (NASDAQ 100 stocks, from nasdaq_sync)
+    3. strategy_assets.full_name DB column (fallback for any remaining symbols)
+    4. None — callers should handle gracefully
     """
     name = _ASSET_NAME_MAP.get(symbol)
     if name:
         return name
+    # Lazy import to avoid circular dependency at module load time
+    try:
+        from trading_engine.utils.nasdaq_sync import _NDX100_COMPANY_NAMES
+        name = _NDX100_COMPANY_NAMES.get(symbol)
+        if name:
+            return name
+    except Exception:
+        pass
     try:
         with _get_session() as session:
             row = (
@@ -904,14 +913,25 @@ def _backfill_asset_class():
 
 
 def _backfill_full_names():
-    """One-time startup pass: fill full_name where NULL using the static map.
+    """Startup pass: fill full_name where NULL using the static map + NASDAQ names.
 
     Updates both strategy_assets and signals tables. Safe to run repeatedly —
     only touches rows where full_name IS NULL and the symbol exists in the map.
+    Covers:
+      1. _ASSET_NAME_MAP  — forex, crypto, ETFs, commodities, indices
+      2. _NDX100_COMPANY_NAMES (from nasdaq_sync) — NASDAQ 100 stocks
     """
+    # Build combined name map: static map + NASDAQ stock names
+    combined_map = dict(_ASSET_NAME_MAP)
+    try:
+        from trading_engine.utils.nasdaq_sync import _NDX100_COMPANY_NAMES
+        combined_map.update(_NDX100_COMPANY_NAMES)
+    except Exception:
+        pass
+
     updated_assets = updated_signals = 0
     with engine.connect() as conn:
-        for symbol, name in _ASSET_NAME_MAP.items():
+        for symbol, name in combined_map.items():
             safe_name = name.replace("'", "''")
             safe_sym = symbol.replace("'", "''")
             res = conn.execute(
