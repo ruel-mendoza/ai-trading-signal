@@ -1155,8 +1155,8 @@ def _build_mtf_ema_html(
         for sym in group_syms:
             dp = _dp(sym["symbol"])
             data_status = ""
-            if sym["d1_count"] < 200 or sym["h4_count"] < 210 or sym["h1_count"] < 20:
-                data_status = f'<div style="color:#fbbf24;font-size:0.8rem;margin-top:6px;">D1: {sym["d1_count"]}/200, H4: {sym["h4_count"]}/210, H1: {sym["h1_count"]}/20</div>'
+            if sym["d1_count"] < 250 or sym["h4_count"] < 210 or sym["h1_count"] < 20:
+                data_status = f'<div style="color:#fbbf24;font-size:0.8rem;margin-top:6px;">D1: {sym["d1_count"]}/250, H4: {sym["h4_count"]}/210, H1: {sym["h1_count"]}/20</div>'
             else:
                 trend_dir = "NEUTRAL"
                 trend_color = "#94a3b8"

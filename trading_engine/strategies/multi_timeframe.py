@@ -102,7 +102,7 @@ EMA_50 = 50
 EMA_200 = 200
 ATR_PERIOD = 100
 
-MIN_D1_BARS = 200
+MIN_D1_BARS = 250
 MIN_H4_BARS = 210
 MIN_H1_BARS = 20
 
@@ -1079,6 +1079,33 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
                 f"[MTF-EMA] {asset} | Active signal exists — skipping entry check"
             )
             return SignalResult()
+
+        # ── D1 EMA Trend Filter (hard pre-screen gate) ──────────────────────
+        # Requirement: D1 EMA50 > D1 EMA200 for LONG; D1 EMA50 < D1 EMA200 for SHORT.
+        # This is an explicit early-return gate that runs BEFORE all 5 entry conditions.
+        d1_ema50 = indicators.d1_ema50
+        d1_ema200 = indicators.d1_ema200
+        if d1_ema50 is None or d1_ema200 is None:
+            logger.warning(
+                f"[MTF-EMA] {asset} | D1 EMA Trend Filter: "
+                f"EMA50={d1_ema50} / EMA200={d1_ema200} — one or both unavailable, "
+                f"entry blocked until D1 data is sufficient (need {MIN_D1_BARS} bars)"
+            )
+            return SignalResult(action=Action.NONE)
+
+        d1_bull = d1_ema50 > d1_ema200
+        logger.info(
+            f"[MTF-EMA] {asset} | D1 EMA Trend Filter: "
+            f"EMA50={d1_ema50:.5f} {'>' if d1_bull else '<'} EMA200={d1_ema200:.5f} "
+            f"=> Regime={'BULL — LONG entries eligible' if d1_bull else 'BEAR — SHORT entries eligible (LONG blocked)'}"
+        )
+        if asset in LONG_ONLY_ASSETS and not d1_bull:
+            logger.info(
+                f"[MTF-EMA] {asset} | D1 EMA Trend Filter: BEAR regime on LONG_ONLY asset "
+                f"(D1 EMA50 {d1_ema50:.5f} < EMA200 {d1_ema200:.5f}) => NO ENTRY"
+            )
+            return SignalResult(action=Action.NONE)
+        # ── End D1 EMA Trend Filter ──────────────────────────────────────────
 
         if asset in LONG_ONLY_ASSETS:
             logger.info(
