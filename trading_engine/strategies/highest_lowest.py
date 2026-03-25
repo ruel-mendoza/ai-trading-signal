@@ -569,10 +569,10 @@ class HighestLowestFXStrategy(BaseStrategy):
             stop_distance = STOP_LOSS_ATR_MULT * atr_at_entry
             if direction == "BUY":
                 stop_level = entry_price - stop_distance
-                stop_hit = current_close < stop_level
+                stop_hit = current_close <= stop_level
             else:
                 stop_level = entry_price + stop_distance
-                stop_hit = current_close > stop_level
+                stop_hit = current_close >= stop_level
 
             logger.info(
                 f"[HLC-FX-EXIT] Position #{pos_id} | {direction} | close={current_close:.5f} | "
