@@ -22,10 +22,11 @@ class CacheLayer:
         minutes = TIMEFRAME_DURATION_MINUTES[timeframe]
 
         if timeframe == "D1":
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            if now >= today_start:
-                return today_start - timedelta(days=1)
-            return today_start - timedelta(days=1)
+            # Return now minus 24h so any stored last_candle_close
+            # within the last 24h is considered fresh.
+            # Handles assets with non-midnight D1 closes
+            # (e.g. XAU/USD at 22:00 UTC, SPX at 13:30 UTC).
+            return now - timedelta(hours=24)
 
         total_minutes = now.hour * 60 + now.minute
         current_candle_start = (total_minutes // minutes) * minutes
