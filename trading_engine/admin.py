@@ -1569,6 +1569,7 @@ def _get_trend_following_data() -> dict:
     def _compute_symbol_data(symbol):
         sym_info = {
             "symbol": symbol,
+            "full_name": get_full_name_for_asset(symbol) or "",
             "current_close": None,
             "sma50": None,
             "sma100": None,
@@ -1868,9 +1869,15 @@ def _build_trend_following_html(
             if sym.get("short_met"):
                 badges += ' <span class="badge sell" style="font-size:0.7rem;">SHORT READY</span>'
 
+            full_name_html = (
+                f'<div style="font-size:0.68rem;color:#64748b;margin-top:1px;">'
+                f'{sym["full_name"]}</div>'
+                if sym.get("full_name") else ""
+            )
             html += f"""
             <div class="stat-card" style="min-width:250px;">
                 <div class="stat-label">{sym["symbol"]}{badges}</div>
+                {full_name_html}
                 {data_status}
             </div>"""
         return html
