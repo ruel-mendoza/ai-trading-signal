@@ -378,6 +378,14 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
         else:
             asset_cell = asset_ticker
 
+        strategy_js = s.get("strategy_name", "").replace("'", "\\'")
+        direction_js = direction.replace("'", "\\'")
+        tp_cell = (
+            f'{tp_str}'
+            f'<br><span class="exit-link" '
+            f"onclick=\"showExitLogic('{strategy_js}', '{direction_js}', this)\">"
+            f"How to Exit</span>"
+        )
         rows.append(f"""
         <tr>
             <td>{asset_cell}</td>
@@ -385,7 +393,7 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
             <td><span class="badge {dir_class}">{direction}</span></td>
             <td>{entry_str}</td>
             <td>{sl_str}</td>
-            <td>{tp_str}</td>
+            <td>{tp_cell}</td>
             <td>{s.get("strategy_name", "")}</td>
             <td>{status_badge}{exit_info}</td>
             <td>{ts_display}</td>
@@ -3930,10 +3938,72 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 .toggle-slider:before { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; background: #f1f5f9; border-radius: 50%; transition: 0.3s; }
 .toggle-switch input:checked + .toggle-slider { background: #22c55e; }
 .toggle-switch input:checked + .toggle-slider:before { transform: translateX(22px); }
+.exit-link { color: #3b82f6; cursor: pointer; text-decoration: underline; font-size: 0.72rem; display: inline-block; margin-top: 3px; }
+.exit-link:hover { color: #60a5fa; }
+#exit-modal-overlay { display:none; position:fixed; inset:0; z-index:9998; }
+#exit-modal { display:none; position:fixed; z-index:9999; background:#1e293b; border:1px solid #3b82f6; border-radius:8px; padding:16px 18px; max-width:340px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+#exit-modal .exit-modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+#exit-modal .exit-modal-title { font-size:0.8rem; font-weight:700; color:#3b82f6; text-transform:uppercase; letter-spacing:0.05em; }
+#exit-modal .exit-modal-close { cursor:pointer; color:#64748b; font-size:1.1rem; line-height:1; padding:2px 4px; }
+#exit-modal .exit-modal-close:hover { color:#f1f5f9; }
+#exit-modal .exit-modal-body { font-size:0.83rem; color:#cbd5e1; line-height:1.55; }
 """
 
 ADMIN_JS = """
 const BASE = window.location.pathname.replace(/\\/admin\\/?$/, '');
+
+// ── Exit Logic Tooltip Modal ─────────────────────────────────────────────────
+const EXIT_INSTRUCTIONS = {
+  mtf_ema: {
+    BUY:  "Exit when the H1 candle closes below the H1 EMA 20. The 2× ATR(100) trailing stop also acts as a hard floor — if price breaches it before the EMA crossover, the position is closed immediately.",
+    SELL: "Exit when the H1 candle closes above the H1 EMA 20. The 2× ATR(100) trailing stop acts as a hard ceiling — if price breaches it before the EMA crossover, the position is closed immediately."
+  },
+  trend_forex: {
+    _default: "Exit at 5:01 PM ET (1 min after NY close) if the daily close is at or below the ATR-based trailing stop. The trailing stop ratchets up as price advances — it never moves against the trade."
+  },
+  trend_non_forex: {
+    _default: "Exit at 4:01 PM ET if the daily close is at or below the 3× ATR(100) trailing stop. The stop tightens automatically as the highest observed close increases, locking in profit over time."
+  },
+  highest_lowest_fx: {
+    _default: "Exit after 6 hours from entry, or immediately if the 2× ATR stop loss is hit — whichever comes first."
+  },
+  sp500_momentum: {
+    _default: "Exit when the 30-minute RSI(20) falls below 70. No trailing stop is used — the RSI threshold is the sole exit trigger."
+  }
+};
+
+function showExitLogic(strategy, direction, anchorEl) {
+  var instr = EXIT_INSTRUCTIONS[strategy];
+  var text = instr
+    ? (instr[direction] || instr['_default'] || 'Exit rules not defined for this strategy.')
+    : 'Exit rules not defined for this strategy.';
+
+  var modal = document.getElementById('exit-modal');
+  var overlay = document.getElementById('exit-modal-overlay');
+  if (!modal) return;
+
+  document.getElementById('exit-modal-strategy').textContent = strategy.replace(/_/g,' ').toUpperCase() + (direction ? ' — ' + direction : '');
+  document.getElementById('exit-modal-text').textContent = text;
+
+  // Position near the anchor element
+  var rect = anchorEl.getBoundingClientRect();
+  var top = rect.bottom + window.scrollY + 6;
+  var left = Math.min(rect.left + window.scrollX, window.innerWidth - 360);
+  if (left < 8) left = 8;
+  modal.style.top = top + 'px';
+  modal.style.left = left + 'px';
+
+  overlay.style.display = 'block';
+  modal.style.display = 'block';
+}
+
+function closeExitModal() {
+  var modal = document.getElementById('exit-modal');
+  var overlay = document.getElementById('exit-modal-overlay');
+  if (modal) modal.style.display = 'none';
+  if (overlay) overlay.style.display = 'none';
+}
+// ── End Exit Logic Tooltip Modal ─────────────────────────────────────────────
 
 function showTab(tabName) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
@@ -6869,6 +6939,15 @@ def admin_dashboard(
         </div>
 
         </main>
+    </div>
+    <!-- Exit Logic Modal -->
+    <div id="exit-modal-overlay" onclick="closeExitModal()"></div>
+    <div id="exit-modal">
+        <div class="exit-modal-header">
+            <span class="exit-modal-title" id="exit-modal-strategy"></span>
+            <span class="exit-modal-close" onclick="closeExitModal()">&#x2715;</span>
+        </div>
+        <div class="exit-modal-body" id="exit-modal-text"></div>
     </div>
     <script>var IS_ADMIN = {"true" if is_admin else "false"};</script>
     <script>{ADMIN_JS}</script>
