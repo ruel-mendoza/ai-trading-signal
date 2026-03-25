@@ -439,6 +439,19 @@ CATEGORY_MAP: dict[str, str] = {
     "APT/USD":  "crypto", "ARB/USD":  "crypto",
     "OP/USD":   "crypto", "SUI/USD":  "crypto",
     "INJ/USD":  "crypto", "TRX/USD":  "crypto",
+    # ── Stocks (NASDAQ 100) ──────────────────────────────────────────────
+    **{sym: "stocks" for sym in [
+        "AAPL","MSFT","NVDA","AMZN","META","GOOGL","GOOG","TSLA","AVGO","COST",
+        "NFLX","AMD","ADBE","QCOM","PEP","CSCO","TMUS","INTC","INTU","AMGN",
+        "TXN","HON","AMAT","SBUX","BKNG","ISRG","VRTX","REGN","GILD","ADI",
+        "LRCX","MU","PANW","KLAC","SNPS","CDNS","MELI","ADP","MDLZ","PYPL",
+        "CRWD","CTAS","ORLY","WDAY","MNST","MRVL","PCAR","FTNT","CEG","ODFL",
+        "ROST","CPRT","DXCM","BIIB","KDP","FANG","PAYX","IDXX","EXC","MRNA",
+        "FAST","CTSH","VRSK","ON","GEHC","EA","KHC","XEL","DLTR","CDW",
+        "WBD","DDOG","ZS","CCEP","ANSS","BKR","TTWO","ILMN","WBA","MTCH",
+        "SIRI","OKTA","ZM","ALGN","ENPH","LCID","RIVN","NXPI","MCHP","LULU",
+        "TEAM","DOCU","EBAY","ASML","ABNB","DASH","APP","HOOD","RBLX","COIN",
+    ]},
 }
 
 # Aliases for legacy and shorthand asset_class filter values.
@@ -450,6 +463,9 @@ ASSET_CLASS_ALIASES: dict[str, str] = {
     "fx":          "forex",
     "index":       "forex",
     "commodity":   "forex",
+    "stock":     "stocks",
+    "equity":    "stocks",
+    "nasdaq":    "stocks",
 }
 
 
@@ -470,6 +486,8 @@ STRATEGY_LABELS = {
     "trend_forex": "Trend Forex",
     "sp500_momentum": "SP500 Momentum",
     "highest_lowest_fx": "Highest/Lowest FX",
+    "stocks_algo1": "Stocks Algo 1 — Monthly Momentum",
+    "stocks_algo2": "Stocks Algo 2 — Mean Reversion",
 }
 
 VALID_TIMEFRAMES = ["30m", "1H", "4H", "D1"]

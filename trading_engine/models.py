@@ -37,8 +37,12 @@ class Candle(Base):
     created_at = Column(Text, server_default=func.now())
 
     __table_args__ = (
-        UniqueConstraint("asset", "timeframe", "timestamp", name="uq_candle_asset_tf_ts"),
-        CheckConstraint("timeframe IN ('30m', '1H', '4H', 'D1')", name="ck_candle_timeframe"),
+        UniqueConstraint(
+            "asset", "timeframe", "timestamp", name="uq_candle_asset_tf_ts"
+        ),
+        CheckConstraint(
+            "timeframe IN ('30m', '1H', '4H', 'D1')", name="ck_candle_timeframe"
+        ),
         Index("idx_candle_asset_tf_ts", "asset", "timeframe", "timestamp"),
         Index("idx_candle_asset_tf", "asset", "timeframe"),
         Index("idx_candle_timestamp", "timestamp"),
@@ -68,10 +72,14 @@ class Signal(Base):
     wp_last_sync = Column(Text, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("asset", "strategy_name", "signal_timestamp", name="uq_signal_idempotency"),
+        UniqueConstraint(
+            "asset", "strategy_name", "signal_timestamp", name="uq_signal_idempotency"
+        ),
         CheckConstraint("direction IN ('BUY', 'SELL')", name="ck_signal_direction"),
         CheckConstraint("status IN ('OPEN', 'CLOSED')", name="ck_signal_status"),
-        Index("idx_signal_asset_strategy_ts", "asset", "strategy_name", "signal_timestamp"),
+        Index(
+            "idx_signal_asset_strategy_ts", "asset", "strategy_name", "signal_timestamp"
+        ),
         Index("idx_signal_status_compound", "asset", "strategy_name", "status"),
         Index("idx_signal_status", "status"),
         Index("idx_signal_status_created", "status", "created_at"),
@@ -97,7 +105,9 @@ class OpenPosition(Base):
     opened_at = Column(Text, server_default=func.now())
 
     __table_args__ = (
-        UniqueConstraint("asset", "strategy_name", name="uq_open_position_asset_strategy"),
+        UniqueConstraint(
+            "asset", "strategy_name", name="uq_open_position_asset_strategy"
+        ),
         CheckConstraint("direction IN ('BUY', 'SELL')", name="ck_position_direction"),
         Index("idx_open_position_asset_strategy", "asset", "strategy_name"),
         Index("idx_open_position_asset", "asset"),
@@ -127,9 +137,7 @@ class CacheMetadata(Base):
     last_fetched = Column(Text, nullable=False)
     last_candle_close = Column(Text)
 
-    __table_args__ = (
-        UniqueConstraint("asset", "timeframe", name="uq_cache_asset_tf"),
-    )
+    __table_args__ = (UniqueConstraint("asset", "timeframe", name="uq_cache_asset_tf"),)
 
 
 class AppSetting(Base):
@@ -151,7 +159,9 @@ class AdminUser(Base):
     role = Column(Text, nullable=False, server_default="CUSTOMER")
     created_at = Column(Text, server_default=func.now())
 
-    cms_configs = relationship("UserCmsConfig", back_populates="owner_user", cascade="all, delete-orphan")
+    cms_configs = relationship(
+        "UserCmsConfig", back_populates="owner_user", cascade="all, delete-orphan"
+    )
 
 
 class PartnerApiKey(Base):
@@ -163,13 +173,13 @@ class PartnerApiKey(Base):
     tier = Column(Text, nullable=False, server_default="standard")
     rate_limit_per_minute = Column(Integer, nullable=False, server_default="120")
     is_active = Column(Integer, nullable=False, server_default="1")
-    created_by = Column(Integer, ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True)
+    created_by = Column(
+        Integer, ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True
+    )
     last_used_at = Column(Text, nullable=True)
     created_at = Column(Text, server_default=func.now())
 
-    __table_args__ = (
-        Index("idx_partner_key_hash", "key_hash"),
-    )
+    __table_args__ = (Index("idx_partner_key_hash", "key_hash"),)
 
 
 class AdminSession(Base):
@@ -177,13 +187,13 @@ class AdminSession(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     token = Column(Text, nullable=False, unique=True)
-    user_id = Column(Integer, ForeignKey("admin_users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(
+        Integer, ForeignKey("admin_users.id", ondelete="CASCADE"), nullable=False
+    )
     expires_at = Column(Text, nullable=False)
     created_at = Column(Text, server_default=func.now())
 
-    __table_args__ = (
-        Index("idx_admin_sessions_token", "token"),
-    )
+    __table_args__ = (Index("idx_admin_sessions_token", "token"),)
 
 
 class SchedulerJobLog(Base):
@@ -202,7 +212,10 @@ class SchedulerJobLog(Base):
     error_detail = Column(Text)
 
     __table_args__ = (
-        CheckConstraint("status IN ('RUNNING', 'SUCCESS', 'PARTIAL', 'FAILED')", name="ck_job_log_status"),
+        CheckConstraint(
+            "status IN ('RUNNING', 'SUCCESS', 'PARTIAL', 'FAILED')",
+            name="ck_job_log_status",
+        ),
         Index("idx_job_log_job_id", "job_id"),
         Index("idx_job_log_started", "started_at"),
         Index("idx_job_log_strategy", "strategy_name"),
@@ -231,7 +244,9 @@ class SignalMetrics(Base):
     computed_at = Column(Text, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("strategy_name", "asset", "period", name="uq_signal_metrics_key"),
+        UniqueConstraint(
+            "strategy_name", "asset", "period", name="uq_signal_metrics_key"
+        ),
         Index("idx_signal_metrics_strategy", "strategy_name"),
         Index("idx_signal_metrics_period", "period"),
     )
@@ -241,8 +256,12 @@ class SignalCmsPost(Base):
     __tablename__ = "signal_cms_posts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    signal_id = Column(Integer, ForeignKey("signals.id", ondelete="CASCADE"), nullable=False)
-    cms_config_id = Column(Integer, ForeignKey("user_cms_configs.id", ondelete="CASCADE"), nullable=True)
+    signal_id = Column(
+        Integer, ForeignKey("signals.id", ondelete="CASCADE"), nullable=False
+    )
+    cms_config_id = Column(
+        Integer, ForeignKey("user_cms_configs.id", ondelete="CASCADE"), nullable=True
+    )
     wp_post_id = Column(Integer, nullable=True)
     publish_status = Column(Text, nullable=False, server_default="PENDING")
     last_sync = Column(Text, nullable=True)
@@ -259,7 +278,9 @@ class UserCmsConfig(Base):
     __tablename__ = "user_cms_configs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("admin_users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(
+        Integer, ForeignKey("admin_users.id", ondelete="CASCADE"), nullable=False
+    )
     site_url = Column(Text, nullable=False)
     wp_username = Column(Text, nullable=False)
     encrypted_app_password = Column(Text, nullable=False)
@@ -269,9 +290,7 @@ class UserCmsConfig(Base):
 
     owner_user = relationship("AdminUser", back_populates="cms_configs")
 
-    __table_args__ = (
-        Index("idx_user_cms_user_id", "user_id"),
-    )
+    __table_args__ = (Index("idx_user_cms_user_id", "user_id"),)
 
 
 class StrategyExecutionLog(Base):
@@ -282,9 +301,7 @@ class StrategyExecutionLog(Base):
     last_run_at = Column(Text, nullable=False)
     status = Column(Text, nullable=False)
 
-    __table_args__ = (
-        Index("idx_strategy_exec_name", "strategy_name"),
-    )
+    __table_args__ = (Index("idx_strategy_exec_name", "strategy_name"),)
 
 
 class HistoricalDailyClose(Base):
@@ -333,11 +350,28 @@ class StrategyAsset(Base):
     updated_at = Column(Text, server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
-        UniqueConstraint(
-            "strategy_name", "symbol",
-            name="uq_strategy_asset"
-        ),
+        UniqueConstraint("strategy_name", "symbol", name="uq_strategy_asset"),
         Index("idx_strategy_asset_strategy", "strategy_name"),
         Index("idx_strategy_asset_symbol", "symbol"),
         Index("idx_strategy_asset_active", "is_active"),
+    )
+
+
+class StockAlgo2Position(Base):
+    __tablename__ = "stock_algo2_positions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(Text, nullable=False, unique=True)
+    signal_id = Column(
+        Integer, ForeignKey("signals.id", ondelete="CASCADE"), nullable=False
+    )
+    entry_price = Column(Float, nullable=False)
+    stop_loss = Column(Float, nullable=False)
+    entry_date = Column(Text, nullable=False)
+    trading_days_held = Column(Integer, nullable=False, default=0)
+    created_at = Column(Text, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_sa2_symbol", "symbol"),
+        Index("idx_sa2_signal_id", "signal_id"),
     )

@@ -54,6 +54,10 @@ from trading_engine.notifications import (
     set_notifications_enabled, set_category_enabled,
 )
 
+from trading_engine.strategies.stocks_algo1 import StocksAlgo1Strategy
+from trading_engine.strategies.stocks_algo2 import StocksAlgo2Strategy
+from trading_engine.utils.nasdaq_sync import sync_nasdaq100_symbols
+
 scheduler = BackgroundScheduler()
 
 _watchdog_stop = threading.Event()
@@ -64,6 +68,8 @@ init_db()
 api_client = FCSAPIClient()
 cache = CacheLayer(api_client)
 strategy_engine = StrategyEngine(cache)
+stocks_algo1_strategy = StocksAlgo1Strategy(cache)
+stocks_algo2_strategy = StocksAlgo2Strategy(cache)
 
 from trading_engine import engine_registry as _engine_registry
 _engine_registry.register(strategy_engine)
@@ -786,6 +792,12 @@ def _check_existing_signals_for_window(strategy_name: str, window_timestamp: str
     return results
 
 
+    try:
+        sync_nasdaq100_symbols()
+        logger.info("[STARTUP] NASDAQ 100 symbol sync complete")
+    except Exception as e:
+        logger.warning(f"[STARTUP] NASDAQ symbol sync failed (non-fatal): {e}")
+
 def recovery_check():
     from trading_engine.utils.holiday_manager import is_trading_holiday
 
@@ -943,6 +955,89 @@ def recovery_check():
     )
 
 
+
+def _scheduled_stocks_algo1_monthly():
+    from trading_engine.strategies.stocks_algo1 import _is_first_trading_day_of_month
+    et = _get_et_context()
+    logger.info(f"[SCHEDULER] ====== stocks_algo1 monthly tick | {et['time_str']} {et['label']} ======")
+    if not _is_first_trading_day_of_month():
+        logger.info("[SCHEDULER] stocks_algo1 | Not first trading day - skipping")
+        return
+    log_id = create_job_log("stocks_algo1_monthly", "stocks_algo1")
+    signals_gen = error_count = 0
+    error_details = []
+    try:
+        result = stocks_algo1_strategy.run_monthly()
+        signals_gen = result.get("signals_opened", 0)
+        if result.get("error"):
+            error_count = 1
+            error_details.append(result["error"])
+    except Exception as e:
+        error_count = 1
+        error_details.append(str(e))
+        logger.error(f"[SCHEDULER] stocks_algo1 | Exception: {e}", exc_info=True)
+    try:
+        exits = stocks_algo1_strategy.check_exits()
+        if exits:
+            logger.info(f"[SCHEDULER] stocks_algo1 | {len(exits)} stop-loss exit(s)")
+    except Exception as e:
+        error_count += 1
+        error_details.append(f"exit_check: {e}")
+    status = "FAILED" if error_count > 0 else "SUCCESS"
+    finish_job_log(log_id, status, 1, signals_gen, error_count,
+                   "; ".join(error_details) if error_details else None)
+    upsert_strategy_execution_log("stocks_algo1", status)
+    if status == "FAILED":
+        notify_strategy_failure("stocks_algo1", error_count, 1, "; ".join(error_details))
+    logger.info(f"[SCHEDULER] ====== stocks_algo1 complete | {status} | signals={signals_gen} errors={error_count} ======")
+
+
+def _scheduled_stocks_algo1_exit_check():
+    et = _get_et_context()
+    logger.info(f"[SCHEDULER] stocks_algo1 daily exit check | {et['time_str']} {et['label']}")
+    try:
+        exits = stocks_algo1_strategy.check_exits()
+        if exits:
+            logger.info(f"[SCHEDULER] stocks_algo1 | {len(exits)} stop-loss exit(s) triggered")
+    except Exception as e:
+        logger.error(f"[SCHEDULER] stocks_algo1 exit check failed: {e}", exc_info=True)
+
+
+def _scheduled_stocks_algo2_daily():
+    et = _get_et_context()
+    logger.info(f"[SCHEDULER] ====== stocks_algo2 daily tick | {et['time_str']} {et['label']} ======")
+    log_id = create_job_log("stocks_algo2_daily", "stocks_algo2")
+    signals_gen = error_count = 0
+    error_details = []
+    try:
+        result = stocks_algo2_strategy.run_daily()
+        signals_gen = result.get("signals_opened", 0)
+        if result.get("error"):
+            error_count = 1
+            error_details.append(result["error"])
+    except Exception as e:
+        error_count = 1
+        error_details.append(str(e))
+        logger.error(f"[SCHEDULER] stocks_algo2 | Exception: {e}", exc_info=True)
+    status = "FAILED" if error_count > 0 else "SUCCESS"
+    finish_job_log(log_id, status, 1, signals_gen, error_count,
+                   "; ".join(error_details) if error_details else None)
+    upsert_strategy_execution_log("stocks_algo2", status)
+    if status == "FAILED":
+        notify_strategy_failure("stocks_algo2", error_count, 1, "; ".join(error_details))
+    logger.info(f"[SCHEDULER] ====== stocks_algo2 complete | {status} | signals={signals_gen} errors={error_count} ======")
+
+
+def _scheduled_nasdaq_sync():
+    et = _get_et_context()
+    logger.info(f"[SCHEDULER] NASDAQ 100 symbol sync | {et['time_str']} {et['label']}")
+    try:
+        result = sync_nasdaq100_symbols()
+        logger.info(f"[SCHEDULER] NASDAQ sync complete | added={result['added']} skipped={result['skipped']} total={result['total']}")
+    except Exception as e:
+        logger.error(f"[SCHEDULER] NASDAQ sync failed: {e}", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from trading_engine.database import get_setting
@@ -1060,6 +1155,38 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
+    scheduler.add_job(
+        _scheduled_stocks_algo1_monthly,
+        trigger=CronTrigger(day="1-3", hour=9, minute=35, timezone=ET_ZONE),
+        id="stocks_algo1_monthly",
+        name="Stocks Algo1 Monthly Momentum (1st-3rd at 09:35 ET)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
+    scheduler.add_job(
+        _scheduled_stocks_algo1_exit_check,
+        trigger=CronTrigger(hour=16, minute=5, timezone=ET_ZONE),
+        id="stocks_algo1_exit_check",
+        name="Stocks Algo1 Daily Stop-Loss Check (4:05 PM ET)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
+    scheduler.add_job(
+        _scheduled_stocks_algo2_daily,
+        trigger=CronTrigger(hour=16, minute=15, timezone=ET_ZONE),
+        id="stocks_algo2_daily",
+        name="Stocks Algo2 Mean Reversion Daily (4:15 PM ET)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
+    scheduler.add_job(
+        _scheduled_nasdaq_sync,
+        trigger=CronTrigger(day=1, hour=2, minute=0, timezone=ET_ZONE),
+        id="nasdaq100_sync_monthly",
+        name="NASDAQ 100 Symbol Sync (1st of month 2:00 AM ET)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
     scheduler.start()
 
     import asyncio as _asyncio
@@ -1074,6 +1201,12 @@ async def lifespan(app: FastAPI):
         logger.info("[METRICS] Initial metrics computation completed on startup")
     except Exception as e:
         logger.warning(f"[METRICS] Initial computation failed: {e}")
+
+    try:
+        sync_nasdaq100_symbols()
+        logger.info("[STARTUP] NASDAQ 100 symbol sync complete")
+    except Exception as e:
+        logger.warning(f"[STARTUP] NASDAQ symbol sync failed (non-fatal): {e}")
 
     try:
         recovery_check()

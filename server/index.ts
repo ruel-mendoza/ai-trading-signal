@@ -1,4 +1,5 @@
-import { spawn, ChildProcess } from "child_process";
+import { spawn, execSync, ChildProcess } from "child_process";
+import { dirname } from "path";
 import express, { type Request, Response, NextFunction } from "express";
 import helmet from "helmet";
 import { registerRoutes } from "./routes";
@@ -87,8 +88,19 @@ async function waitForEngineReady(maxRetries = 20, delayMs = 500): Promise<boole
 let engineRestarting = false;
 
 function spawnPythonProcess(): ChildProcess {
+  let libPath = "";
+  try {
+    const gccLib = execSync("gcc --print-file-name=libstdc++.so.6 2>/dev/null", { encoding: "utf8" }).trim();
+    if (gccLib && gccLib !== "libstdc++.so.6") {
+      libPath = dirname(gccLib);
+    }
+  } catch {}
+  const existingLdPath = process.env.LD_LIBRARY_PATH || "";
+  const ldLibraryPath = libPath
+    ? [libPath, existingLdPath].filter(Boolean).join(":")
+    : existingLdPath;
   const pyProc = spawn("setsid", ["python", "-m", "trading_engine.main"], {
-    env: { ...process.env, PYTHON_ENGINE_PORT: "5001" },
+    env: { ...process.env, PYTHON_ENGINE_PORT: "5001", ...(ldLibraryPath ? { LD_LIBRARY_PATH: ldLibraryPath } : {}) },
     stdio: ["pipe", "pipe", "pipe"],
   });
 

@@ -64,6 +64,7 @@ from trading_engine.models import (
     RecoveryNotification,
     HistoricalDailyClose,
     StrategyAsset,
+    StockAlgo2Position,
     VALID_TIMEFRAMES,
 )
 
@@ -149,8 +150,21 @@ _ASSET_CLASS_MAP: dict[str, str] = {
 
 
 def _get_asset_class(symbol: str) -> str:
-    """Return the asset class label for a symbol. Falls back to 'other' for unmapped symbols."""
-    return _ASSET_CLASS_MAP.get(symbol, "other")
+    """Return the asset class label for a symbol. Falls back to strategy_assets table, then other."""
+    if symbol in _ASSET_CLASS_MAP:
+        return _ASSET_CLASS_MAP[symbol]
+    try:
+        with _get_session() as session:
+            row = (
+                session.query(StrategyAsset.asset_class)
+                .filter_by(symbol=symbol, is_active=1)
+                .first()
+            )
+            if row:
+                return row[0]
+    except Exception:
+        pass
+    return "other"
 
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "trading_data.db")
@@ -3000,3 +3014,79 @@ def mark_asset_verified(
             session.rollback()
             logger.error(f"[DB] mark_asset_verified failed: {e}")
             return False
+
+
+def open_stock_algo2_position(symbol: str, signal_id: int, entry_price: float,
+                               stop_loss: float, entry_date: str):
+    with _get_session() as session:
+        try:
+            existing = session.query(StockAlgo2Position).filter_by(symbol=symbol).first()
+            if existing:
+                logger.warning(f"[DB] stock_algo2_positions: {symbol} already exists (id={existing.id})")
+                return existing.id
+            obj = StockAlgo2Position(
+                symbol=symbol, signal_id=signal_id, entry_price=entry_price,
+                stop_loss=stop_loss, entry_date=entry_date, trading_days_held=0,
+            )
+            session.add(obj)
+            session.commit()
+            logger.info(f"[DB] Opened stock_algo2 position #{obj.id} for {symbol}")
+            return obj.id
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] open_stock_algo2_position failed: {e}")
+            return None
+
+
+def get_all_stock_algo2_positions() -> list:
+    with _get_session() as session:
+        rows = session.query(StockAlgo2Position).order_by(StockAlgo2Position.id).all()
+        return [
+            {
+                "id": r.id, "symbol": r.symbol, "signal_id": r.signal_id,
+                "entry_price": r.entry_price, "stop_loss": r.stop_loss,
+                "entry_date": r.entry_date, "trading_days_held": r.trading_days_held,
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ]
+
+
+def increment_stock_algo2_hold_days(position_id: int) -> int:
+    with _get_session() as session:
+        try:
+            row = session.query(StockAlgo2Position).filter_by(id=position_id).first()
+            if not row:
+                return 0
+            row.trading_days_held += 1
+            session.commit()
+            return row.trading_days_held
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] increment_stock_algo2_hold_days failed: {e}")
+            return 0
+
+
+def close_stock_algo2_position(symbol: str) -> bool:
+    with _get_session() as session:
+        try:
+            row = session.query(StockAlgo2Position).filter_by(symbol=symbol).first()
+            if row:
+                session.delete(row)
+                session.commit()
+                return True
+            return False
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[DB] close_stock_algo2_position failed: {e}")
+            return False
+
+
+def get_algo1_active_symbols() -> set:
+    with _get_session() as session:
+        rows = (
+            session.query(Signal.asset)
+            .filter_by(strategy_name="stocks_algo1", status="OPEN")
+            .all()
+        )
+        return {r[0] for r in rows}
