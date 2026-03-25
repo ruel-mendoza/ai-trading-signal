@@ -310,6 +310,25 @@ class SP500MomentumStrategy(BaseStrategy):
 
     def check_exits(self) -> list[dict]:
         closed_signals = []
+
+        # Mirror QC: only evaluate exits during ARCA session (09:30–15:30 ET).
+        # Prevents a stale RSI computed from an after-hours candle from closing
+        # a position outside market hours.
+        now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
+        et_minutes = now_et.hour * 60 + now_et.minute
+        session_start = ARCA_SESSION_START_HOUR * 60 + ARCA_SESSION_START_MIN
+        last_valid    = LAST_VALID_CANDLE_HOUR   * 60 + LAST_VALID_CANDLE_MIN
+        in_session = session_start <= et_minutes <= last_valid
+        is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
+        tz_abbr = "EDT" if is_dst else "EST"
+        logger.info(
+            f"[SP500-MOM-EXIT] Session check | {now_et.strftime('%H:%M')} {tz_abbr} | "
+            f"ARCA 09:30-15:30 ET | in_session={in_session}"
+        )
+        if not in_session:
+            logger.info("[SP500-MOM-EXIT] Outside ARCA session — skipping exit check")
+            return closed_signals
+
         positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
         logger.info(f"[SP500-MOM-EXIT] ====== Checking exits | {len(positions)} open position(s) ======")
 
@@ -339,11 +358,16 @@ class SP500MomentumStrategy(BaseStrategy):
             if advance_quote and advance_quote.get("close") is not None:
                 current_close = float(advance_quote["close"])
                 logger.info(f"[SP500-MOM-EXIT] Position #{pos_id} | Using v4 advance close: {current_close:.2f}")
+                # Replace the last cached close with the advance price so RSI
+                # is computed from the same price used as the exit price.
+                closes_for_rsi = closes[:-1] + [current_close]
+                logger.info(f"[SP500-MOM-EXIT] Position #{pos_id} | RSI computed with advance close substituted at [-1]")
             else:
                 current_close = closes[-1]
+                closes_for_rsi = closes
                 logger.info(f"[SP500-MOM-EXIT] Position #{pos_id} | Using cached candle close: {current_close:.2f} (advance unavailable)")
 
-            rsi_values = IndicatorEngine.rsi(closes, RSI_PERIOD)
+            rsi_values = IndicatorEngine.rsi(closes_for_rsi, RSI_PERIOD)
             current_rsi = rsi_values[-1] if rsi_values else None
 
             rsi_below_threshold = current_rsi is not None and current_rsi < RSI_THRESHOLD

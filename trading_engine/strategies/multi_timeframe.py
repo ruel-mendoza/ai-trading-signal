@@ -1270,10 +1270,69 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
                     }
                 )
             else:
-                logger.info(
-                    f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
-                    f"Holding {direction} — exit condition not met"
-                )
+                # ── Priority 2: trailing stop (peak/trough − 2× ATR at entry) ──
+                atr_at_entry = pos.get("atr_at_entry")
+                if atr_at_entry is not None and atr_at_entry > 0:
+                    highest = pos.get("highest_price_since_entry") or pos["entry_price"]
+                    lowest  = pos.get("lowest_price_since_entry")  or pos["entry_price"]
+
+                    if direction == "BUY":
+                        trail_stop = highest - (2.0 * atr_at_entry)
+                        trail_hit  = h1_close <= trail_stop
+                        logger.info(
+                            f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                            f"Trailing stop check (LONG): "
+                            f"h1_close={h1_close:.5f} | peak={highest:.5f} | "
+                            f"stop={trail_stop:.5f} (peak - 2×{atr_at_entry:.6f}) | "
+                            f"hit={trail_hit}"
+                        )
+                        if trail_hit:
+                            trail_reason = (
+                                f"Trailing stop hit (LONG) | "
+                                f"h1_close={h1_close:.5f} <= "
+                                f"peak({highest:.5f}) - 2×ATR({atr_at_entry:.6f}) = {trail_stop:.5f}"
+                            )
+                            logger.info(
+                                f"[MTF-EMA-EXIT] Position #{pos_id} | EXIT LONG (trailing stop) | "
+                                f"{asset}"
+                            )
+                            self._persist_exit(asset, trail_reason)
+                            closed.append({**pos, "exit_price": h1_close, "exit_reason": "trailing_stop"})
+                            continue
+
+                    elif direction == "SELL":
+                        trail_stop = lowest + (2.0 * atr_at_entry)
+                        trail_hit  = h1_close >= trail_stop
+                        logger.info(
+                            f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                            f"Trailing stop check (SHORT): "
+                            f"h1_close={h1_close:.5f} | trough={lowest:.5f} | "
+                            f"stop={trail_stop:.5f} (trough + 2×{atr_at_entry:.6f}) | "
+                            f"hit={trail_hit}"
+                        )
+                        if trail_hit:
+                            trail_reason = (
+                                f"Trailing stop hit (SHORT) | "
+                                f"h1_close={h1_close:.5f} >= "
+                                f"trough({lowest:.5f}) + 2×ATR({atr_at_entry:.6f}) = {trail_stop:.5f}"
+                            )
+                            logger.info(
+                                f"[MTF-EMA-EXIT] Position #{pos_id} | EXIT SHORT (trailing stop) | "
+                                f"{asset}"
+                            )
+                            self._persist_exit(asset, trail_reason)
+                            closed.append({**pos, "exit_price": h1_close, "exit_reason": "trailing_stop"})
+                            continue
+
+                    logger.info(
+                        f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                        f"Holding {direction} — neither EMA20 nor trailing stop triggered"
+                    )
+                else:
+                    logger.warning(
+                        f"[MTF-EMA-EXIT] Position #{pos_id} | {asset} | "
+                        f"atr_at_entry missing — trailing stop cannot be evaluated, holding"
+                    )
 
         logger.info(
             f"[MTF-EMA-EXIT] ====== check_exits complete | {len(closed)} closed ======"

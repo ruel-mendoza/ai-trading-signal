@@ -297,6 +297,14 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             )
             return SignalResult()
 
+        from trading_engine.utils.holiday_manager import is_trading_holiday as _is_holiday
+        now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
+        if _is_holiday(now_et):
+            logger.info(
+                f"[TREND-NONFX] {asset} | Trading holiday — skipping"
+            )
+            return SignalResult()
+
         advance_quote = self._get_advance_price(asset)
         if advance_quote is None:
             logger.warning(
@@ -607,6 +615,7 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
         position_assets = {p["asset"] for p in positions}
 
         closed: list[dict] = []
+        active_symbols_set = set(get_active_symbols())  # hoist: one DB call for all signals
         for sig in orphans:
             asset = sig["asset"]
             sig_id = sig["id"]
@@ -615,7 +624,7 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
             ts_raw = sig.get("signal_timestamp") or ""
 
             is_orphaned = asset not in position_assets
-            is_legacy = asset not in get_active_symbols()
+            is_legacy = asset not in active_symbols_set
 
             if not is_orphaned and not is_legacy:
                 continue
@@ -677,12 +686,34 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
         closed_signals = []
 
         # Safety net: close orphaned signals and legacy assets removed from strategy
+        # (orphan close runs unconditionally — it is not time-gated)
         orphan_closes = self._close_orphaned_signals()
         closed_signals.extend(orphan_closes)
         if orphan_closes:
             logger.warning(
                 f"[TREND-NONFX-EXIT] {len(orphan_closes)} orphaned/legacy signal(s) closed"
             )
+
+        # Mirror QC closing-rule gate: only evaluate trailing stop exits at
+        # 4:01 PM ET (post NYSE close). Prevents intraday price spikes from
+        # triggering exits that would not fire in the QC backtest.
+        now_et = datetime.now(pytz.utc).astimezone(ET_ZONE)
+        et_minutes = now_et.hour * 60 + now_et.minute
+        gate_start = EVAL_HOUR * 60 + EVAL_MINUTE
+        gate_end   = gate_start + EVAL_WINDOW_MINUTES
+        in_gate = gate_start <= et_minutes <= gate_end
+        is_dst = bool(now_et.dst() and now_et.dst().total_seconds() > 0)
+        tz_abbr = "EDT" if is_dst else "EST"
+        logger.info(
+            f"[TREND-NONFX-EXIT] Closing-rule gate | {now_et.strftime('%H:%M')} {tz_abbr} | "
+            f"window=16:01-16:06 ET | in_gate={in_gate}"
+        )
+        if not in_gate:
+            logger.info(
+                "[TREND-NONFX-EXIT] Outside closing-rule gate — trailing stop exits skipped "
+                "(orphan closes already processed above)"
+            )
+            return closed_signals
 
         positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
         logger.info(

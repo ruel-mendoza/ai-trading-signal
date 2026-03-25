@@ -206,6 +206,11 @@ class HighestLowestFXStrategy(BaseStrategy):
             logger.info(f"[HLC-FX] {asset} | Outside 9:00/10:00 AM ET eval window — skipping")
             return SignalResult()
 
+        from trading_engine.utils.holiday_manager import is_trading_holiday as _is_holiday
+        if _is_holiday(now_et):
+            logger.info(f"[HLC-FX] {asset} | Trading holiday — skipping entry")
+            return SignalResult()
+
         if open_position and open_position.get("direction") in ("BUY", "SELL"):
             pos_id = open_position.get("id")
             direction = open_position.get("direction")

@@ -2586,17 +2586,30 @@ def _build_hlc_fx_html(
         </div>
     </div>
     <div class="timezone-note" style="margin-top:16px;">
-        <strong>Strategy Rules:</strong>
+        <strong>Strategy Rules (Tokyo Sweep &amp; Recover):</strong>
         <ul>
-            <li><strong>Long Entry:</strong> Price &ge; 50-day highest close (D1 lookback)</li>
-            <li><strong>Reversal Long:</strong> Price near 50-day lowest close (within 0.2%) &mdash; potential bounce</li>
-            <li><strong>Short Entry:</strong> Price &le; 50-day lowest close AND below reversal threshold</li>
-            <li><strong>Previous Day Filter:</strong> Long blocked if price &lt; prev day low; Short blocked if price &gt; prev day high</li>
-            <li><strong>Holiday Filter:</strong> Skips US &amp; JP public holidays</li>
-            <li><strong>Exit (Trailing Stop):</strong> Long exits when close &lt; peak - 0.25&times;ATR(100); Short exits when close &gt; trough + 0.25&times;ATR(100)</li>
-            <li><strong>Take Profit:</strong> 6&times; H1 ATR(100) from entry</li>
-            <li><strong>ATR:</strong> H1 ATR(100), fixed at entry value (never recalculated)</li>
-            <li><strong>Timing:</strong> Evaluates at 9:00 AM and 10:00 AM ET only, automated via APScheduler</li>
+            <li><strong>Session definition:</strong> Tokyo session = H1 closes from 08:00 JST to 08:00 ET. NY session = H1 candles from 08:00 ET onward.</li>
+            <li><strong>Long Entry (all 4 required):</strong>
+                <ol style="margin-top:4px;padding-left:20px;">
+                    <li>Any NY H1 <em>low</em> swept below the Tokyo session lowest <em>close</em></li>
+                    <li>Current H1 close has recovered above that Tokyo low</li>
+                    <li>Current H1 candle is bullish (close &gt; open)</li>
+                    <li>Current H1 close is above the previous trading day&rsquo;s low</li>
+                </ol>
+            </li>
+            <li><strong>Short Entry (all 4 required):</strong>
+                <ol style="margin-top:4px;padding-left:20px;">
+                    <li>Any NY H1 <em>high</em> swept above the Tokyo session highest <em>close</em></li>
+                    <li>Current H1 close has recovered below that Tokyo high</li>
+                    <li>Current H1 candle is bearish (close &lt; open)</li>
+                    <li>Current H1 close is below the previous trading day&rsquo;s high</li>
+                </ol>
+            </li>
+            <li><strong>Stop Loss:</strong> 2&times; H1 ATR(100) from entry price &mdash; fixed at entry, not trailing</li>
+            <li><strong>Time Exit:</strong> 6 hours after position open (safety net)</li>
+            <li><strong>ATR:</strong> H1 ATR(100), locked at entry, never recalculated</li>
+            <li><strong>Holiday Filter:</strong> Applied in scheduler wrapper &mdash; skips US &amp; JP public holidays on scheduled runs</li>
+            <li><strong>Timing:</strong> Entry evaluated at 9:00 AM and 10:00 AM ET only. Exit checked hourly 9:00 AM&ndash;4:00 PM ET.</li>
         </ul>
     </div>
     """
