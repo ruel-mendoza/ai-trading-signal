@@ -3471,18 +3471,23 @@ def _build_signal_analysis_html(data: dict) -> str:
         dc = "buy" if d == "BUY" else "sell"
         return f'<span class="badge {dc}" style="font-size:11px;">OPEN {d}</span>'
 
+    def _sym_cell(sym: str) -> str:
+        fn = get_full_name_for_asset(sym)
+        sub = f'<div style="font-size:10px;color:#64748b;font-weight:400;margin-top:1px;">{fn}</div>' if fn else ""
+        return f'<td style="font-weight:600;">{sym}{sub}</td>'
+
     trend_nf_html = ""
     for r in data["trend_nf"]:
         dp = r["dp"]
         if r["status"] == "insufficient":
             trend_nf_html += f"""<tr data-testid="row-analysis-tnf-{r["symbol"].replace("/", "-")}">
-                <td style="font-weight:600;">{r["symbol"]}</td>
+                {_sym_cell(r["symbol"])}
                 <td colspan="5" style="color:#64748b;">Insufficient data ({r["candles"]} candles, need 101+)</td>
                 <td>{_pos_badge(r["position"])}</td></tr>"""
             continue
         sma_color = "#6ee7b7" if r["sma_bias"] == "BULL" else "#fca5a5"
         trend_nf_html += f"""<tr data-testid="row-analysis-tnf-{r["symbol"].replace("/", "-")}">
-            <td style="font-weight:600;">{r["symbol"]}</td>
+            {_sym_cell(r["symbol"])}
             <td>{_fmt(r["close"], dp)}</td>
             <td>{_fmt(r["hi50"], dp)} <span style="color:#64748b;font-size:11px;">({r["pct_from_hi"]:+.2f}%)</span></td>
             <td><span style="color:{sma_color};font-weight:600;">{r["sma_bias"]}</span>
@@ -3495,13 +3500,13 @@ def _build_signal_analysis_html(data: dict) -> str:
     for r in data["trend_fx"]:
         if r["status"] == "insufficient":
             trend_fx_html += f"""<tr data-testid="row-analysis-tfx-{r["symbol"].replace("/", "-")}">
-                <td style="font-weight:600;">{r["symbol"]}</td>
+                {_sym_cell(r["symbol"])}
                 <td colspan="5" style="color:#f59e0b;">No data &mdash; awaiting first scheduler run (4:01 PM ET)</td>
                 <td>{_pos_badge(r["position"])}</td></tr>"""
             continue
         sma_color = "#6ee7b7" if r["sma_bias"] == "BULL" else "#fca5a5"
         trend_fx_html += f"""<tr data-testid="row-analysis-tfx-{r["symbol"].replace("/", "-")}">
-            <td style="font-weight:600;">{r["symbol"]}</td>
+            {_sym_cell(r["symbol"])}
             <td>{_fmt(r["close"], 5)}</td>
             <td>{_fmt(r["hi50"], 5)} <span style="color:#64748b;font-size:11px;">({r["pct_from_hi"]:+.2f}%)</span></td>
             <td><span style="color:{sma_color};font-weight:600;">{r["sma_bias"]}</span>
@@ -3628,7 +3633,7 @@ def _build_signal_analysis_html(data: dict) -> str:
             tf_cells += f'<td>{icon} <span style="font-size:11px;color:#94a3b8;">E20={_fmt(tfd["ema20"], dp)} E50={_fmt(tfd["ema50"], dp)}</span></td>'
 
         mtf_html += f"""<tr data-testid="row-analysis-mtf-{r["symbol"].replace("/", "-")}">
-            <td style="font-weight:600;">{r["symbol"]}</td>
+            {_sym_cell(r["symbol"])}
             {tf_cells}
             <td>{sync_badge}</td>
             <td>{_pos_badge(r["position"])}</td></tr>"""
@@ -6913,6 +6918,7 @@ def export_signals(
     if signals:
         fields = [
             "asset",
+            "full_name",
             "direction",
             "entry_price",
             "stop_loss",
@@ -6927,6 +6933,8 @@ def export_signals(
         writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         for s in signals:
+            if not s.get("full_name"):
+                s["full_name"] = get_full_name_for_asset(s.get("asset", "")) or ""
             writer.writerow(s)
 
     output.seek(0)
@@ -7440,17 +7448,18 @@ def api_market_pulse(request: Request):
 
     result = []
     for symbol in ALL_ASSETS:
+        full_name = get_full_name_for_asset(symbol)
         if symbol in active_map:
             sig = active_map[symbol]
             detail = f"Active {sig.get('direction', '')} signal via {sig.get('strategy_name', '')}"
-            result.append({"symbol": symbol, "status": "triggered", "detail": detail})
+            result.append({"symbol": symbol, "full_name": full_name, "status": "triggered", "detail": detail})
         elif symbol in alert_map:
             alert = alert_map[symbol]
             detail = alert.get("status", "Approaching entry level")
-            result.append({"symbol": symbol, "status": "approaching", "detail": detail})
+            result.append({"symbol": symbol, "full_name": full_name, "status": "approaching", "detail": detail})
         else:
             result.append(
-                {"symbol": symbol, "status": "neutral", "detail": "Monitoring"}
+                {"symbol": symbol, "full_name": full_name, "status": "neutral", "detail": "Monitoring"}
             )
 
     return JSONResponse(content={"assets": result})

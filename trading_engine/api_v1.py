@@ -29,6 +29,7 @@ logger = logging.getLogger("trading_engine.api_v1")
 
 class SignalPublic(BaseModel):
     asset: str = Field(..., example="EUR/USD")
+    full_name: Optional[str] = Field(None, example="Euro / US Dollar")
     asset_class: str = Field(
         ...,
         example="forex",
@@ -55,6 +56,7 @@ class SignalsLatestResponse(BaseModel):
 class SignalLegacy(BaseModel):
     id: int
     asset: str
+    full_name: Optional[str] = None
     category: str
     strategy: str
     strategy_label: str
@@ -131,6 +133,7 @@ class IndicatorsResponse(BaseModel):
 class PositionItem(BaseModel):
     id: Optional[int] = None
     asset: Optional[str] = None
+    full_name: Optional[str] = None
     category: str
     strategy: Optional[str] = None
     strategy_label: str
@@ -150,6 +153,7 @@ class PositionsResponse(BaseModel):
 class MetricItem(BaseModel):
     strategy: str
     asset: Optional[str] = None
+    full_name: Optional[str] = None
     period: str
     total_signals: int
     open: int
@@ -932,12 +936,16 @@ def get_positions(
     """
     positions = get_all_open_positions(strategy_name=strategy, asset=asset)
 
+    from trading_engine.database import get_full_name_for_asset as _get_name
+
     formatted = []
     for p in positions:
+        sym = p.get("asset", "")
         formatted.append({
             "id": p.get("id"),
-            "asset": p.get("asset"),
-            "category": CATEGORY_MAP.get(p.get("asset", ""), "other"),
+            "asset": sym,
+            "full_name": p.get("full_name") or _get_name(sym),
+            "category": CATEGORY_MAP.get(sym, "other"),
             "strategy": p.get("strategy_name"),
             "strategy_label": STRATEGY_LABELS.get(p.get("strategy_name", ""), p.get("strategy_name", "")),
             "direction": p.get("direction"),
@@ -970,12 +978,18 @@ def get_metrics(
     if period not in ("all_time", "7d", "30d"):
         raise HTTPException(status_code=400, detail="Invalid period. Use: all_time, 7d, 30d")
 
+    from trading_engine.database import get_full_name_for_asset as _get_name
+
     metrics = get_signal_metrics(
         strategy_name=strategy,
         asset=asset,
         period=period,
         summary_only=summary_only if not asset else False,
     )
+
+    for m in metrics:
+        sym = m.get("asset")
+        m["full_name"] = _get_name(sym) if sym else None
 
     return {"metrics": metrics, "count": len(metrics), "period": period}
 
