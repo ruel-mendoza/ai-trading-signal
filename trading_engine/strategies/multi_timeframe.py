@@ -88,6 +88,10 @@ def get_all_mtf_assets() -> list[str]:
 
 FOREX_ASSETS = {"EUR/USD", "USD/JPY", "GBP/USD", "AUD/USD"}
 
+# Indices and equity-like instruments — LONG only per QC algo
+# (QC blocks shorts on SecurityType.EQUITY and SecurityType.FUTURE)
+LONG_ONLY_ASSETS = {"SPX", "NDX", "RUT", "DJI", "OSX"}
+
 TIMEFRAME_D1 = "D1"
 TIMEFRAME_H4 = "4H"
 TIMEFRAME_H1 = "1H"
@@ -386,11 +390,15 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
     def _check_long_conditions(self, asset: str, ind: MTFIndicators) -> bool:
         c = lambda v: "PASS" if v else "FAIL"
 
-        # Cond 1: D1 Trend Filter — EMA50 > EMA200 (bullish bias)
-        cond1 = ind.d1_ema50 > ind.d1_ema200
+        # Cond 1: D1 Trend Filter — price > EMA50 > EMA200 (QC: price must be above both EMAs)
+        price = ind.h1_close_current
+        cond1 = (ind.d1_ema50 > ind.d1_ema200
+                 and price > ind.d1_ema50
+                 and price > ind.d1_ema200)
         logger.info(
             f"[MTF-EMA] {asset} | LONG Cond 1 — D1 Trend Filter: "
-            f"D1 EMA50 ({ind.d1_ema50:.5f}) > D1 EMA200 ({ind.d1_ema200:.5f}): {cond1}"
+            f"EMA50 ({ind.d1_ema50:.5f}) > EMA200 ({ind.d1_ema200:.5f}) "
+            f"AND price ({price:.5f}) > EMA50 AND price > EMA200: {cond1}"
         )
         if not cond1:
             logger.info(
@@ -482,11 +490,15 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
     def _check_short_conditions(self, asset: str, ind: MTFIndicators) -> bool:
         c = lambda v: "PASS" if v else "FAIL"
 
-        # Cond 1: D1 Trend Filter — EMA50 < EMA200 (bearish bias)
-        cond1 = ind.d1_ema50 < ind.d1_ema200
+        # Cond 1: D1 Trend Filter — price < EMA50 < EMA200 (QC: price must be below both EMAs)
+        price = ind.h1_close_current
+        cond1 = (ind.d1_ema50 < ind.d1_ema200
+                 and price < ind.d1_ema50
+                 and price < ind.d1_ema200)
         logger.info(
             f"[MTF-EMA] {asset} | SHORT Cond 1 — D1 Trend Filter: "
-            f"D1 EMA50 ({ind.d1_ema50:.5f}) < D1 EMA200 ({ind.d1_ema200:.5f}): {cond1}"
+            f"EMA50 ({ind.d1_ema50:.5f}) < EMA200 ({ind.d1_ema200:.5f}) "
+            f"AND price ({price:.5f}) < EMA50 AND price < EMA200: {cond1}"
         )
         if not cond1:
             logger.info(
@@ -950,6 +962,67 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
         )
         return None
 
+    def _check_long_only_entry(
+        self,
+        asset: str,
+        current_price: float,
+        ind: MTFIndicators,
+        tf_data: dict,
+    ) -> Optional[SignalResult]:
+        """LONG-only entry check for index assets (SPX, NDX, RUT, DJI, OSX).
+
+        Mirrors _check_entry_conditions() but skips the short path entirely,
+        matching QC algo behavior where EQUITY and FUTURE types cannot go short.
+        """
+        if self._check_long_conditions(asset, ind):
+            h1 = tf_data["h1"]
+            atr_distance = SL_ATR_MULT * ind.h4_atr100
+            atr_sl = current_price - atr_distance
+
+            structural_sl = self._compute_structural_stop_long(
+                asset, h1.lows, ind.h4_ema50, current_price
+            )
+            stop_loss, sl_method = self._select_stop_loss(
+                asset, "LONG", current_price, structural_sl, atr_sl, atr_distance
+            )
+            take_profit = current_price + (TP_ATR_MULT * ind.h4_atr100)
+            recent_slope, previous_slope = self._compute_h4_ema200_slope(ind)
+
+            entry_metadata = {
+                "take_profit": take_profit,
+                "sl_method": sl_method,
+                "sl_atr_value": round(atr_sl, 6),
+                "sl_structural_value": round(structural_sl, 6) if structural_sl else None,
+                "sl_atr_mult": SL_ATR_MULT,
+                "tp_atr_mult": TP_ATR_MULT,
+                "h4_atr100": round(ind.h4_atr100, 6),
+                "d1_ema200": round(ind.d1_ema200, 6),
+                "d1_ema50": round(ind.d1_ema50, 6),
+                "h4_ema50": round(ind.h4_ema50, 6),
+                "h4_ema200": round(ind.h4_ema200, 6) if ind.h4_ema200 else None,
+                "h1_ema20_at_entry": round(ind.h1_ema20, 6) if ind.h1_ema20 else None,
+                "h4_ema200_recent_slope": round(recent_slope, 6) if recent_slope is not None else None,
+                "h4_ema200_previous_slope": round(previous_slope, 6) if previous_slope is not None else None,
+                "d1_ema200_slope_rising": ind.d1_ema200 > ind.d1_ema200_prev,
+                "h1_cross_confirmed": True,
+                "long_only_asset": True,
+            }
+            persisted = self._persist_entry(
+                asset, "BUY", current_price, stop_loss, take_profit,
+                ind.h4_atr100, entry_metadata,
+            )
+            if not persisted:
+                return None
+            return SignalResult(
+                action=Action.ENTRY,
+                direction=Direction.LONG,
+                price=current_price,
+                stop_loss=stop_loss,
+                atr_at_entry=ind.h4_atr100,
+                metadata={"signal": persisted, **entry_metadata},
+            )
+        return None
+
     def evaluate(
         self,
         asset: str,
@@ -1007,9 +1080,18 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             )
             return SignalResult()
 
-        entry_result = self._check_entry_conditions(
-            asset, current_price, indicators, tf_data
-        )
+        if asset in LONG_ONLY_ASSETS:
+            logger.info(
+                f"[MTF-EMA] {asset} | LONG_ONLY asset — "
+                f"short entry blocked per QC algo (equity/index restriction)"
+            )
+            entry_result = self._check_long_only_entry(
+                asset, current_price, indicators, tf_data
+            )
+        else:
+            entry_result = self._check_entry_conditions(
+                asset, current_price, indicators, tf_data
+            )
         if entry_result:
             return entry_result
 
