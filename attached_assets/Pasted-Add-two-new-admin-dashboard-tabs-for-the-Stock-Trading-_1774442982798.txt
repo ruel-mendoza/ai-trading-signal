@@ -1,0 +1,29 @@
+Add two new admin dashboard tabs for the Stock Trading Strategies.
+The admin dashboard is in trading_engine/admin.py. It uses a sidebar + tab system where each tab has a sidebar-link, a mobile-tab-bar entry, and a tab-content div. Study the existing pattern used by spx, forex_trend, hlc_fx, and trend_following tabs before making any changes.
+Tab 1: "Stocks Algo 1" (Monthly Momentum)
+Add a sidebar link, mobile tab, and tab content div for a new tab with id stocks_algo1. The content should show:
+
+A stats grid with: current month status (did it run this month?), number of active positions, NDX latest close vs SMA200 (pass/fail badge), last run timestamp. Pull this from get_last_successful_execution("stocks_algo1") and get_all_open_positions(strategy_name="stocks_algo1").
+An active positions table with columns: Symbol, Entry Price, Stop Loss (8%), Current Price (from latest D1 candle in DB via get_candles), P&L %, Status. Pull from get_all_open_positions(strategy_name="stocks_algo1").
+A signal history table (last 50) filtered to strategy_name="stocks_algo1" using the existing get_all_signals() and _signals_to_table_rows() functions.
+A strategy rules section explaining: monthly schedule, NDX SMA200 filter, 11-month momentum ranking, top 20 selection, 8% static stop loss.
+
+Tab 2: "Stocks Algo 2" (Mean Reversion)
+Add a sidebar link, mobile tab, and tab content div for a new tab with id stocks_algo2. The content should show:
+
+A stats grid with: number of active positions, NDX yesterday close vs SMA200 (pass/fail badge), last run timestamp. Pull from get_last_successful_execution("stocks_algo2") and get_all_stock_algo2_positions() (already defined in database.py).
+An active positions table with columns: Symbol, Entry Price, Stop Loss (4%), Days Held (out of 5), Current Price, P&L %, Exit Reason if closed. Pull from get_all_stock_algo2_positions().
+A signal history table (last 50) filtered to strategy_name="stocks_algo2".
+A strategy rules section explaining: daily schedule after close, death cross condition (SMA50 crosses below SMA200), NDX below SMA200 filter, 4% stop loss, 5-trading-day hold period exit.
+
+Sidebar placement: Add both new links in the Strategies sidebar group, after the existing hlc_fx link. Use the same chart SVG icon as the other strategy tabs.
+Tab content placement: Add both new tab content divs after the tab-hlc_fx div and before the tab-credits div.
+Mobile tab bar: Add both new tabs after the existing hlc_fx mobile tab.
+Important constraints:
+
+Do not modify any existing tabs, routes, or functions
+Follow the exact same HTML/CSS patterns already used in the file — no new CSS classes
+The data functions get_all_open_positions, get_all_signals, get_last_successful_execution, get_candles, and get_all_stock_algo2_positions are already imported or available in admin.py — add only what is missing to the import block
+Both tabs are admin-only (wrap in if is_admin check matching the existing pattern)
+Keep all data fetching in Python builder functions _build_stocks_algo1_html() and _build_stocks_algo2_html() following the same pattern as _build_spx_momentum_html() and _build_trend_following_html()
+The showTab() JavaScript function already handles tab switching — no JS changes needed

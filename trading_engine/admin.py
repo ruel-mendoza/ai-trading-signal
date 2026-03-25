@@ -45,6 +45,8 @@ from trading_engine.database import (
     add_strategy_asset,
     remove_strategy_asset,
     mark_asset_verified,
+    get_last_successful_execution,
+    get_all_stock_algo2_positions,
 )
 from trading_engine.indicators import IndicatorEngine
 
@@ -2615,6 +2617,363 @@ def _build_hlc_fx_html(
     """
 
 
+# ---------------------------------------------------------------------------
+# Stocks Algo 1 — Monthly Momentum
+# ---------------------------------------------------------------------------
+
+
+def _get_stocks_algo1_data() -> dict:
+    from zoneinfo import ZoneInfo
+
+    last_exec = get_last_successful_execution("stocks_algo1")
+    positions = get_all_open_positions(strategy_name="stocks_algo1")
+
+    # NDX SMA(200) filter
+    ndx_candles = get_candles("NDX", "D1", 300)
+    ndx_close = None
+    ndx_sma200 = None
+    ndx_above_sma200 = None
+    if ndx_candles and len(ndx_candles) >= 200:
+        closes = [c["close"] for c in ndx_candles]
+        ndx_close = closes[-1]
+        sma200_vals = IndicatorEngine.sma(closes, 200)
+        ndx_sma200 = sma200_vals[-1] if sma200_vals else None
+        if ndx_close is not None and ndx_sma200 is not None:
+            ndx_above_sma200 = ndx_close > ndx_sma200
+
+    # Did the strategy run this calendar month?
+    ran_this_month = False
+    if last_exec and last_exec.get("last_run_at"):
+        raw = last_exec["last_run_at"]
+        now_utc = datetime.now(timezone.utc)
+        try:
+            if isinstance(raw, str):
+                raw = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if hasattr(raw, "year"):
+                ran_this_month = raw.year == now_utc.year and raw.month == now_utc.month
+        except Exception:
+            pass
+
+    # Attach current D1 close to each position for P&L
+    for pos in positions:
+        sym = pos.get("asset", "")
+        try:
+            d1 = get_candles(sym, "D1", 5)
+            pos["current_price"] = d1[-1]["close"] if d1 else None
+        except Exception:
+            pos["current_price"] = None
+
+    return {
+        "last_exec": last_exec,
+        "positions": positions,
+        "ndx_close": ndx_close,
+        "ndx_sma200": ndx_sma200,
+        "ndx_above_sma200": ndx_above_sma200,
+        "ran_this_month": ran_this_month,
+    }
+
+
+def _build_stocks_algo1_html(
+    data: dict, signal_rows: str, signal_count: int
+) -> str:
+    last_exec = data["last_exec"]
+    positions = data["positions"]
+    ran_this_month = data["ran_this_month"]
+    ndx_close = data["ndx_close"]
+    ndx_sma200 = data["ndx_sma200"]
+    ndx_above_sma200 = data["ndx_above_sma200"]
+
+    last_run_str = "Never"
+    if last_exec and last_exec.get("last_run_at"):
+        raw = last_exec["last_run_at"]
+        try:
+            if isinstance(raw, str):
+                raw = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            last_run_str = raw.strftime("%Y-%m-%d %H:%M UTC")
+        except Exception:
+            last_run_str = str(raw)
+
+    month_badge = (
+        '<span class="badge status-active">RAN THIS MONTH</span>'
+        if ran_this_month
+        else '<span class="badge status-closed">NOT YET THIS MONTH</span>'
+    )
+
+    ndx_close_str = f"{ndx_close:.2f}" if ndx_close is not None else "N/A"
+    ndx_sma200_str = f"{ndx_sma200:.2f}" if ndx_sma200 is not None else "N/A"
+    if ndx_above_sma200 is True:
+        ndx_badge = '<span class="badge status-active">PASS — Above SMA200</span>'
+    elif ndx_above_sma200 is False:
+        ndx_badge = '<span class="badge status-closed">FAIL — Below SMA200</span>'
+    else:
+        ndx_badge = '<span class="badge">Insufficient data</span>'
+
+    # Active positions table
+    pos_rows = ""
+    if positions:
+        for pos in positions:
+            sym = pos.get("asset", "—")
+            entry = pos.get("entry_price")
+            entry_str = f"{entry:.2f}" if entry is not None else "—"
+            sl = pos.get("stop_loss")
+            sl_str = f"{sl:.2f}" if sl is not None else "—"
+            cur = pos.get("current_price")
+            cur_str = f"{cur:.2f}" if cur is not None else "N/A"
+            pnl_str = "—"
+            if cur is not None and entry:
+                diff = cur - entry
+                pct = (diff / entry) * 100
+                col = "#6ee7b7" if diff >= 0 else "#fca5a5"
+                pnl_str = f'<span style="color:{col};font-weight:600;">{diff:+.2f} ({pct:+.2f}%)</span>'
+            pos_rows += f"""<tr>
+                <td>{sym}</td>
+                <td>{entry_str}</td>
+                <td>{sl_str}</td>
+                <td>{cur_str}</td>
+                <td>{pnl_str}</td>
+                <td><span class="badge status-active">OPEN</span></td>
+            </tr>"""
+    else:
+        pos_rows = '<tr><td colspan="6" style="text-align:center;padding:20px;color:#94a3b8;">No active Stocks Algo 1 positions.</td></tr>'
+
+    return f"""
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">This Month Status</div>
+            <div style="margin-top:8px;">{month_badge}</div>
+            <div class="stat-label" style="margin-top:8px;">Last run: {last_run_str}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Active Positions</div>
+            <div class="stat-value" style="font-size:1.6rem;">{len(positions)}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">NDX vs SMA(200) — Entry Gate</div>
+            <div style="margin-top:8px;">{ndx_badge}</div>
+            <div class="stat-label" style="margin-top:6px;">NDX Close: {ndx_close_str} | SMA200: {ndx_sma200_str}</div>
+        </div>
+    </div>
+    <div class="settings-section" style="margin-top:20px;">
+        <h3>Active Positions</h3>
+        <div style="overflow-x:auto;margin-top:12px;">
+            <table class="data-table" data-testid="algo1-positions-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Entry Price</th>
+                        <th>Stop Loss (8%)</th>
+                        <th>Current Price</th>
+                        <th>P&amp;L %</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>{pos_rows}</tbody>
+            </table>
+        </div>
+    </div>
+    <div class="settings-section" style="margin-top:20px;">
+        <h3>Signal History ({signal_count})</h3>
+        <div style="overflow-x:auto;margin-top:12px;">
+            <table class="data-table" data-testid="algo1-signals-table">
+                <thead>
+                    <tr>
+                        <th>Asset</th>
+                        <th>Class</th>
+                        <th>Direction</th>
+                        <th>Entry Price</th>
+                        <th>Stop Loss</th>
+                        <th>Take Profit</th>
+                        <th>Strategy</th>
+                        <th>Status</th>
+                        <th>Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody>{signal_rows}</tbody>
+            </table>
+        </div>
+    </div>
+    <div class="timezone-note" style="margin-top:16px;">
+        <strong>Strategy Rules (Monthly Momentum):</strong>
+        <ul>
+            <li><strong>Schedule:</strong> 1st–3rd trading day of each month at 09:35 ET</li>
+            <li><strong>Universe:</strong> NASDAQ 100 constituents</li>
+            <li><strong>NDX Filter:</strong> NDX must close above its 200-day SMA — if not, no trades are placed</li>
+            <li><strong>Ranking:</strong> 11-month momentum (returns from 12 months ago to 1 month ago, skipping last month)</li>
+            <li><strong>Selection:</strong> Top 20 stocks by momentum score are entered LONG</li>
+            <li><strong>Stop Loss:</strong> 8% static stop from entry price — fixed, not trailing</li>
+            <li><strong>Exit:</strong> End-of-month rebalance or stop loss hit — held until next monthly evaluation</li>
+        </ul>
+    </div>
+    """
+
+
+# ---------------------------------------------------------------------------
+# Stocks Algo 2 — Mean Reversion (Death Cross)
+# ---------------------------------------------------------------------------
+
+
+def _get_stocks_algo2_data() -> dict:
+    last_exec = get_last_successful_execution("stocks_algo2")
+    positions = get_all_stock_algo2_positions()
+
+    # NDX yesterday close vs SMA(200)
+    ndx_candles = get_candles("NDX", "D1", 300)
+    ndx_close = None
+    ndx_sma200 = None
+    ndx_below_sma200 = None
+    if ndx_candles and len(ndx_candles) >= 200:
+        closes = [c["close"] for c in ndx_candles]
+        ndx_close = closes[-1]
+        sma200_vals = IndicatorEngine.sma(closes, 200)
+        ndx_sma200 = sma200_vals[-1] if sma200_vals else None
+        if ndx_close is not None and ndx_sma200 is not None:
+            ndx_below_sma200 = ndx_close < ndx_sma200
+
+    # Attach current D1 close to each position for P&L
+    for pos in positions:
+        sym = pos.get("symbol", "")
+        try:
+            d1 = get_candles(sym, "D1", 5)
+            pos["current_price"] = d1[-1]["close"] if d1 else None
+        except Exception:
+            pos["current_price"] = None
+
+    return {
+        "last_exec": last_exec,
+        "positions": positions,
+        "ndx_close": ndx_close,
+        "ndx_sma200": ndx_sma200,
+        "ndx_below_sma200": ndx_below_sma200,
+    }
+
+
+def _build_stocks_algo2_html(
+    data: dict, signal_rows: str, signal_count: int
+) -> str:
+    last_exec = data["last_exec"]
+    positions = data["positions"]
+    ndx_close = data["ndx_close"]
+    ndx_sma200 = data["ndx_sma200"]
+    ndx_below_sma200 = data["ndx_below_sma200"]
+
+    last_run_str = "Never"
+    if last_exec and last_exec.get("last_run_at"):
+        raw = last_exec["last_run_at"]
+        try:
+            if isinstance(raw, str):
+                raw = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            last_run_str = raw.strftime("%Y-%m-%d %H:%M UTC")
+        except Exception:
+            last_run_str = str(raw)
+
+    ndx_close_str = f"{ndx_close:.2f}" if ndx_close is not None else "N/A"
+    ndx_sma200_str = f"{ndx_sma200:.2f}" if ndx_sma200 is not None else "N/A"
+    if ndx_below_sma200 is True:
+        ndx_badge = '<span class="badge status-active">PASS — Below SMA200 (bearish filter met)</span>'
+    elif ndx_below_sma200 is False:
+        ndx_badge = '<span class="badge status-closed">FAIL — Above SMA200 (no shorts)</span>'
+    else:
+        ndx_badge = '<span class="badge">Insufficient data</span>'
+
+    # Active positions table
+    pos_rows = ""
+    if positions:
+        for pos in positions:
+            sym = pos.get("symbol", "—")
+            entry = pos.get("entry_price")
+            entry_str = f"{entry:.2f}" if entry is not None else "—"
+            sl = pos.get("stop_loss")
+            sl_str = f"{sl:.2f}" if sl is not None else "—"
+            days_held = pos.get("trading_days_held", 0)
+            cur = pos.get("current_price")
+            cur_str = f"{cur:.2f}" if cur is not None else "N/A"
+            pnl_str = "—"
+            if cur is not None and entry:
+                diff = cur - entry
+                pct = (diff / entry) * 100
+                col = "#6ee7b7" if diff >= 0 else "#fca5a5"
+                pnl_str = f'<span style="color:{col};font-weight:600;">{diff:+.2f} ({pct:+.2f}%)</span>'
+            days_color = "#fca5a5" if days_held >= 5 else "#f1f5f9"
+            pos_rows += f"""<tr>
+                <td>{sym}</td>
+                <td>{entry_str}</td>
+                <td>{sl_str}</td>
+                <td style="color:{days_color};font-weight:600;">{days_held} / 5</td>
+                <td>{cur_str}</td>
+                <td>{pnl_str}</td>
+            </tr>"""
+    else:
+        pos_rows = '<tr><td colspan="6" style="text-align:center;padding:20px;color:#94a3b8;">No active Stocks Algo 2 positions.</td></tr>'
+
+    return f"""
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Active Positions</div>
+            <div class="stat-value" style="font-size:1.6rem;">{len(positions)}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">NDX vs SMA(200) — Entry Gate</div>
+            <div style="margin-top:8px;">{ndx_badge}</div>
+            <div class="stat-label" style="margin-top:6px;">NDX Close: {ndx_close_str} | SMA200: {ndx_sma200_str}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Last Run</div>
+            <div class="stat-value" style="font-size:0.95rem;color:#94a3b8;margin-top:6px;">{last_run_str}</div>
+        </div>
+    </div>
+    <div class="settings-section" style="margin-top:20px;">
+        <h3>Active Positions</h3>
+        <div style="overflow-x:auto;margin-top:12px;">
+            <table class="data-table" data-testid="algo2-positions-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Entry Price</th>
+                        <th>Stop Loss (4%)</th>
+                        <th>Days Held</th>
+                        <th>Current Price</th>
+                        <th>P&amp;L %</th>
+                    </tr>
+                </thead>
+                <tbody>{pos_rows}</tbody>
+            </table>
+        </div>
+    </div>
+    <div class="settings-section" style="margin-top:20px;">
+        <h3>Signal History ({signal_count})</h3>
+        <div style="overflow-x:auto;margin-top:12px;">
+            <table class="data-table" data-testid="algo2-signals-table">
+                <thead>
+                    <tr>
+                        <th>Asset</th>
+                        <th>Class</th>
+                        <th>Direction</th>
+                        <th>Entry Price</th>
+                        <th>Stop Loss</th>
+                        <th>Take Profit</th>
+                        <th>Strategy</th>
+                        <th>Status</th>
+                        <th>Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody>{signal_rows}</tbody>
+            </table>
+        </div>
+    </div>
+    <div class="timezone-note" style="margin-top:16px;">
+        <strong>Strategy Rules (Mean Reversion — Death Cross):</strong>
+        <ul>
+            <li><strong>Schedule:</strong> Daily at 4:15 PM ET after market close</li>
+            <li><strong>NDX Filter:</strong> NDX yesterday close must be below SMA(200) — bearish macro regime required</li>
+            <li><strong>Entry Signal:</strong> Death cross condition — SMA(50) crosses below SMA(200) on the daily chart (SHORT bias)</li>
+            <li><strong>Stop Loss:</strong> 4% static stop from entry price — fixed at entry, not trailing</li>
+            <li><strong>Hold Period:</strong> Maximum 5 trading days — position exits automatically after 5 days regardless of P&amp;L</li>
+            <li><strong>Exit:</strong> Stop loss hit OR 5-trading-day hold period expires</li>
+        </ul>
+    </div>
+    """
+
+
 def _get_signal_analysis_data() -> dict:
     from zoneinfo import ZoneInfo
     from trading_engine.utils.holiday_manager import is_trading_holiday as _is_holiday
@@ -5031,6 +5390,18 @@ def admin_dashboard(
     hlc_signal_count = len(hlc_signals)
     hlc_fx_html = _build_hlc_fx_html(hlc_data, hlc_signal_rows, hlc_signal_count)
 
+    algo1_data = _get_stocks_algo1_data()
+    algo1_signals = get_all_signals(strategy_name="stocks_algo1", limit=50, max_age_days=92)
+    algo1_signal_rows = _signals_to_table_rows(algo1_signals)
+    algo1_signal_count = len(algo1_signals)
+    stocks_algo1_html = _build_stocks_algo1_html(algo1_data, algo1_signal_rows, algo1_signal_count)
+
+    algo2_data = _get_stocks_algo2_data()
+    algo2_signals = get_all_signals(strategy_name="stocks_algo2", limit=50, max_age_days=92)
+    algo2_signal_rows = _signals_to_table_rows(algo2_signals)
+    algo2_signal_count = len(algo2_signals)
+    stocks_algo2_html = _build_stocks_algo2_html(algo2_data, algo2_signal_rows, algo2_signal_count)
+
     analysis_data = _get_signal_analysis_data()
     signal_analysis_html = _build_signal_analysis_html(analysis_data)
 
@@ -5080,6 +5451,8 @@ def admin_dashboard(
         "spx",
         "forex_trend",
         "hlc_fx",
+        "stocks_algo1",
+        "stocks_algo2",
         "credits",
         "settings",
         "users",
@@ -5137,6 +5510,12 @@ def admin_dashboard(
         strategies_block += _sidebar_link(
             "hlc_fx", "Highest/Lowest FX", svg_hlc, tab, "sidebar-hlc-fx"
         )
+        strategies_block += _sidebar_link(
+            "stocks_algo1", "Stocks Algo 1", svg_trend, tab, "sidebar-stocks-algo1"
+        )
+        strategies_block += _sidebar_link(
+            "stocks_algo2", "Stocks Algo 2", svg_trend, tab, "sidebar-stocks-algo2"
+        )
         strategies_block += "</div>"
 
     system_group_label = "System" if is_admin else "Tools"
@@ -5183,6 +5562,8 @@ def admin_dashboard(
         admin_mobile_tabs += _mobile_tab("spx", "SP500", tab)
         admin_mobile_tabs += _mobile_tab("forex_trend", "Trend FX", tab)
         admin_mobile_tabs += _mobile_tab("hlc_fx", "HLC FX", tab)
+        admin_mobile_tabs += _mobile_tab("stocks_algo1", "Algo 1", tab)
+        admin_mobile_tabs += _mobile_tab("stocks_algo2", "Algo 2", tab)
         admin_mobile_tabs += _mobile_tab("credits", "Credits", tab)
         admin_mobile_tabs += _mobile_tab("timezone", "Hours", tab)
         admin_mobile_tabs += _mobile_tab("settings", "Settings", tab)
@@ -5339,6 +5720,20 @@ def admin_dashboard(
             <div class="section">
                 <h2>Highest/Lowest Close FX Strategy</h2>
                 {hlc_fx_html}
+            </div>
+        </div>
+
+        <div id="tab-stocks_algo1" class="tab-content {"hidden" if tab != "stocks_algo1" else ""}">
+            <div class="section">
+                <h2>Stocks Algo 1 — Monthly Momentum</h2>
+                {stocks_algo1_html}
+            </div>
+        </div>
+
+        <div id="tab-stocks_algo2" class="tab-content {"hidden" if tab != "stocks_algo2" else ""}">
+            <div class="section">
+                <h2>Stocks Algo 2 — Mean Reversion (Death Cross)</h2>
+                {stocks_algo2_html}
             </div>
         </div>
 
