@@ -47,6 +47,7 @@ from trading_engine.database import (
     mark_asset_verified,
     get_last_successful_execution,
     get_all_stock_algo2_positions,
+    get_full_name_for_asset,
 )
 from trading_engine.indicators import IndicatorEngine
 
@@ -1207,9 +1208,15 @@ def _build_mtf_ema_html(
             elif sym["short_ready"]:
                 signal_badge = ' <span class="badge sell" style="font-size:0.7rem;">SHORT READY</span>'
 
+            card_full_name = get_full_name_for_asset(sym["symbol"]) or ""
+            name_sub = (
+                f'<div style="font-size:0.68rem;color:#64748b;margin-top:1px;">{card_full_name}</div>'
+                if card_full_name else ""
+            )
             cards_html += f"""
             <div class="stat-card" style="min-width:250px;" data-testid="mtf-card-{sym["symbol"].replace("/", "-")}">
                 <div class="stat-label">{sym["symbol"]}{signal_badge}</div>
+                {name_sub}
                 {data_status}
             </div>"""
 
@@ -1243,9 +1250,15 @@ def _build_mtf_ema_html(
             extreme_label = "Lowest" if is_short else "Highest"
             dir_color = "#ef4444" if is_short else "#3b82f6"
 
+            trade_full_name = get_full_name_for_asset(trade["symbol"]) or ""
+            name_span = (
+                f'<span style="font-size:0.8rem;font-weight:400;color:#94a3b8;margin-left:8px;">'
+                f'{trade_full_name}</span>'
+                if trade_full_name else ""
+            )
             active_html += f"""
         <div class="settings-section" style="margin-top:12px;border-left:3px solid {dir_color};">
-            <h3>{trade["symbol"]} - {direction}</h3>
+            <h3>{trade["symbol"]} — {direction}{name_span}</h3>
             <div class="stats-grid" style="margin-top:8px;">
                 <div class="stat-card"><div class="stat-label">Entry</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(entry)}</div></div>
                 <div class="stat-card"><div class="stat-label">Fixed ATR</div><div class="stat-value" style="font-size:1.1rem;">{_fmt(atr_e, 6)}</div></div>
@@ -2724,6 +2737,14 @@ def _build_stocks_algo1_html(
     if positions:
         for pos in positions:
             sym = pos.get("asset", "—")
+            company = get_full_name_for_asset(sym)
+            if company:
+                sym_cell = (
+                    f'<div style="font-weight:600;">{sym}</div>'
+                    f'<div style="font-size:0.72rem;color:#94a3b8;margin-top:1px;">{company}</div>'
+                )
+            else:
+                sym_cell = sym
             entry = pos.get("entry_price")
             entry_str = f"{entry:.2f}" if entry is not None else "—"
             sl = pos.get("stop_loss")
@@ -2737,7 +2758,7 @@ def _build_stocks_algo1_html(
                 col = "#6ee7b7" if diff >= 0 else "#fca5a5"
                 pnl_str = f'<span style="color:{col};font-weight:600;">{diff:+.2f} ({pct:+.2f}%)</span>'
             pos_rows += f"""<tr>
-                <td>{sym}</td>
+                <td>{sym_cell}</td>
                 <td>{entry_str}</td>
                 <td>{sl_str}</td>
                 <td>{cur_str}</td>
@@ -2891,6 +2912,14 @@ def _build_stocks_algo2_html(
     if positions:
         for pos in positions:
             sym = pos.get("symbol", "—")
+            company = get_full_name_for_asset(sym)
+            if company:
+                sym_cell = (
+                    f'<div style="font-weight:600;">{sym}</div>'
+                    f'<div style="font-size:0.72rem;color:#94a3b8;margin-top:1px;">{company}</div>'
+                )
+            else:
+                sym_cell = sym
             entry = pos.get("entry_price")
             entry_str = f"{entry:.2f}" if entry is not None else "—"
             sl = pos.get("stop_loss")
@@ -2906,7 +2935,7 @@ def _build_stocks_algo2_html(
                 pnl_str = f'<span style="color:{col};font-weight:600;">{diff:+.2f} ({pct:+.2f}%)</span>'
             days_color = "#fca5a5" if days_held >= 5 else "#f1f5f9"
             pos_rows += f"""<tr>
-                <td>{sym}</td>
+                <td>{sym_cell}</td>
                 <td>{entry_str}</td>
                 <td>{sl_str}</td>
                 <td style="color:{days_color};font-weight:600;">{days_held} / 5</td>
