@@ -63,6 +63,7 @@ export async function registerRoutes(
             .map((s: any) => ({
               id: `strategy-${s.id}`,
               pair: s.asset,
+              fullName: s.full_name || null,
               category: categoryMap[s.asset] || "other",
               direction: s.direction === "BUY" ? "Buy" : "Sell",
               entryPrice: s.entry_price,

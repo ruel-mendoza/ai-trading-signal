@@ -148,6 +148,103 @@ _ASSET_CLASS_MAP: dict[str, str] = {
     "TRX/USD": "crypto",
 }
 
+# ---------------------------------------------------------------------------
+# Full display names for all tracked assets — populated once at startup,
+# reused for every signal insert. No FCSAPI calls needed.
+# ---------------------------------------------------------------------------
+_ASSET_NAME_MAP: dict[str, str] = {
+    # Forex pairs
+    "EUR/USD": "Euro / US Dollar",
+    "GBP/USD": "British Pound / US Dollar",
+    "USD/JPY": "US Dollar / Japanese Yen",
+    "AUD/USD": "Australian Dollar / US Dollar",
+    "USD/CAD": "US Dollar / Canadian Dollar",
+    "USD/CHF": "US Dollar / Swiss Franc",
+    "NZD/USD": "New Zealand Dollar / US Dollar",
+    "EUR/GBP": "Euro / British Pound",
+    # Crypto
+    "BTC/USD": "Bitcoin",
+    "ETH/USD": "Ethereum",
+    "BNB/USD": "BNB",
+    "XRP/USD": "XRP",
+    "SOL/USD": "Solana",
+    "TRX/USD": "TRON",
+    "DOGE/USD": "Dogecoin",
+    "ADA/USD": "Cardano",
+    "TON/USD": "Toncoin",
+    "SHIB/USD": "Shiba Inu",
+    "AVAX/USD": "Avalanche",
+    "LINK/USD": "Chainlink",
+    "LTC/USD": "Litecoin",
+    "DOT/USD": "Polkadot",
+    "BCH/USD": "Bitcoin Cash",
+    "UNI/USD": "Uniswap",
+    "ATOM/USD": "Cosmos",
+    "XLM/USD": "Stellar",
+    "HBAR/USD": "Hedera",
+    "ICP/USD": "Internet Computer",
+    "APT/USD": "Aptos",
+    "NEAR/USD": "NEAR Protocol",
+    "ARB/USD": "Arbitrum",
+    "OP/USD": "Optimism",
+    "SUI/USD": "Sui",
+    "INJ/USD": "Injective",
+    "CRO/USD": "Cronos",
+    # Commodities
+    "XAU/USD": "Gold",
+    "XAG/USD": "Silver",
+    "OSX": "Oil Services Index",
+    # Indices
+    "SPX": "S&P 500",
+    "NDX": "NASDAQ 100",
+    "RUT": "Russell 2000",
+    "DJI": "Dow Jones Industrial Average",
+    # Commodity ETFs
+    "CORN": "Teucrium Corn Fund",
+    "SOYB": "Teucrium Soybean Fund",
+    "WEAT": "Teucrium Wheat Fund",
+    "CANE": "Teucrium Sugar Fund",
+    "WOOD": "iShares Global Timber & Forestry ETF",
+    "USO": "United States Oil Fund",
+    "UNG": "United States Natural Gas Fund",
+    "UGA": "United States Gasoline Fund",
+    "SGOL": "Aberdeen Standard Physical Gold Shares",
+    "SIVR": "Aberdeen Standard Physical Silver Shares",
+    "CPER": "United States Copper Index Fund",
+    "PPLT": "Aberdeen Standard Physical Platinum Shares",
+    "PALL": "Aberdeen Standard Physical Palladium Shares",
+    "DBB": "Invesco DB Base Metals Fund",
+    "SLX": "VanEck Steel ETF",
+}
+
+
+def get_full_name_for_asset(symbol: str) -> Optional[str]:
+    """Look up the full display name for a ticker or pair symbol.
+
+    Priority:
+    1. Static _ASSET_NAME_MAP (forex, crypto, commodities, ETFs, indices)
+    2. strategy_assets.full_name DB column (NASDAQ stocks populated by nasdaq_sync)
+    3. None — callers should handle gracefully
+    """
+    name = _ASSET_NAME_MAP.get(symbol)
+    if name:
+        return name
+    try:
+        with _get_session() as session:
+            row = (
+                session.query(StrategyAsset.full_name)
+                .filter(
+                    StrategyAsset.symbol == symbol,
+                    StrategyAsset.full_name.isnot(None),
+                )
+                .first()
+            )
+            if row and row[0]:
+                return row[0]
+    except Exception:
+        pass
+    return None
+
 
 def _get_asset_class(symbol: str) -> str:
     """Return the asset class label for a symbol. Falls back to strategy_assets table, then other."""
@@ -270,6 +367,8 @@ def _migrate_schema():
         ("open_positions", "n_period_high_close", "REAL"),
         ("open_positions", "n_period_low_close", "REAL"),
         ("strategy_assets", "sub_category", "TEXT"),
+        ("signals", "full_name", "TEXT"),
+        ("strategy_assets", "full_name", "TEXT"),
     ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:
@@ -804,12 +903,46 @@ def _backfill_asset_class():
             logger.error(f"[DB] asset_class backfill failed: {e}")
 
 
+def _backfill_full_names():
+    """One-time startup pass: fill full_name where NULL using the static map.
+
+    Updates both strategy_assets and signals tables. Safe to run repeatedly —
+    only touches rows where full_name IS NULL and the symbol exists in the map.
+    """
+    updated_assets = updated_signals = 0
+    with engine.connect() as conn:
+        for symbol, name in _ASSET_NAME_MAP.items():
+            safe_name = name.replace("'", "''")
+            safe_sym = symbol.replace("'", "''")
+            res = conn.execute(
+                text(
+                    f"UPDATE strategy_assets SET full_name='{safe_name}' "
+                    f"WHERE symbol='{safe_sym}' AND (full_name IS NULL OR full_name='')"
+                )
+            )
+            updated_assets += res.rowcount
+            res2 = conn.execute(
+                text(
+                    f"UPDATE signals SET full_name='{safe_name}' "
+                    f"WHERE asset='{safe_sym}' AND (full_name IS NULL OR full_name='')"
+                )
+            )
+            updated_signals += res2.rowcount
+        conn.commit()
+    if updated_assets or updated_signals:
+        logger.info(
+            f"[DB] Backfilled full_name: {updated_assets} strategy_assets, "
+            f"{updated_signals} signals"
+        )
+
+
 def init_db():
     logger.info("[DB] Initializing database tables via SQLAlchemy...")
     Base.metadata.create_all(engine)
     logger.info("[DB] All tables created/verified")
 
     _migrate_schema()
+    _backfill_full_names()
     _backfill_asset_class()
     seed_strategy_assets()
     purge_matic_usd()
@@ -979,6 +1112,21 @@ def insert_signal(signal: dict) -> Optional[int]:
                 )
                 return None
 
+            # Resolve full_name: caller may pass it; fall back to static map
+            # then to strategy_assets DB row — all within the same session.
+            full_name = signal.get("full_name") or _ASSET_NAME_MAP.get(signal["asset"])
+            if not full_name:
+                asset_row = (
+                    session.query(StrategyAsset.full_name)
+                    .filter(
+                        StrategyAsset.symbol == signal["asset"],
+                        StrategyAsset.full_name.isnot(None),
+                    )
+                    .first()
+                )
+                if asset_row and asset_row[0]:
+                    full_name = asset_row[0]
+
             obj = Signal(
                 strategy_name=signal["strategy_name"],
                 asset=signal["asset"],
@@ -990,6 +1138,7 @@ def insert_signal(signal: dict) -> Optional[int]:
                 signal_timestamp=signal["signal_timestamp"],
                 status="OPEN",
                 asset_class=_get_asset_class(signal["asset"]),
+                full_name=full_name,
             )
             session.add(obj)
             session.commit()
@@ -1272,6 +1421,7 @@ def _signal_to_dict(sig: Signal) -> dict:
     return {
         "id": sig.id,
         "asset": sig.asset,
+        "full_name": sig.full_name,
         "asset_class": sig.asset_class or _get_asset_class(sig.asset),
         "strategy_name": sig.strategy_name,
         "direction": sig.direction,
@@ -2826,6 +2976,7 @@ def _strategy_asset_to_dict(row: StrategyAsset) -> dict:
         "id": row.id,
         "strategy_name": row.strategy_name,
         "symbol": row.symbol,
+        "full_name": row.full_name,
         "asset_class": row.asset_class,
         "sub_category": row.sub_category,
         "is_active": bool(row.is_active),
@@ -2892,6 +3043,7 @@ def add_strategy_asset(
     added_by: str = "admin",
     notes: Optional[str] = None,
     fcsapi_verified: bool = False,
+    full_name: Optional[str] = None,
 ) -> Optional[int]:
     """Add a new asset to a strategy.
     Returns the new row id or None if duplicate.
@@ -2906,6 +3058,8 @@ def add_strategy_asset(
                 )
                 .first()
             )
+            # Resolve full_name: caller may supply it; fall back to static map
+            resolved_full_name = full_name or _ASSET_NAME_MAP.get(symbol)
             if existing:
                 if not existing.is_active:
                     existing.is_active = 1
@@ -2913,17 +3067,25 @@ def add_strategy_asset(
                     existing.notes = notes
                     existing.fcsapi_verified = 1 if fcsapi_verified else 0
                     existing.sub_category = sub_category
+                    if resolved_full_name and not existing.full_name:
+                        existing.full_name = resolved_full_name
                     session.commit()
                     logger.info(
                         f"[DB] Reactivated strategy asset: {strategy_name}/{symbol}"
                     )
                     return existing.id
-                # Asset exists and is active — update fcsapi_verified if it changed
+                # Asset exists and is active — update fcsapi_verified / full_name if changed
+                changed = False
                 if fcsapi_verified and not existing.fcsapi_verified:
                     existing.fcsapi_verified = 1
+                    changed = True
+                if resolved_full_name and not existing.full_name:
+                    existing.full_name = resolved_full_name
+                    changed = True
+                if changed:
                     session.commit()
                     logger.info(
-                        f"[DB] Updated fcsapi_verified for {strategy_name}/{symbol}"
+                        f"[DB] Updated metadata for {strategy_name}/{symbol}"
                     )
                 else:
                     logger.warning(
@@ -2940,6 +3102,7 @@ def add_strategy_asset(
                 fcsapi_verified=1 if fcsapi_verified else 0,
                 added_by=added_by,
                 notes=notes,
+                full_name=resolved_full_name,
             )
             session.add(obj)
             session.commit()

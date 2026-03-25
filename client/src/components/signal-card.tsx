@@ -62,6 +62,11 @@ export function SignalCard({ signal }: { signal: Signal }) {
           </div>
 
           <div className="min-w-0 flex-1">
+            {signal.fullName && (
+              <p className="text-xs text-muted-foreground mb-0.5 truncate" data-testid={`text-company-${signal.id}`}>
+                {signal.fullName}
+              </p>
+            )}
             <div className="flex items-center gap-2 flex-wrap mb-1">
               <span className="font-semibold text-base" data-testid={`text-pair-${signal.id}`}>
                 {signal.pair}

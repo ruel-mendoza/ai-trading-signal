@@ -40,4 +40,8 @@ export const insertSignalSchema = createInsertSchema(signals).omit({
 });
 
 export type InsertSignal = z.infer<typeof insertSignalSchema>;
-export type Signal = typeof signals.$inferSelect;
+export type Signal = typeof signals.$inferSelect & {
+  fullName?: string | null;
+  source?: string;
+  strategyName?: string;
+};

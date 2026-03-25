@@ -8,11 +8,22 @@ import { GenerateSignalDialog } from "@/components/generate-signal-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Zap, TrendingUp, Shield, BarChart3 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Zap, TrendingUp, Shield, BarChart3, Search } from "lucide-react";
+
+function matchesSearch(signal: Signal, query: string): boolean {
+  if (!query.trim()) return true;
+  const q = query.toLowerCase();
+  return (
+    (signal.pair || "").toLowerCase().includes(q) ||
+    ((signal.fullName || "").toLowerCase().includes(q))
+  );
+}
 
 export default function Home() {
   const [activeCategory, setActiveCategory] = useState("all");
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const { data: signals, isLoading } = useQuery<Signal[]>({
     queryKey: ["/api/signals", activeCategory],
@@ -24,8 +35,10 @@ export default function Home() {
     },
   });
 
-  const activeSignals = signals?.filter(s => s.status === "active") || [];
-  const closedSignals = signals?.filter(s => s.status !== "active") || [];
+  const allActive = signals?.filter(s => s.status === "active") || [];
+  const allClosed = signals?.filter(s => s.status !== "active") || [];
+  const activeSignals = allActive.filter(s => matchesSearch(s, searchQuery));
+  const closedSignals = allClosed.filter(s => matchesSearch(s, searchQuery));
 
   return (
     <div>
@@ -75,7 +88,19 @@ export default function Home() {
             </div>
           </div>
 
-          <CategoryFilter active={activeCategory} onChange={setActiveCategory} />
+          <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center mb-4">
+            <CategoryFilter active={activeCategory} onChange={setActiveCategory} />
+            <div className="relative w-full sm:w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+              <Input
+                data-testid="input-search-signals"
+                className="pl-9 h-9 text-sm"
+                placeholder="Search ticker or company…"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+              />
+            </div>
+          </div>
         </div>
 
         {isLoading ? (

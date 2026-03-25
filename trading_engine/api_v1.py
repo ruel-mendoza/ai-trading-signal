@@ -515,6 +515,7 @@ def _format_signal_public(s: dict, position: Optional[dict] = None) -> dict:
 
     result = {
         "asset": s["asset"],
+        "full_name": s.get("full_name"),
         "asset_class": s.get("asset_class") or CATEGORY_MAP.get(s["asset"], "other"),
         "direction": DIRECTION_MAP.get(s["direction"], s["direction"]),
         "entry": s["entry_price"],
@@ -533,6 +534,7 @@ def _format_signal(s: dict) -> dict:
     return {
         "id": s["id"],
         "asset": s["asset"],
+        "full_name": s.get("full_name"),
         "category": s.get("asset_class") or CATEGORY_MAP.get(s["asset"], "other"),
         "strategy": s["strategy_name"],
         "strategy_label": STRATEGY_LABELS.get(s["strategy_name"], s["strategy_name"]),
