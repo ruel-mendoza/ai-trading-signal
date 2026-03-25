@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "wouter";
 import type { Signal } from "@shared/schema";
 import { SignalCard } from "@/components/signal-card";
 import { CategoryFilter } from "@/components/category-filter";
@@ -120,9 +119,7 @@ export default function Home() {
                 </div>
                 <div className="grid gap-4">
                   {activeSignals.map((signal) => (
-                    <Link key={signal.id} href={`/signal/${signal.id}`}>
-                      <SignalCard signal={signal} />
-                    </Link>
+                    <SignalCard key={signal.id} signal={signal} />
                   ))}
                 </div>
               </div>
@@ -136,9 +133,7 @@ export default function Home() {
                 </div>
                 <div className="grid gap-4">
                   {closedSignals.map((signal) => (
-                    <Link key={signal.id} href={`/signal/${signal.id}`}>
-                      <SignalCard signal={signal} />
-                    </Link>
+                    <SignalCard key={signal.id} signal={signal} />
                   ))}
                 </div>
               </div>

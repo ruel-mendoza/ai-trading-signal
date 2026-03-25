@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import type { Signal } from "@shared/schema";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -33,20 +34,24 @@ function getPairFlags(pair: string): { base: string; quote: string } {
 
 export function SignalCard({ signal }: { signal: Signal }) {
   const [exitOpen, setExitOpen] = useState(false);
+  const [, navigate] = useLocation();
   const isBuy = signal.direction === "Buy";
   const { base, quote } = getPairFlags(signal.pair);
   const isActive = signal.status === "active";
 
   return (
     <div
-      className={`group relative rounded-md border transition-all cursor-pointer hover-elevate ${
+      className={`group relative rounded-md border transition-all hover-elevate ${
         isActive
           ? "bg-card border-card-border"
           : "bg-card/50 border-card-border/50"
       }`}
       data-testid={`card-signal-${signal.id}`}
     >
-      <div className="p-4">
+      <div
+        className="p-4 cursor-pointer"
+        onClick={() => navigate(`/signal/${signal.id}`)}
+      >
         <div className="flex flex-col sm:flex-row sm:items-center gap-4">
           <div className="flex items-center gap-4 flex-1 min-w-0">
             <div
