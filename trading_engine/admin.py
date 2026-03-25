@@ -3985,11 +3985,16 @@ function showExitLogic(strategy, direction, anchorEl) {
   document.getElementById('exit-modal-strategy').textContent = strategy.replace(/_/g,' ').toUpperCase() + (direction ? ' — ' + direction : '');
   document.getElementById('exit-modal-text').textContent = text;
 
-  // Position near the anchor element
+  // Position near the anchor element (fixed = viewport-relative, no scroll offset needed)
   var rect = anchorEl.getBoundingClientRect();
-  var top = rect.bottom + window.scrollY + 6;
-  var left = Math.min(rect.left + window.scrollX, window.innerWidth - 360);
+  var modalW = 360;
+  var modalH = 140;
+  var left = rect.left;
+  if (left + modalW > window.innerWidth - 8) left = window.innerWidth - modalW - 8;
   if (left < 8) left = 8;
+  var top = rect.bottom + 6;
+  if (top + modalH > window.innerHeight - 8) top = rect.top - modalH - 6;
+  if (top < 8) top = 8;
   modal.style.top = top + 'px';
   modal.style.left = left + 'px';
 
