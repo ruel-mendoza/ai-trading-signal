@@ -1,0 +1,397 @@
+Add a complete signal remove and delete system for the admin panel.
+This allows admins to correct bad data, remove erroneous signals,
+and maintain signal integrity without needing shell access.
+
+─────────────────────────────────────────────────────────────────
+OVERVIEW
+─────────────────────────────────────────────────────────────────
+
+There are two distinct actions needed:
+
+1. CLOSE a signal — marks it as CLOSED with an exit price and reason.
+   Use this for signals that represent real trades that have ended.
+   Preserves the signal in history for performance metrics.
+
+2. DELETE a signal — permanently removes it from the database.
+   Use this for bad signals caused by data errors, wrong prices,
+   or strategy bugs. Also removes the open_position record and
+   any associated CMS posts.
+
+Both actions require ADMIN role authentication.
+Both actions must invalidate the signal cache after execution.
+Both actions must broadcast a WebSocket signal:closed event.
+
+─────────────────────────────────────────────────────────────────
+PART 1 — DATABASE LAYER (database.py)
+─────────────────────────────────────────────────────────────────
+
+Add two new functions to database.py:
+
+1. delete_signal_by_id(signal_id: int) -> dict
+
+   Permanently hard-deletes a signal and all related records:
+   - Delete from signal_cms_posts where signal_id = signal_id
+   - Delete from open_positions where asset = signal.asset
+     AND strategy_name = signal.strategy_name
+   - Delete from signals where id = signal_id
+
+   Returns:
+   {
+     "deleted": True,
+     "signal_id": signal_id,
+     "asset": signal.asset,
+     "strategy_name": signal.strategy_name,
+     "direction": signal.direction,
+     "entry_price": signal.entry_price,
+     "status_was": signal.status,
+     "cms_posts_deleted": N,
+     "position_deleted": True/False
+   }
+
+   Returns {"deleted": False, "error": "Signal not found"} 
+   if signal_id does not exist.
+
+   Logs every deletion step at INFO level with prefix [DB-DELETE].
+   Calls _invalidate_signal_cache() after deletion.
+   Calls _ws_broadcast_closed(signal_id, "deleted_by_admin") 
+   after deletion.
+
+2. bulk_delete_signals(signal_ids: list[int]) -> dict
+
+   Calls delete_signal_by_id() for each id in the list.
+   Returns:
+   {
+     "deleted": [list of successfully deleted ids],
+     "failed": [list of ids that failed or were not found],
+     "total_deleted": N,
+     "total_failed": N
+   }
+
+─────────────────────────────────────────────────────────────────
+PART 2 — ADMIN API ENDPOINTS (admin.py)
+─────────────────────────────────────────────────────────────────
+
+Add the following endpoints to admin.py.
+All endpoints require _admin_role_guard.
+All endpoints import delete_signal_by_id and bulk_delete_signals
+from trading_engine.database.
+
+────────────────────────────────────
+Endpoint 1: Close a signal by ID
+────────────────────────────────────
+
+POST /admin/api/signals/{signal_id}/close
+
+Body (all optional):
+{
+  "exit_price": 70500.00,
+  "exit_reason": "Manual admin close"
+}
+
+Logic:
+- Fetch signal by signal_id using get_signal_by_id()
+- If not found: return 404 {"error": "Signal not found"}
+- If already CLOSED: return 400 
+  {"error": "Signal already closed", "signal_id": signal_id}
+- Call close_signal(signal_id, exit_reason, exit_price)
+- Call close_position(signal.strategy_name, signal.asset)
+- Call invalidate_signal_caches()
+- Return 200:
+  {
+    "success": True,
+    "action": "closed",
+    "signal_id": signal_id,
+    "asset": signal.asset,
+    "strategy_name": signal.strategy_name,
+    "direction": signal.direction,
+    "entry_price": signal.entry_price,
+    "exit_price": exit_price,
+    "exit_reason": exit_reason
+  }
+
+────────────────────────────────────
+Endpoint 2: Delete a signal by ID
+────────────────────────────────────
+
+DELETE /admin/api/signals/{signal_id}
+
+No request body needed.
+
+Logic:
+- Call delete_signal_by_id(signal_id)
+- If result["deleted"] is False: return 404 
+  {"error": "Signal not found", "signal_id": signal_id}
+- Return 200 with the full result dict from delete_signal_by_id()
+  plus "action": "deleted"
+
+Also add the same endpoint as POST for clients that cannot 
+send DELETE requests:
+
+POST /admin/api/signals/{signal_id}/delete
+
+Same logic as the DELETE endpoint above.
+
+────────────────────────────────────
+Endpoint 3: Bulk delete signals
+────────────────────────────────────
+
+POST /admin/api/signals/bulk-delete
+
+Body:
+{
+  "signal_ids": [1, 2, 3],
+  "reason": "Bad data — FCSAPI price error"
+}
+
+Logic:
+- Validate signal_ids is a non-empty list of integers
+- If empty or not a list: return 400 
+  {"error": "signal_ids must be a non-empty list of integers"}
+- If more than 50 ids: return 400 
+  {"error": "Maximum 50 signals per bulk delete"}
+- Call bulk_delete_signals(signal_ids)
+- Log the deletion with reason at WARNING level:
+  [ADMIN] Bulk delete: {N} signals | reason={reason} | 
+  by={username} | ids={signal_ids}
+- Return 200 with the result dict from bulk_delete_signals()
+  plus "reason": reason
+
+────────────────────────────────────
+Endpoint 4: List all signals (for admin delete UI)
+────────────────────────────────────
+
+GET /admin/api/signals
+
+Query params:
+  strategy  (optional) filter by strategy name
+  status    (optional) OPEN or CLOSED
+  asset     (optional) filter by asset symbol
+  limit     (optional, default 100, max 500)
+
+Logic:
+- Call get_all_signals(strategy_name, asset, status, limit)
+- Return:
+  {
+    "signals": [...],
+    "count": N
+  }
+
+─────────────────────────────────────────────────────────────────
+PART 3 — ADMIN PANEL UI (admin.py HTML)
+─────────────────────────────────────────────────────────────────
+
+Add a Delete/Remove button to the signals table in the admin panel.
+
+────────────────────────────────────
+3a. Add action buttons to signal rows
+────────────────────────────────────
+
+In the _signals_to_table_rows() function, add a new 10th column
+"Actions" to every signal row.
+
+For OPEN signals, show two buttons:
+  [Close]  — calls closeSignal(signal_id, asset, strategy)
+  [Delete] — calls deleteSignal(signal_id, asset)
+
+For CLOSED signals, show one button:
+  [Delete] — calls deleteSignal(signal_id, asset)
+
+Button styles:
+  Close button:  background rgba(59,130,246,0.15) color #3b82f6
+                 border 1px solid rgba(59,130,246,0.3)
+                 font-size 11px padding 3px 8px border-radius 4px
+                 cursor pointer
+  Delete button: background rgba(239,68,68,0.15) color #ef4444
+                 border 1px solid rgba(239,68,68,0.3)
+                 font-size 11px padding 3px 8px border-radius 4px
+                 cursor pointer margin-left 4px
+
+Add a 10th <th>Actions</th> column header to the signals table
+thead in the admin dashboard HTML.
+
+────────────────────────────────────
+3b. Add Close Signal Modal
+────────────────────────────────────
+
+Add a modal dialog with id="close-signal-modal" to the admin
+dashboard HTML (after the existing modals):
+
+The modal must contain:
+  - Hidden input: id="close-signal-id"
+  - Hidden input: id="close-signal-asset"  
+  - Hidden input: id="close-signal-strategy"
+  - Display: signal details (asset, strategy, direction)
+  - Input: id="close-exit-price" type=number step=0.00001
+           placeholder="Exit price (optional)"
+  - Input: id="close-exit-reason" type=text
+           placeholder="Reason (default: Manual admin close)"
+           value="Manual admin close"
+  - Button: "Close Signal" → calls submitCloseSignal()
+  - Button: "Cancel" → hides modal
+  - Result div: id="close-signal-result"
+
+────────────────────────────────────
+3c. Add Delete Confirmation Modal
+────────────────────────────────────
+
+Add a modal dialog with id="delete-signal-modal":
+
+The modal must contain:
+  - Warning message in red:
+    "⚠ This permanently deletes the signal from the database.
+     This action cannot be undone. Use Close instead if this
+     represents a real trade that has ended."
+  - Display: signal id, asset, strategy being deleted
+  - Hidden input: id="delete-signal-id"
+  - Checkbox: id="delete-confirm-checkbox" 
+    label "I understand this is permanent and cannot be undone"
+  - Button: "Delete Permanently" (disabled until checkbox checked)
+            → calls submitDeleteSignal()
+  - Button: "Cancel" → hides modal
+  - Result div: id="delete-signal-result"
+
+────────────────────────────────────
+3d. Add Bulk Delete Controls
+────────────────────────────────────
+
+Above the signals table, add:
+  - Checkbox in the table header to select/deselect all visible rows
+  - Per-row checkbox in a new first column (before Asset column)
+  - "Delete Selected (N)" button that appears when 1+ rows selected
+    → calls bulkDeleteSelected()
+  - Input: id="bulk-delete-reason" 
+           placeholder="Reason for bulk delete"
+           shown only when rows are selected
+
+─────────────────────────────────────────────────────────────────
+PART 4 — JAVASCRIPT (ADMIN_JS in admin.py)
+─────────────────────────────────────────────────────────────────
+
+Add these JavaScript functions to ADMIN_JS:
+
+────────────────────────────────────
+closeSignal(signalId, asset, strategy)
+────────────────────────────────────
+
+Opens the close signal modal populated with the signal details.
+Sets the hidden inputs to signalId, asset, strategy.
+Shows id="close-signal-modal".
+
+────────────────────────────────────
+async submitCloseSignal()
+────────────────────────────────────
+
+Reads exit_price and exit_reason from the modal inputs.
+Calls:
+  POST /admin/api/signals/{signal_id}/close
+  Body: { exit_price, exit_reason }
+
+On success:
+  - Shows green success message in close-signal-result
+  - Waits 1 second then reloads the page
+On error:
+  - Shows red error message in close-signal-result
+
+────────────────────────────────────
+deleteSignal(signalId, asset, strategy)
+────────────────────────────────────
+
+Opens the delete confirmation modal.
+Sets id="delete-signal-id" to signalId.
+Populates the modal display with asset and strategy info.
+Unchecks the confirmation checkbox.
+Disables the Delete Permanently button.
+
+────────────────────────────────────
+async submitDeleteSignal()
+────────────────────────────────────
+
+Checks that the confirmation checkbox is checked.
+If not checked: show error "Please confirm you understand 
+this is permanent."
+
+Calls:
+  DELETE /admin/api/signals/{signal_id}
+
+On success:
+  - Shows green success message
+  - Waits 1 second then reloads page
+On error:
+  - Shows red error message with the error detail
+
+────────────────────────────────────
+updateBulkDeleteUI()
+────────────────────────────────────
+
+Called whenever a row checkbox changes.
+Counts checked rows.
+Updates the "Delete Selected (N)" button text and visibility.
+Shows/hides the bulk-delete-reason input.
+
+────────────────────────────────────
+async bulkDeleteSelected()
+────────────────────────────────────
+
+Collects all checked signal IDs from row checkboxes.
+Reads reason from id="bulk-delete-reason" input.
+Shows confirmation: "Delete {N} signals? This cannot be undone."
+If confirmed:
+
+Calls:
+  POST /admin/api/signals/bulk-delete
+  Body: { signal_ids: [...], reason: "..." }
+
+On success:
+  - Shows "Deleted {N} signals successfully"
+  - Reloads page after 1.5 seconds
+On error:
+  - Shows error message
+
+─────────────────────────────────────────────────────────────────
+PART 5 — SIGNAL HISTORY PAGE UPDATES
+─────────────────────────────────────────────────────────────────
+
+The delete/close buttons must also appear on these strategy-specific
+signal tables in the admin panel:
+
+  - spx-signals-table      (tab-spx)
+  - mtf-signals-table      (tab-mtf)
+  - tf-signals-table       (tab-trend_following)
+  - forex-trend-signals-table (tab-forex_trend)
+  - hlc-fx-signals-table   (tab-hlc_fx)
+  - algo1-signals-table    (tab-stocks_algo1)
+  - algo2-signals-table    (tab-stocks_algo2)
+
+These tables are built by _signals_to_table_rows() so the Actions
+column added in Part 3a will appear automatically on all of them.
+
+─────────────────────────────────────────────────────────────────
+PART 6 — AUDIT LOGGING
+─────────────────────────────────────────────────────────────────
+
+Every delete and close action must be logged at WARNING level
+with the following format so it is visible in Replit logs:
+
+Close:
+  [ADMIN-ACTION] CLOSE signal #{id} | {asset} {direction} | 
+  strategy={strategy} | entry={entry} | exit_price={exit_price} | 
+  reason={reason} | by={username} | ip={client_ip}
+
+Delete:
+  [ADMIN-ACTION] DELETE signal #{id} | {asset} {direction} | 
+  strategy={strategy} | entry={entry} | status_was={OPEN/CLOSED} | 
+  by={username} | ip={client_ip}
+
+Bulk delete:
+  [ADMIN-ACTION] BULK DELETE {N} signals | ids={ids} | 
+  reason={reason} | by={username} | ip={client_ip}
+
+Get client IP from request.client.host.
+Get username from _get_session_user(request)["username"].
+
+─────────────────────────────────────────────────────────────────
+CONSTRAINTS
+─────────────────────────────────────────────────────────────────
+
+- Do NOT modify any existing endpoints
+-

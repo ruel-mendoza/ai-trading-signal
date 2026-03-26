@@ -3273,3 +3273,105 @@ def get_algo1_active_symbols() -> set:
             .all()
         )
         return {r[0] for r in rows}
+
+
+def delete_signal_by_id(signal_id: int) -> dict:
+    """Permanently hard-delete a signal and all related records.
+
+    Deletes (in order):
+      1. signal_cms_posts rows for this signal
+      2. open_positions row matching asset + strategy_name
+      3. signals row
+
+    Returns a result dict with deletion details, or
+    {"deleted": False, "error": "Signal not found"} when the id is missing.
+    """
+    with _get_session() as session:
+        try:
+            sig = session.query(Signal).filter_by(id=signal_id).first()
+            if not sig:
+                logger.warning(f"[DB-DELETE] Signal #{signal_id} not found — skipping")
+                return {"deleted": False, "error": "Signal not found"}
+
+            asset = sig.asset
+            strategy_name = sig.strategy_name
+            direction = sig.direction
+            entry_price = sig.entry_price
+            status_was = sig.status
+
+            # 1. Delete CMS post records
+            cms_rows = (
+                session.query(SignalCmsPost)
+                .filter(SignalCmsPost.signal_id == signal_id)
+                .all()
+            )
+            cms_count = len(cms_rows)
+            for row in cms_rows:
+                session.delete(row)
+            logger.info(
+                f"[DB-DELETE] Deleted {cms_count} CMS post record(s) for signal #{signal_id}"
+            )
+
+            # 2. Delete matching open position
+            pos = (
+                session.query(OpenPosition)
+                .filter_by(asset=asset, strategy_name=strategy_name)
+                .first()
+            )
+            position_deleted = False
+            if pos:
+                session.delete(pos)
+                position_deleted = True
+                logger.info(
+                    f"[DB-DELETE] Deleted open_position #{pos.id} for "
+                    f"{strategy_name}/{asset}"
+                )
+
+            # 3. Delete the signal itself
+            session.delete(sig)
+            session.commit()
+            logger.info(
+                f"[DB-DELETE] Deleted signal #{signal_id} | {asset} {direction} "
+                f"@ {entry_price} | strategy={strategy_name} | status_was={status_was}"
+            )
+
+            _invalidate_signal_cache()
+            _ws_broadcast_closed(signal_id, "deleted_by_admin")
+
+            return {
+                "deleted": True,
+                "signal_id": signal_id,
+                "asset": asset,
+                "strategy_name": strategy_name,
+                "direction": direction,
+                "entry_price": entry_price,
+                "status_was": status_was,
+                "cms_posts_deleted": cms_count,
+                "position_deleted": position_deleted,
+            }
+        except Exception as exc:
+            session.rollback()
+            logger.error(f"[DB-DELETE] Failed to delete signal #{signal_id}: {exc}")
+            raise
+
+
+def bulk_delete_signals(signal_ids: list) -> dict:
+    """Delete multiple signals by ID, collecting successes and failures."""
+    deleted = []
+    failed = []
+    for sid in signal_ids:
+        try:
+            result = delete_signal_by_id(sid)
+            if result.get("deleted"):
+                deleted.append(sid)
+            else:
+                failed.append(sid)
+        except Exception as exc:
+            logger.error(f"[DB-DELETE] bulk_delete_signals: error on id={sid}: {exc}")
+            failed.append(sid)
+    return {
+        "deleted": deleted,
+        "failed": failed,
+        "total_deleted": len(deleted),
+        "total_failed": len(failed),
+    }

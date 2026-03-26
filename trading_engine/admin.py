@@ -250,7 +250,7 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
     A warning badge is shown when multiple OPEN rows share the same asset (cross-strategy dup).
     """
     if not signals:
-        return '<tr><td colspan="9" style="text-align:center;padding:24px;color:#94a3b8;">No signals found</td></tr>'
+        return '<tr><td colspan="11" style="text-align:center;padding:24px;color:#94a3b8;">No signals found</td></tr>'
 
     from datetime import datetime as dt_cls
 
@@ -380,14 +380,40 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
 
         strategy_js = s.get("strategy_name", "").replace("'", "\\'")
         direction_js = direction.replace("'", "\\'")
+        asset_js = asset_ticker.replace("'", "\\'")
         tp_cell = (
             f'{tp_str}'
             f'<br><span class="exit-link" '
             f"onclick=\"showExitLogic('{strategy_js}', '{direction_js}', this)\">"
             f"How to Exit</span>"
         )
+
+        # Actions column — Close (OPEN only) + Delete
+        if status == "OPEN":
+            actions_html = (
+                f'<button style="background:rgba(59,130,246,0.15);color:#3b82f6;'
+                f'border:1px solid rgba(59,130,246,0.3);font-size:11px;padding:3px 8px;'
+                f'border-radius:4px;cursor:pointer;" '
+                f"onclick=\"closeSignal({sig_id}, '{asset_js}', '{strategy_js}')\">"
+                f'Close</button>'
+                f'<button style="background:rgba(239,68,68,0.15);color:#ef4444;'
+                f'border:1px solid rgba(239,68,68,0.3);font-size:11px;padding:3px 8px;'
+                f'border-radius:4px;cursor:pointer;margin-left:4px;" '
+                f"onclick=\"deleteSignal({sig_id}, '{asset_js}', '{strategy_js}')\">"
+                f'Delete</button>'
+            )
+        else:
+            actions_html = (
+                f'<button style="background:rgba(239,68,68,0.15);color:#ef4444;'
+                f'border:1px solid rgba(239,68,68,0.3);font-size:11px;padding:3px 8px;'
+                f'border-radius:4px;cursor:pointer;" '
+                f"onclick=\"deleteSignal({sig_id}, '{asset_js}', '{strategy_js}')\">"
+                f'Delete</button>'
+            )
+
         rows.append(f"""
         <tr>
+            <td style="width:32px;text-align:center;"><input type="checkbox" class="sig-row-cb" value="{sig_id}" onchange="updateBulkDeleteUI()" data-testid="checkbox-signal-{sig_id}"></td>
             <td>{asset_cell}</td>
             <td>{ac_badge}</td>
             <td><span class="badge {dir_class}">{direction}</span></td>
@@ -397,6 +423,7 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
             <td>{s.get("strategy_name", "")}</td>
             <td>{status_badge}{exit_info}</td>
             <td>{ts_display}</td>
+            <td style="white-space:nowrap;">{actions_html}</td>
         </tr>""")
     return "\n".join(rows)
 
@@ -831,6 +858,7 @@ def _build_spx_momentum_html(
             <table class="data-table" data-testid="spx-signals-table">
                 <thead>
                     <tr>
+                        <th style="width:32px;text-align:center;"><input type="checkbox" onclick="toggleAllSignalCheckboxes(this)" title="Select all"></th>
                         <th>Asset</th>
                         <th>Class</th>
                         <th>Direction</th>
@@ -840,6 +868,7 @@ def _build_spx_momentum_html(
                         <th>Strategy</th>
                         <th>Status</th>
                         <th>Timestamp</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>{spx_signal_rows}</tbody>
@@ -1301,6 +1330,7 @@ def _build_mtf_ema_html(
             <table class="data-table" data-testid="mtf-signals-table">
                 <thead>
                     <tr>
+                        <th style="width:32px;text-align:center;"><input type="checkbox" onclick="toggleAllSignalCheckboxes(this)" title="Select all"></th>
                         <th>Asset</th>
                         <th>Class</th>
                         <th>Direction</th>
@@ -1310,6 +1340,7 @@ def _build_mtf_ema_html(
                         <th>Strategy</th>
                         <th>Status</th>
                         <th>Timestamp</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>{mtf_signal_rows}</tbody>
@@ -1956,6 +1987,7 @@ def _build_trend_following_html(
             <table class="data-table" data-testid="tf-signals-table">
                 <thead>
                     <tr>
+                        <th style="width:32px;text-align:center;"><input type="checkbox" onclick="toggleAllSignalCheckboxes(this)" title="Select all"></th>
                         <th>Asset</th>
                         <th>Class</th>
                         <th>Direction</th>
@@ -1965,6 +1997,7 @@ def _build_trend_following_html(
                         <th>Strategy</th>
                         <th>Status</th>
                         <th>Timestamp</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>{tf_signal_rows}</tbody>
@@ -2257,6 +2290,7 @@ def _build_forex_trend_html(
             <table class="data-table" data-testid="forex-trend-signals-table">
                 <thead>
                     <tr>
+                        <th style="width:32px;text-align:center;"><input type="checkbox" onclick="toggleAllSignalCheckboxes(this)" title="Select all"></th>
                         <th>Asset</th>
                         <th>Class</th>
                         <th>Direction</th>
@@ -2266,6 +2300,7 @@ def _build_forex_trend_html(
                         <th>Strategy</th>
                         <th>Status</th>
                         <th>Timestamp</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>{fx_signal_rows}</tbody>
@@ -2611,6 +2646,7 @@ def _build_hlc_fx_html(
             <table class="data-table" data-testid="hlc-fx-signals-table">
                 <thead>
                     <tr>
+                        <th style="width:32px;text-align:center;"><input type="checkbox" onclick="toggleAllSignalCheckboxes(this)" title="Select all"></th>
                         <th>Asset</th>
                         <th>Class</th>
                         <th>Direction</th>
@@ -2620,6 +2656,7 @@ def _build_hlc_fx_html(
                         <th>Strategy</th>
                         <th>Status</th>
                         <th>Timestamp</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>{hlc_signal_rows}</tbody>
@@ -2824,6 +2861,7 @@ def _build_stocks_algo1_html(
             <table class="data-table" data-testid="algo1-signals-table">
                 <thead>
                     <tr>
+                        <th style="width:32px;text-align:center;"><input type="checkbox" onclick="toggleAllSignalCheckboxes(this)" title="Select all"></th>
                         <th>Asset</th>
                         <th>Class</th>
                         <th>Direction</th>
@@ -2833,6 +2871,7 @@ def _build_stocks_algo1_html(
                         <th>Strategy</th>
                         <th>Status</th>
                         <th>Timestamp</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>{signal_rows}</tbody>
@@ -3000,6 +3039,7 @@ def _build_stocks_algo2_html(
             <table class="data-table" data-testid="algo2-signals-table">
                 <thead>
                     <tr>
+                        <th style="width:32px;text-align:center;"><input type="checkbox" onclick="toggleAllSignalCheckboxes(this)" title="Select all"></th>
                         <th>Asset</th>
                         <th>Class</th>
                         <th>Direction</th>
@@ -3009,6 +3049,7 @@ def _build_stocks_algo2_html(
                         <th>Strategy</th>
                         <th>Status</th>
                         <th>Timestamp</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>{signal_rows}</tbody>
@@ -5360,6 +5401,143 @@ async function loadSignalIntegrity() {
     btn.disabled = false;
     btn.textContent = 'Run Diagnostic';
 }
+
+// ── Signal Close / Delete / Bulk Delete ──────────────────────────────────────
+
+function toggleAllSignalCheckboxes(masterCb) {
+    var cbs = document.querySelectorAll('.sig-row-cb');
+    cbs.forEach(function(cb) { cb.checked = masterCb.checked; });
+    updateBulkDeleteUI();
+}
+
+function updateBulkDeleteUI() {
+    var cbs = document.querySelectorAll('.sig-row-cb:checked');
+    var count = cbs.length;
+    var bar = document.getElementById('bulk-delete-bar');
+    var btn = document.getElementById('bulk-delete-btn');
+    if (!bar || !btn) return;
+    if (count > 0) {
+        bar.style.display = 'flex';
+        btn.textContent = 'Delete Selected (' + count + ')';
+    } else {
+        bar.style.display = 'none';
+    }
+}
+
+function closeSignal(signalId, asset, strategy) {
+    document.getElementById('close-signal-id').value = signalId;
+    document.getElementById('close-signal-asset').value = asset;
+    document.getElementById('close-signal-strategy').value = strategy;
+    document.getElementById('close-signal-info').textContent =
+        'Signal #' + signalId + ' | Asset: ' + asset + ' | Strategy: ' + strategy;
+    document.getElementById('close-exit-price').value = '';
+    document.getElementById('close-exit-reason').value = 'Manual admin close';
+    document.getElementById('close-signal-result').innerHTML = '';
+    document.getElementById('close-signal-modal').style.display = 'block';
+    document.getElementById('close-signal-overlay').style.display = 'block';
+}
+
+async function submitCloseSignal() {
+    var signalId = document.getElementById('close-signal-id').value;
+    var exitPriceRaw = document.getElementById('close-exit-price').value;
+    var exitReason = document.getElementById('close-exit-reason').value || 'Manual admin close';
+    var resultEl = document.getElementById('close-signal-result');
+    var exitPrice = exitPriceRaw !== '' ? parseFloat(exitPriceRaw) : null;
+
+    resultEl.innerHTML = '<span style="color:#94a3b8;">Closing signal...</span>';
+    try {
+        var body = { exit_reason: exitReason };
+        if (exitPrice !== null) body.exit_price = exitPrice;
+        var resp = await fetch(BASE + '/admin/api/signals/' + signalId + '/close', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        var data = await resp.json();
+        if (resp.ok && data.success) {
+            resultEl.innerHTML = '<span style="color:#22c55e;">&#10003; Signal closed successfully.</span>';
+            setTimeout(function() { location.reload(); }, 1000);
+        } else {
+            resultEl.innerHTML = '<span style="color:#ef4444;">Error: ' + (data.error || JSON.stringify(data)) + '</span>';
+        }
+    } catch (e) {
+        resultEl.innerHTML = '<span style="color:#ef4444;">Network error: ' + e.message + '</span>';
+    }
+}
+
+function deleteSignal(signalId, asset, strategy) {
+    document.getElementById('delete-signal-id').value = signalId;
+    document.getElementById('delete-signal-info').textContent =
+        'Signal #' + signalId + ' | Asset: ' + asset + ' | Strategy: ' + strategy;
+    document.getElementById('delete-confirm-checkbox').checked = false;
+    var permBtn = document.getElementById('btn-delete-permanently');
+    permBtn.disabled = true;
+    permBtn.style.opacity = '0.6';
+    document.getElementById('delete-signal-result').innerHTML = '';
+    document.getElementById('delete-signal-modal').style.display = 'block';
+    document.getElementById('delete-signal-overlay').style.display = 'block';
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    var cb = document.getElementById('delete-confirm-checkbox');
+    var btn = document.getElementById('btn-delete-permanently');
+    if (cb && btn) {
+        cb.addEventListener('change', function() {
+            btn.disabled = !cb.checked;
+            btn.style.opacity = cb.checked ? '1' : '0.6';
+        });
+    }
+});
+
+async function submitDeleteSignal() {
+    var cb = document.getElementById('delete-confirm-checkbox');
+    var resultEl = document.getElementById('delete-signal-result');
+    if (!cb || !cb.checked) {
+        resultEl.innerHTML = '<span style="color:#ef4444;">Please confirm you understand this is permanent.</span>';
+        return;
+    }
+    var signalId = document.getElementById('delete-signal-id').value;
+    resultEl.innerHTML = '<span style="color:#94a3b8;">Deleting signal...</span>';
+    try {
+        var resp = await fetch(BASE + '/admin/api/signals/' + signalId, {
+            method: 'DELETE'
+        });
+        var data = await resp.json();
+        if (resp.ok && data.deleted) {
+            resultEl.innerHTML = '<span style="color:#22c55e;">&#10003; Signal #' + signalId + ' permanently deleted.</span>';
+            setTimeout(function() { location.reload(); }, 1000);
+        } else {
+            resultEl.innerHTML = '<span style="color:#ef4444;">Error: ' + (data.error || JSON.stringify(data)) + '</span>';
+        }
+    } catch (e) {
+        resultEl.innerHTML = '<span style="color:#ef4444;">Network error: ' + e.message + '</span>';
+    }
+}
+
+async function bulkDeleteSelected() {
+    var cbs = document.querySelectorAll('.sig-row-cb:checked');
+    var ids = Array.from(cbs).map(function(cb) { return parseInt(cb.value, 10); });
+    if (ids.length === 0) return;
+    var reason = (document.getElementById('bulk-delete-reason') || {}).value || '';
+    if (!confirm('Delete ' + ids.length + ' signal(s)? This cannot be undone.')) return;
+    try {
+        var resp = await fetch(BASE + '/admin/api/signals/bulk-delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ signal_ids: ids, reason: reason })
+        });
+        var data = await resp.json();
+        if (resp.ok) {
+            alert('Deleted ' + (data.total_deleted || 0) + ' signal(s) successfully.' +
+                  (data.total_failed > 0 ? ' Failed: ' + data.total_failed + '.' : ''));
+            setTimeout(function() { location.reload(); }, 1500);
+        } else {
+            alert('Error: ' + (data.error || JSON.stringify(data)));
+        }
+    } catch (e) {
+        alert('Network error: ' + e.message);
+    }
+}
 """
 
 
@@ -5777,10 +5955,15 @@ def admin_dashboard(
                     <span style="color:#94a3b8;font-size:0.8rem;margin-left:8px;">Active: {active_count} | Total: {total_count}</span>
                     <span style="color:#64748b;font-size:0.75rem;margin-left:12px;" title="Closed signals older than 92 days are automatically purged nightly">&#128336; 92-day retention</span>
                 </div>
+                <div id="bulk-delete-bar" style="display:none;margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <button id="bulk-delete-btn" class="btn" style="background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);font-size:13px;" onclick="bulkDeleteSelected()" data-testid="button-bulk-delete">Delete Selected (0)</button>
+                    <input id="bulk-delete-reason" type="text" placeholder="Reason for bulk delete" style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:6px 12px;border-radius:6px;font-size:13px;min-width:240px;" data-testid="input-bulk-delete-reason">
+                </div>
                 <div style="overflow-x:auto;">
                     <table class="data-table" data-testid="signals-table">
                         <thead>
                             <tr>
+                                <th style="width:32px;text-align:center;"><input type="checkbox" onclick="toggleAllSignalCheckboxes(this)" title="Select all" data-testid="checkbox-select-all-signals"></th>
                                 <th>Asset</th>
                                 <th>Class</th>
                                 <th>Direction</th>
@@ -5790,6 +5973,7 @@ def admin_dashboard(
                                 <th>Strategy</th>
                                 <th>Status</th>
                                 <th>Timestamp</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>{signal_rows}</tbody>
@@ -6954,6 +7138,59 @@ def admin_dashboard(
         </div>
         <div class="exit-modal-body" id="exit-modal-text"></div>
     </div>
+
+    <!-- Close Signal Modal -->
+    <div id="close-signal-overlay" onclick="document.getElementById('close-signal-modal').style.display='none';this.style.display='none';" style="display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0.5);"></div>
+    <div id="close-signal-modal" style="display:none;position:fixed;z-index:9999;top:50%;left:50%;transform:translate(-50%,-50%);background:#1e293b;border:1px solid #3b82f6;border-radius:10px;padding:24px;min-width:340px;max-width:460px;box-shadow:0 8px 32px rgba(0,0,0,0.6);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <span style="font-size:0.85rem;font-weight:700;color:#3b82f6;text-transform:uppercase;letter-spacing:0.05em;">Close Signal</span>
+            <span style="cursor:pointer;color:#64748b;font-size:1.1rem;" onclick="document.getElementById('close-signal-modal').style.display='none';document.getElementById('close-signal-overlay').style.display='none';">&#x2715;</span>
+        </div>
+        <input type="hidden" id="close-signal-id">
+        <input type="hidden" id="close-signal-asset">
+        <input type="hidden" id="close-signal-strategy">
+        <div id="close-signal-info" style="font-size:0.85rem;color:#94a3b8;margin-bottom:16px;padding:10px 12px;background:#0f172a;border-radius:6px;border:1px solid #334155;"></div>
+        <div style="margin-bottom:12px;">
+            <label style="font-size:0.8rem;color:#94a3b8;display:block;margin-bottom:4px;">Exit Price (optional)</label>
+            <input type="number" id="close-exit-price" step="0.00001" placeholder="Exit price (optional)" data-testid="input-close-exit-price"
+                style="width:100%;background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:8px 12px;border-radius:6px;font-size:0.9rem;">
+        </div>
+        <div style="margin-bottom:16px;">
+            <label style="font-size:0.8rem;color:#94a3b8;display:block;margin-bottom:4px;">Reason</label>
+            <input type="text" id="close-exit-reason" placeholder="Reason (default: Manual admin close)" value="Manual admin close" data-testid="input-close-exit-reason"
+                style="width:100%;background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:8px 12px;border-radius:6px;font-size:0.9rem;">
+        </div>
+        <div id="close-signal-result" style="margin-bottom:12px;font-size:0.85rem;"></div>
+        <div style="display:flex;gap:8px;">
+            <button class="btn btn-primary" onclick="submitCloseSignal()" data-testid="button-submit-close-signal">Close Signal</button>
+            <button class="btn btn-secondary" onclick="document.getElementById('close-signal-modal').style.display='none';document.getElementById('close-signal-overlay').style.display='none';">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Delete Signal Modal -->
+    <div id="delete-signal-overlay" onclick="document.getElementById('delete-signal-modal').style.display='none';this.style.display='none';" style="display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0.5);"></div>
+    <div id="delete-signal-modal" style="display:none;position:fixed;z-index:9999;top:50%;left:50%;transform:translate(-50%,-50%);background:#1e293b;border:1px solid #ef4444;border-radius:10px;padding:24px;min-width:340px;max-width:480px;box-shadow:0 8px 32px rgba(0,0,0,0.6);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <span style="font-size:0.85rem;font-weight:700;color:#ef4444;text-transform:uppercase;letter-spacing:0.05em;">Delete Signal Permanently</span>
+            <span style="cursor:pointer;color:#64748b;font-size:1.1rem;" onclick="document.getElementById('delete-signal-modal').style.display='none';document.getElementById('delete-signal-overlay').style.display='none';">&#x2715;</span>
+        </div>
+        <div style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:6px;padding:12px;margin-bottom:14px;font-size:0.83rem;color:#fca5a5;line-height:1.5;">
+            &#9888; This permanently deletes the signal from the database. This action cannot be undone. Use <strong>Close</strong> instead if this represents a real trade that has ended.
+        </div>
+        <input type="hidden" id="delete-signal-id">
+        <div id="delete-signal-info" style="font-size:0.85rem;color:#94a3b8;margin-bottom:14px;padding:10px 12px;background:#0f172a;border-radius:6px;border:1px solid #334155;"></div>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;margin-bottom:16px;font-size:0.85rem;color:#e2e8f0;">
+            <input type="checkbox" id="delete-confirm-checkbox" onchange="document.getElementById('btn-delete-permanently').disabled=!this.checked;" data-testid="checkbox-delete-confirm" style="margin-top:2px;flex-shrink:0;">
+            I understand this is permanent and cannot be undone
+        </label>
+        <div id="delete-signal-result" style="margin-bottom:12px;font-size:0.85rem;"></div>
+        <div style="display:flex;gap:8px;">
+            <button id="btn-delete-permanently" class="btn" disabled onclick="submitDeleteSignal()" data-testid="button-delete-permanently"
+                style="background:rgba(239,68,68,0.2);color:#ef4444;border:1px solid rgba(239,68,68,0.4);opacity:0.6;" >Delete Permanently</button>
+            <button class="btn btn-secondary" onclick="document.getElementById('delete-signal-modal').style.display='none';document.getElementById('delete-signal-overlay').style.display='none';">Cancel</button>
+        </div>
+    </div>
+
     <script>var IS_ADMIN = {"true" if is_admin else "false"};</script>
     <script>{ADMIN_JS}</script>
 </body>
@@ -8431,3 +8668,169 @@ def api_force_close_position(request: Request, body: dict = Body(...)):
             "signals_closed": closed_sigs,
         }
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Signal close / delete endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/api/signals")
+async def admin_list_signals(
+    request: Request,
+    strategy: str = None,
+    status: str = None,
+    asset: str = None,
+    limit: int = 100,
+):
+    """List signals with optional filters. Returns up to 500 rows."""
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.database import get_all_signals
+
+    limit = min(max(1, limit), 500)
+    sigs = get_all_signals(
+        strategy_name=strategy or None,
+        asset=asset or None,
+        status=status or None,
+        limit=limit,
+    )
+    return JSONResponse(content={"signals": sigs, "count": len(sigs)})
+
+
+@router.post("/api/signals/bulk-delete")
+async def admin_bulk_delete_signals(request: Request):
+    """Permanently delete multiple signals by ID."""
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    user = _get_session_user(request)
+    from trading_engine.database import bulk_delete_signals
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(content={"error": "Invalid JSON body"}, status_code=400)
+
+    signal_ids = body.get("signal_ids")
+    reason = body.get("reason", "")
+
+    if not signal_ids or not isinstance(signal_ids, list) or len(signal_ids) == 0:
+        return JSONResponse(
+            content={"error": "signal_ids must be a non-empty list of integers"},
+            status_code=400,
+        )
+    if len(signal_ids) > 50:
+        return JSONResponse(
+            content={"error": "Maximum 50 signals per bulk delete"},
+            status_code=400,
+        )
+
+    signal_ids = [int(sid) for sid in signal_ids]
+    logger.warning(
+        f"[ADMIN-ACTION] BULK DELETE {len(signal_ids)} signals | ids={signal_ids} | "
+        f"reason={reason!r} | by={user.get('username')} | ip={request.client.host}"
+    )
+
+    result = bulk_delete_signals(signal_ids)
+    result["reason"] = reason
+    return JSONResponse(content=result)
+
+
+@router.post("/api/signals/{signal_id}/close")
+async def admin_close_signal_by_id(signal_id: int, request: Request):
+    """Close (mark as CLOSED) a signal by its database ID."""
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    user = _get_session_user(request)
+    from trading_engine.database import (
+        get_signal_by_id,
+        close_signal,
+        close_position,
+        get_active_signals,
+    )
+    from trading_engine.api_v1 import invalidate_signal_caches
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    exit_price = body.get("exit_price")
+    exit_reason = body.get("exit_reason") or "Manual admin close"
+
+    sig = get_signal_by_id(signal_id)
+    if not sig:
+        return JSONResponse(
+            content={"error": "Signal not found", "signal_id": signal_id},
+            status_code=404,
+        )
+    if sig["status"] == "CLOSED":
+        return JSONResponse(
+            content={"error": "Signal already closed", "signal_id": signal_id},
+            status_code=400,
+        )
+
+    logger.warning(
+        f"[ADMIN-ACTION] CLOSE signal #{signal_id} | {sig['asset']} {sig['direction']} | "
+        f"strategy={sig['strategy_name']} | entry={sig['entry_price']} | "
+        f"exit_price={exit_price} | reason={exit_reason!r} | "
+        f"by={user.get('username')} | ip={request.client.host}"
+    )
+
+    close_signal(signal_id, exit_reason, exit_price=exit_price)
+    close_position(sig["strategy_name"], sig["asset"])
+
+    try:
+        invalidate_signal_caches()
+    except Exception:
+        pass
+
+    return JSONResponse(
+        content={
+            "success": True,
+            "action": "closed",
+            "signal_id": signal_id,
+            "asset": sig["asset"],
+            "strategy_name": sig["strategy_name"],
+            "direction": sig["direction"],
+            "entry_price": sig["entry_price"],
+            "exit_price": exit_price,
+            "exit_reason": exit_reason,
+        }
+    )
+
+
+@router.delete("/api/signals/{signal_id}")
+async def admin_delete_signal_by_id(signal_id: int, request: Request):
+    """Permanently delete a signal and its associated records."""
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    user = _get_session_user(request)
+    from trading_engine.database import delete_signal_by_id, get_signal_by_id
+
+    sig = get_signal_by_id(signal_id)
+    if sig:
+        logger.warning(
+            f"[ADMIN-ACTION] DELETE signal #{signal_id} | {sig['asset']} {sig['direction']} | "
+            f"strategy={sig['strategy_name']} | entry={sig['entry_price']} | "
+            f"status_was={sig['status']} | by={user.get('username')} | ip={request.client.host}"
+        )
+
+    result = delete_signal_by_id(signal_id)
+    if not result.get("deleted"):
+        return JSONResponse(
+            content={"error": "Signal not found", "signal_id": signal_id},
+            status_code=404,
+        )
+    result["action"] = "deleted"
+    return JSONResponse(content=result)
+
+
+@router.post("/api/signals/{signal_id}/delete")
+async def admin_delete_signal_by_id_post(signal_id: int, request: Request):
+    """POST alias for DELETE /admin/api/signals/{signal_id} (for clients that cannot send DELETE)."""
+    return await admin_delete_signal_by_id(signal_id, request)
