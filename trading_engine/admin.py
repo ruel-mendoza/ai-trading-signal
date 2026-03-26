@@ -5242,10 +5242,7 @@ async function removeAsset(btn) {
     }
     var confirmMsg;
     if (strategyName === 'stocks_algo1' || strategyName === 'stocks_algo2') {
-        confirmMsg = 'Remove ' + symbol + ' from ' + strategyName + '?\n\n'
-            + 'Note: If this symbol is part of the NASDAQ 100, it will be re-added automatically '
-            + 'on the next monthly sync (1st of month). To permanently exclude it, remove it here '
-            + 'AND also remove it from the NASDAQ 100 seed list in nasdaq_sync.py.';
+        confirmMsg = 'Remove ' + symbol + ' from ' + strategyName + '?\\n\\nNote: If this symbol is part of the NASDAQ 100, it will be re-added automatically on the next monthly sync (1st of month). To permanently exclude it, remove it here AND also remove it from the NASDAQ 100 seed list in nasdaq_sync.py.';
     } else {
         confirmMsg = 'Remove ' + symbol + ' from ' + strategyName + '? '
             + 'This will NOT close any open signals. '
@@ -5997,7 +5994,7 @@ def admin_dashboard(
                     <span style="color:#94a3b8;font-size:0.8rem;margin-left:8px;">Active: {active_count} | Total: {total_count}</span>
                     <span style="color:#64748b;font-size:0.75rem;margin-left:12px;" title="Closed signals older than 92 days are automatically purged nightly">&#128336; 92-day retention</span>
                 </div>
-                <div id="bulk-delete-bar" style="display:none;margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <div id="bulk-delete-bar" style="display:none;margin-bottom:10px;gap:8px;align-items:center;flex-wrap:wrap;">
                     <button id="bulk-delete-btn" class="btn" style="background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);font-size:13px;" onclick="bulkDeleteSelected()" data-testid="button-bulk-delete">Delete Selected (0)</button>
                     <input id="bulk-delete-reason" type="text" placeholder="Reason for bulk delete" style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:6px 12px;border-radius:6px;font-size:13px;min-width:240px;" data-testid="input-bulk-delete-reason">
                 </div>
