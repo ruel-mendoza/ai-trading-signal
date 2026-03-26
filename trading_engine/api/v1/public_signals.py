@@ -31,8 +31,6 @@ class SignalRead(BaseModel):
     direction: str = Field(..., example="LONG", description="Signal direction: LONG or SHORT")
     entry: float = Field(..., example=1.0845, description="Suggested entry price")
     stop_loss: float = Field(..., example=1.0790, description="Stop-loss price level")
-    take_profit: Optional[float] = Field(None, description="Take-profit price level (null for trailing-stop strategies)")
-    trailing_stop: bool = Field(..., description="Whether trailing stop is used instead of fixed TP")
     status: str = Field(..., example="OPEN", description="Signal status: OPEN or CLOSED")
     published_at: str = Field(..., description="ISO 8601 timestamp when signal was generated")
     closed_at: Optional[str] = Field(None, description="ISO 8601 timestamp when signal was closed (null if OPEN)")
@@ -95,8 +93,6 @@ def _to_signal_read(s) -> dict:
     asset = _g(s, "asset", "")
     direction_raw = (_g(s, "direction", "") or "").upper()
     direction = "LONG" if direction_raw == "BUY" else "SHORT" if direction_raw == "SELL" else direction_raw
-    tp = _g(s, "take_profit")
-    has_tp = tp is not None and tp > 0
     status = _g(s, "status", "OPEN")
     strategy_name = _g(s, "strategy_name", "")
     return SignalRead(
@@ -108,8 +104,6 @@ def _to_signal_read(s) -> dict:
         direction=direction,
         entry=_g(s, "entry_price", 0),
         stop_loss=_g(s, "stop_loss", 0),
-        take_profit=tp if has_tp else None,
-        trailing_stop=not has_tp,
         status=status,
         published_at=_g(s, "signal_timestamp") or _g(s, "created_at", ""),
         closed_at=_g(s, "updated_at") if status == "CLOSED" else None,

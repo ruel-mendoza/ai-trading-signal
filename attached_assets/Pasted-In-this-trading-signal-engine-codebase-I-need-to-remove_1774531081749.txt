@@ -1,0 +1,23 @@
+In this trading signal engine codebase, I need to remove all take_profit values and exit_instructions text from every user-facing surface. The internal DB columns and strategy logic must remain completely untouched — only the output layer changes.
+1. api_v1.py — Public API responses
+In _format_signal_public(), remove take_profit from the response dict entirely — do not include the field even as null. Remove exit_instructions from the response dict entirely.
+In _format_signal(), remove take_profit, trailing_stop, and exit_instructions from the returned dict entirely.
+In SignalPublic Pydantic model, remove the take_profit and exit_instructions fields.
+In SignalLegacy Pydantic model, remove the take_profit, trailing_stop, and exit_instructions fields.
+In get_signals_latest(), remove the exit_instructions enrichment logic that calls _get_exit_instruction().
+2. admin.py — Admin panel HTML
+In _signals_to_table_rows(), change the Take Profit column cell (tp_cell) to just render "—" with no "How to Exit" link. Remove the exit-link span and onclick="showExitLogic(..." entirely.
+In the signals table <thead> rows throughout the file (there are multiple tables — signals, spx, mtf, tf, forex_trend, hlc_fx, algo1, algo2), change the <th>Take Profit</th> header to <th>TP</th> and keep the column but always render — for the value.
+Remove the #exit-modal, #exit-modal-overlay, closeExitModal(), showExitLogic() function, and EXIT_INSTRUCTIONS constant from ADMIN_JS.
+Remove the #exit-modal and #exit-modal-overlay HTML blocks from the dashboard HTML template at the bottom of admin_dashboard().
+Remove the .exit-link, #exit-modal-overlay, #exit-modal CSS rules from ADMIN_CSS.
+3. api/v1/public_signals.py (the hardened public signals router)
+If take_profit or exit_instructions appear in any response schema or serialization in that file, remove them from the output in the same way as above.
+4. Do NOT change:
+
+Any database column (take_profit, exit_price, exit_reason)
+Any strategy logic that calculates or stores take profit
+The _get_exit_instruction() function itself (keep it, just stop calling it in output paths)
+The EXIT_INSTRUCTIONS dict in api_v1.py (keep it, just stop including it in responses)
+The admin panel's internal strategy rule description sections (the static text blocks under "Strategy Rules" in each strategy tab — those explain the exit logic in plain text and should remain)
+Any internal DB logging or signal metadata

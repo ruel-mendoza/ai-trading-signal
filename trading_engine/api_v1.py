@@ -72,8 +72,6 @@ class SignalPublic(BaseModel):
     stop_loss: float = Field(..., example=1.0790)
     strategy: str = Field(..., example="mtf_ema")
     published_at: str = Field(..., example="2026-03-02T12:00:00Z")
-    take_profit: Optional[float] = None
-    exit_instructions: Optional[str] = Field(None, description="Human-readable exit rule for this strategy and direction.")
     meta: Optional[dict] = None
 
 class SignalsLatestResponse(BaseModel):
@@ -92,9 +90,6 @@ class SignalLegacy(BaseModel):
     direction: str
     entry_price: float
     stop_loss: float
-    take_profit: Optional[float] = None
-    trailing_stop: bool
-    exit_instructions: Optional[str] = None
     status: str
     exit_price: Optional[float] = None
     exit_reason: Optional[str] = None
@@ -556,10 +551,7 @@ def _format_signal_public(s: dict, position: Optional[dict] = None) -> dict:
         "stop_loss": s["stop_loss"],
         "strategy": s["strategy_name"],
         "published_at": ts,
-        "exit_instructions": _get_exit_instruction(s.get("strategy_name", ""), s.get("direction", "")),
     }
-    if s.get("take_profit") is not None:
-        result["take_profit"] = s["take_profit"]
     if meta:
         result["meta"] = meta
     return result
@@ -576,9 +568,6 @@ def _format_signal(s: dict) -> dict:
         "direction": s["direction"],
         "entry_price": s["entry_price"],
         "stop_loss": s["stop_loss"],
-        "take_profit": s["take_profit"],
-        "trailing_stop": s["take_profit"] is None,
-        "exit_instructions": _get_exit_instruction(s.get("strategy_name", ""), s.get("direction", "")),
         "status": s["status"],
         "exit_price": s.get("exit_price"),
         "exit_reason": s.get("exit_reason"),
