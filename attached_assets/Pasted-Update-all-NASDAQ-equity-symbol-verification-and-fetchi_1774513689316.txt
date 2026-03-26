@@ -1,0 +1,389 @@
+Update all NASDAQ equity symbol verification and fetching to use
+the NASDAQ: prefix format when calling FCSAPI. Based on FCSAPI
+v4 documentation, NASDAQ-listed stocks must be passed as
+NASDAQ:AAPL not just AAPL.
+
+─────────────────────────────────────────────────────────────────
+OVERVIEW OF CHANGES
+─────────────────────────────────────────────────────────────────
+
+The root cause of the 400 Bad Request error is that FCSAPI v4
+requires exchange-prefixed symbols for stock equities:
+  NASDAQ:AAPL  not  AAPL
+  NASDAQ:MSFT  not  MSFT
+  NASDAQ:NVDA  not  NVDA
+
+This prefix format is how FCSAPI distinguishes between stocks
+listed on different exchanges (NASDAQ vs NYSE vs AMEX etc).
+
+The internal DB storage and display always uses the clean symbol
+(AAPL, MSFT) — the NASDAQ: prefix is only added when making
+FCSAPI API calls.
+
+─────────────────────────────────────────────────────────────────
+PART 1 — fcsapi_client.py
+─────────────────────────────────────────────────────────────────
+
+────────────────────────────────────
+1a. Add NASDAQ prefix helper function
+────────────────────────────────────
+
+Add a new module-level helper function in fcsapi_client.py:
+
+def get_nasdaq_api_symbol(symbol: str) -> str:
+    """
+    Convert a clean NASDAQ ticker to the FCSAPI v4 format.
+    FCSAPI requires exchange-prefixed symbols for equities:
+      AAPL  →  NASDAQ:AAPL
+      MSFT  →  NASDAQ:MSFT
+    
+    If the symbol already contains a colon or slash it is
+    returned unchanged (handles forex/crypto symbols that
+    might accidentally be passed here).
+    """
+    if ":" in symbol or "/" in symbol:
+        return symbol
+    return f"NASDAQ:{symbol}"
+
+────────────────────────────────────
+1b. Update get_v4_history_symbol()
+────────────────────────────────────
+
+Find the existing get_v4_history_symbol() function:
+
+  def get_v4_history_symbol(symbol: str) -> str:
+      if symbol in CRYPTO_SYMBOL_MAP:
+          return CRYPTO_SYMBOL_MAP[symbol]
+      if symbol in STOCK_SYMBOL_MAP:
+          return STOCK_SYMBOL_MAP[symbol]
+      if symbol in COMMODITY_SYMBOL_MAP:
+          return COMMODITY_SYMBOL_MAP[symbol]
+      return symbol.replace("/", "")
+
+Update the fallback at the end to apply the NASDAQ prefix for
+symbols that are not in any existing map AND do not contain
+a slash (i.e. they are plain equity tickers):
+
+  def get_v4_history_symbol(symbol: str) -> str:
+      if symbol in CRYPTO_SYMBOL_MAP:
+          return CRYPTO_SYMBOL_MAP[symbol]
+      if symbol in STOCK_SYMBOL_MAP:
+          return STOCK_SYMBOL_MAP[symbol]
+      if symbol in COMMODITY_SYMBOL_MAP:
+          return COMMODITY_SYMBOL_MAP[symbol]
+      # Plain equity ticker not in any map — apply NASDAQ prefix
+      if "/" not in symbol and ":" not in symbol:
+          return get_nasdaq_api_symbol(symbol)
+      return symbol.replace("/", "")
+
+────────────────────────────────────
+1c. Update get_candles() params for stocks
+────────────────────────────────────
+
+In the get_candles() method of FCSAPIClient, find the params
+block for asset_class == "stock":
+
+  if asset_class == "stock":
+      params["type"] = "index"
+
+This is for index symbols (SPX, NDX, DJI, RUT) which are
+already handled correctly. No change needed here.
+
+For the "etf" asset_class block:
+
+  elif asset_class == "etf":
+      params["type"] = "fund"
+      params["exchange"] = "NASDAQ" if symbol in _NASDAQ_ETFS 
+                           else "AMEX"
+
+No change needed here either — ETFs already work correctly.
+
+The new NASDAQ equity path is handled by get_v4_history_symbol()
+returning NASDAQ:AAPL which FCSAPI understands without needing
+additional type/exchange params.
+
+────────────────────────────────────
+1d. Update get_stock_latest_prices()
+────────────────────────────────────
+
+In the get_stock_latest_prices() method, the joined symbol
+string is built like this:
+
+  joined = ",".join(batch)
+
+For equity symbols this sends AAPL,MSFT,NVDA — update to send
+NASDAQ:AAPL,NASDAQ:MSFT,NASDAQ:NVDA:
+
+  joined = ",".join(
+      get_nasdaq_api_symbol(s) for s in batch
+  )
+
+Also update the response matching logic since the API will
+now return tickers like NASDAQ:AAPL in the response. Find:
+
+  for item in data["response"]:
+      ticker = item.get("ticker", "")
+      ticker_sym = ticker.split(":")[-1] if ":" in ticker 
+                   else ticker
+
+This already handles the NASDAQ: prefix by splitting on ":"
+and taking the last part. Verify this logic is present and
+working — no change needed if it already does this.
+
+─────────────────────────────────────────────────────────────────
+PART 2 — admin.py _verify_stock_symbol()
+─────────────────────────────────────────────────────────────────
+
+Replace the entire _verify_stock_symbol() function with this
+clean implementation that uses the NASDAQ: prefix:
+
+def _verify_stock_symbol(symbol: str, api_client) -> dict:
+    """
+    Verify a NASDAQ equity symbol against FCSAPI v4.
+    Uses NASDAQ: prefix format as required by FCSAPI v4
+    for exchange-listed equities.
+    e.g. AAPL → NASDAQ:AAPL
+    """
+    from trading_engine.fcsapi_client import (
+        BASE_URL_V4_STOCK,
+        TIMEFRAME_MAP,
+        _parse_response_items,
+        _validate_candle_prices,
+        get_nasdaq_api_symbol,
+    )
+    from trading_engine.credit_control import pre_request_check
+    from trading_engine.database import log_api_usage
+    import requests as _req
+
+    api_key = api_client.api_key
+    if not api_key:
+        return {
+            "supported": False,
+            "reason": "No API key configured"
+        }
+
+    # Apply NASDAQ: prefix — this is the key fix
+    api_symbol = get_nasdaq_api_symbol(symbol)
+    tf_api = TIMEFRAME_MAP.get("D1", "1d")
+    url = f"{BASE_URL_V4_STOCK}/history"
+
+    logger.info(
+        f"[VERIFY-STOCK] {symbol} | "
+        f"API symbol: {api_symbol} | "
+        f"URL: {url}"
+    )
+
+    params = {
+        "symbol": api_symbol,
+        "period": tf_api,
+        "length": "2",
+        "access_key": api_key,
+    }
+
+    try:
+        pre_request_check()
+        resp = _req.get(url, params=params, timeout=30)
+
+        if resp.status_code == 400:
+            body = resp.text[:300]
+            logger.error(
+                f"[VERIFY-STOCK] {symbol} | "
+                f"400 Bad Request | "
+                f"api_symbol={api_symbol} | "
+                f"body={body}"
+            )
+            return {
+                "supported": False,
+                "symbol": symbol,
+                "api_symbol": api_symbol,
+                "reason": f"400 Bad Request — {body}",
+            }
+
+        resp.raise_for_status()
+        data = resp.json()
+        log_api_usage(
+            endpoint=f"stock/history/verify/{symbol}"
+        )
+
+        if not data.get("status") or not data.get("response"):
+            reason = data.get("msg", "No data returned")
+            logger.warning(
+                f"[VERIFY-STOCK] {symbol} | "
+                f"No data: {reason}"
+            )
+            return {
+                "supported": False,
+                "symbol": symbol,
+                "api_symbol": api_symbol,
+                "reason": reason,
+            }
+
+        candles = _parse_response_items(data["response"])
+        candles = _validate_candle_prices(candles, symbol)
+
+        if not candles:
+            return {
+                "supported": False,
+                "symbol": symbol,
+                "api_symbol": api_symbol,
+                "reason": "API returned data but no valid candles",
+            }
+
+        logger.info(
+            f"[VERIFY-STOCK] {symbol} | "
+            f"✓ Verified as {api_symbol} | "
+            f"candles={len(candles)} | "
+            f"close={candles[-1]['close']}"
+        )
+
+        return {
+            "supported": True,
+            "symbol": symbol,
+            "api_symbol": api_symbol,
+            "asset_class": "stocks",
+            "sample_close": candles[-1]["close"],
+            "sample_time": candles[-1]["timestamp"],
+            "candles_returned": len(candles),
+        }
+
+    except Exception as e:
+        logger.error(
+            f"[VERIFY-STOCK] {symbol} | Exception: {e}"
+        )
+        return {
+            "supported": False,
+            "symbol": symbol,
+            "api_symbol": api_symbol,
+            "reason": str(e),
+        }
+
+─────────────────────────────────────────────────────────────────
+PART 3 — stocks_algo1.py and stocks_algo2.py
+─────────────────────────────────────────────────────────────────
+
+Update _fetch_stock_candles() in BOTH files to use the
+NASDAQ: prefix via get_nasdaq_api_symbol():
+
+Find in both files:
+
+  params = {
+      "symbol": symbol,
+      "period": tf_api,
+      "length": str(limit),
+      "type": "equity",
+      "exchange": "NASDAQ",
+      "access_key": api_key,
+  }
+
+Replace with:
+
+  from trading_engine.fcsapi_client import (
+      get_nasdaq_api_symbol,
+      _parse_response_items,
+      _validate_candle_prices,
+  )
+
+  api_symbol = get_nasdaq_api_symbol(symbol)
+
+  params = {
+      "symbol": api_symbol,   ← NASDAQ:AAPL not AAPL
+      "period": tf_api,
+      "length": str(limit),
+      "access_key": api_key,
+  }
+
+  logger.info(
+      f"[ALGO] {symbol} | "
+      f"Fetching as {api_symbol}"
+  )
+
+Remove the type=equity and exchange=NASDAQ params entirely —
+the NASDAQ: prefix in the symbol itself tells FCSAPI which
+exchange and type to use.
+
+─────────────────────────────────────────────────────────────────
+PART 4 — backfill.py
+─────────────────────────────────────────────────────────────────
+
+No changes needed. backfill.py calls cache.force_refresh()
+which calls FCSAPIClient.fetch_history() which calls
+get_candles() which calls get_v4_history_symbol() — and
+get_v4_history_symbol() now applies the NASDAQ: prefix
+automatically via the updated fallback logic in Part 1b.
+
+─────────────────────────────────────────────────────────────────
+PART 5 — VERIFICATION SUCCESS MESSAGE IN ADMIN PANEL
+─────────────────────────────────────────────────────────────────
+
+Update the verifyAsset() JavaScript function in ADMIN_JS to
+show the NASDAQ: prefixed symbol in the success toast:
+
+  When data.success is true and data.api_symbol is present,
+  use data.api_symbol in the toast message instead of just
+  symbol:
+
+  showVerifyToast(
+      '✓ ' + (data.api_symbol || symbol) +
+      ' verified successfully' +
+      (data.sample_close
+          ? ' | Close: ' + data.sample_close
+          : '') +
+      (data.candles_returned
+          ? ' | ' + data.candles_returned + ' candles'
+          : ''),
+      'success',
+      4000
+  );
+
+Also update the inline badge tooltip after successful
+verification to show the API symbol:
+
+  cell.innerHTML =
+      '<span class="badge status-active" ' +
+      'title="Verified as ' +
+      (data.api_symbol || symbol) + '" ' +
+      'data-testid="badge-verified-' +
+      symbol.replace(/\//g, '-') + '">' +
+      '✓ Verified</span>';
+
+─────────────────────────────────────────────────────────────────
+PART 6 — VERIFY ENDPOINT RESPONSE UPDATE
+─────────────────────────────────────────────────────────────────
+
+Update the verify endpoint in admin.py to include api_symbol
+in the notes stored to the DB:
+
+  After successful verification, update the notes column to:
+  f"verified as {result['api_symbol']} | "
+  f"close={result['sample_close']} | "
+  f"date={result['sample_time'][:10]}"
+
+  This means the Asset Management table Notes column will show:
+  "verified as NASDAQ:AAPL | close=189.30 | date=2026-03-25"
+
+─────────────────────────────────────────────────────────────────
+CONSTRAINTS
+─────────────────────────────────────────────────────────────────
+
+- The NASDAQ: prefix must ONLY be applied to symbols that
+  are plain equity tickers — no slash, no colon already present
+- Symbols that already contain : or / must be returned unchanged
+  by get_nasdaq_api_symbol()
+- ETF symbols (CORN, USO, SGOL etc) must NOT get the NASDAQ:
+  prefix — they are handled by the existing ETF routing in
+  fcsapi_client.py via asset_class=etf
+- Index symbols (SPX, NDX, DJI, RUT, OSX) must NOT get the
+  NASDAQ: prefix — they are in STOCK_INDEX_SYMBOLS and handled
+  by get_v4_history_symbol() before reaching the fallback
+- Crypto symbols (BTC/USD etc) contain / so they are excluded
+  automatically by the slash check in get_nasdaq_api_symbol()
+- Forex symbols (EUR/USD etc) contain / so they are excluded
+  automatically
+- The internal DB always stores the clean symbol (AAPL) —
+  the NASDAQ: prefix is only ever used in outbound API calls
+- Do NOT change how ETF symbols are fetched in fcsapi_client.py
+- Do NOT change how index symbols (SPX, NDX) are fetched
+- Do NOT change any strategy entry/exit logic
+- Do NOT change database schema or models
+- All changes must be backward compatible — existing signals,
+  candles, and positions are unaffected

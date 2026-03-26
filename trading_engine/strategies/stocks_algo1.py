@@ -53,16 +53,14 @@ def _fetch_stock_candles(
 ) -> list[dict]:
     """
     Fetch D1 candles for a NASDAQ-listed equity.
-
-    The FCSAPIClient already routes ETF/stock symbols through
-    BASE_URL_V4_STOCK with the correct `type` and `exchange` parameters
-    (see get_v4_base_url / get_candles in fcsapi_client.py).  For pure
-    stock tickers not in the existing maps we force the stock endpoint
-    via a direct call.
+    Uses NASDAQ:SYMBOL prefix format as required by FCSAPI v4.
     """
     from trading_engine.fcsapi_client import (
         BASE_URL_V4_STOCK,
         TIMEFRAME_MAP,
+        get_nasdaq_api_symbol,
+        _parse_response_items,
+        _validate_candle_prices,
     )
 
     api_key = cache.api_client.api_key
@@ -70,15 +68,15 @@ def _fetch_stock_candles(
         logger.warning(f"[ALGO1] No API key — cannot fetch candles for {symbol}")
         return []
 
+    api_symbol = get_nasdaq_api_symbol(symbol)
     tf_api = TIMEFRAME_MAP.get("D1", "1d")
     params = {
-        "symbol": symbol,
+        "symbol": api_symbol,
         "period": tf_api,
         "length": str(limit),
-        "type": "equity",
-        "exchange": "NASDAQ",
         "access_key": api_key,
     }
+    logger.debug(f"[ALGO1] {symbol} | Fetching as {api_symbol}")
     try:
         import requests as _req
         from trading_engine.database import log_api_usage
@@ -93,11 +91,6 @@ def _fetch_stock_candles(
 
         if not data.get("status") or not data.get("response"):
             return []
-
-        from trading_engine.fcsapi_client import (
-            _parse_response_items,
-            _validate_candle_prices,
-        )
 
         candles = _parse_response_items(data["response"])
         candles = _validate_candle_prices(candles, symbol)

@@ -209,6 +209,22 @@ def get_v4_base_url(symbol: str) -> str:
     return BASE_URL_V4_FOREX
 
 
+def get_nasdaq_api_symbol(symbol: str) -> str:
+    """
+    Convert a clean NASDAQ ticker to the FCSAPI v4 format.
+    FCSAPI requires exchange-prefixed symbols for equities:
+      AAPL  ->  NASDAQ:AAPL
+      MSFT  ->  NASDAQ:MSFT
+
+    If the symbol already contains a colon or slash it is
+    returned unchanged (handles forex/crypto symbols that
+    might accidentally be passed here).
+    """
+    if ":" in symbol or "/" in symbol:
+        return symbol
+    return f"NASDAQ:{symbol}"
+
+
 def get_v4_history_symbol(symbol: str) -> str:
     if symbol in CRYPTO_SYMBOL_MAP:
         return CRYPTO_SYMBOL_MAP[symbol]
@@ -216,6 +232,9 @@ def get_v4_history_symbol(symbol: str) -> str:
         return STOCK_SYMBOL_MAP[symbol]
     if symbol in COMMODITY_SYMBOL_MAP:
         return COMMODITY_SYMBOL_MAP[symbol]
+    # Plain equity ticker not in any map — apply NASDAQ prefix
+    if "/" not in symbol and ":" not in symbol:
+        return get_nasdaq_api_symbol(symbol)
     return symbol.replace("/", "")
 
 

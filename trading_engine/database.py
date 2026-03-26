@@ -3176,8 +3176,9 @@ def mark_asset_verified(
     strategy_name: str,
     symbol: str,
     verified: bool = True,
+    notes: str | None = None,
 ) -> bool:
-    """Mark an asset as FCSAPI-verified or unverified."""
+    """Mark an asset as FCSAPI-verified or unverified, optionally storing notes."""
     with _get_session() as session:
         try:
             row = (
@@ -3191,6 +3192,8 @@ def mark_asset_verified(
             if not row:
                 return False
             row.fcsapi_verified = 1 if verified else 0
+            if notes is not None:
+                row.notes = notes
             session.commit()
             return True
         except Exception as e:

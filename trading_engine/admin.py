@@ -5670,13 +5670,14 @@ async function verifyAsset(strategyName, symbol, btnEl) {
             btnEl.className = 'btn-verify verified';
             btnEl.disabled = true;
             btnEl.style.cursor = 'default';
+            var apiSym = data.api_symbol || symbol;
             var detail = '';
             if (data.sample_close) detail = ' | Close: ' + data.sample_close;
             if (data.candles_returned) detail += ' | ' + data.candles_returned + ' candles';
-            showVerifyToast('\u2713 ' + symbol + ' verified successfully' + detail, 'success', 4000);
+            showVerifyToast('\u2713 ' + apiSym + ' verified successfully' + detail, 'success', 4000);
             var cell = btnEl.closest('td');
             if (cell) {
-                cell.innerHTML = '<span class="badge status-active" data-testid="badge-verified-' + symbol.replace(/\//g,'-') + '">\u2713 Verified</span>';
+                cell.innerHTML = '<span class="badge status-active" title="Verified as ' + apiSym + '" data-testid="badge-verified-' + symbol.replace(/\//g,'-') + '">\u2713 Verified</span>';
             }
         } else {
             btnEl.disabled = false;
@@ -8263,14 +8264,16 @@ def api_list_strategy_assets(
 
 def _verify_stock_symbol(symbol: str, api_client) -> dict:
     """
-    Verify a NASDAQ equity symbol using the exact same endpoint and parameters
-    as _fetch_stock_candles() in stocks_algo1.py / stocks_algo2.py.
+    Verify a NASDAQ equity symbol against FCSAPI v4.
+    Uses NASDAQ: prefix format as required by FCSAPI v4
+    for exchange-listed equities: AAPL -> NASDAQ:AAPL
     """
     from trading_engine.fcsapi_client import (
         BASE_URL_V4_STOCK,
         TIMEFRAME_MAP,
         _parse_response_items,
         _validate_candle_prices,
+        get_nasdaq_api_symbol,
     )
     from trading_engine.credit_control import pre_request_check
     from trading_engine.database import log_api_usage
@@ -8280,47 +8283,85 @@ def _verify_stock_symbol(symbol: str, api_client) -> dict:
     if not api_key:
         return {"supported": False, "reason": "No API key configured"}
 
+    api_symbol = get_nasdaq_api_symbol(symbol)
+    tf_api = TIMEFRAME_MAP.get("D1", "1d")
+    url = f"{BASE_URL_V4_STOCK}/history"
+
+    logger.info(
+        f"[VERIFY-STOCK] {symbol} | API symbol: {api_symbol} | URL: {url}"
+    )
+
     params = {
-        "symbol": symbol,
-        "period": TIMEFRAME_MAP.get("D1", "1d"),
+        "symbol": api_symbol,
+        "period": tf_api,
         "length": "2",
-        "type": "equity",
-        "exchange": "NASDAQ",
         "access_key": api_key,
     }
     try:
         pre_request_check()
-        url = f"{BASE_URL_V4_STOCK}/history"
         resp = _req.get(url, params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        log_api_usage(endpoint=f"stock/history/verify/{symbol}")
-        if not data.get("status") or not data.get("response"):
+
+        if resp.status_code == 400:
+            body = resp.text[:300]
+            logger.error(
+                f"[VERIFY-STOCK] {symbol} | 400 Bad Request | "
+                f"api_symbol={api_symbol} | body={body}"
+            )
             return {
                 "supported": False,
                 "symbol": symbol,
-                "reason": data.get("msg", "No data returned"),
+                "api_symbol": api_symbol,
+                "reason": f"400 Bad Request — {body}",
             }
+
+        resp.raise_for_status()
+        data = resp.json()
+        log_api_usage(endpoint=f"stock/history/verify/{symbol}")
+
+        if not data.get("status") or not data.get("response"):
+            reason = data.get("msg", "No data returned")
+            logger.warning(f"[VERIFY-STOCK] {symbol} | No data: {reason}")
+            return {
+                "supported": False,
+                "symbol": symbol,
+                "api_symbol": api_symbol,
+                "reason": reason,
+            }
+
         candles = _parse_response_items(data["response"])
         candles = _validate_candle_prices(candles, symbol)
+
         if not candles:
             return {
                 "supported": False,
                 "symbol": symbol,
+                "api_symbol": api_symbol,
                 "reason": "API returned data but no valid candles",
             }
+
+        logger.info(
+            f"[VERIFY-STOCK] {symbol} | Verified as {api_symbol} | "
+            f"candles={len(candles)} | close={candles[-1]['close']}"
+        )
+
         return {
             "supported": True,
             "symbol": symbol,
-            "api_symbol": symbol,
+            "api_symbol": api_symbol,
             "asset_class": "stocks",
-            "base_url": BASE_URL_V4_STOCK,
             "sample_close": candles[-1]["close"],
             "sample_time": candles[-1]["timestamp"],
             "candles_returned": len(candles),
         }
+
     except Exception as e:
-        return {"supported": False, "symbol": symbol, "reason": str(e)}
+        logger.error(f"[VERIFY-STOCK] {symbol} | Exception: {e}")
+        return {
+            "supported": False,
+            "symbol": symbol,
+            "api_symbol": api_symbol,
+            "reason": str(e),
+        }
 
 
 @router.get("/api/strategy-assets/test")
@@ -8384,14 +8425,26 @@ def api_verify_strategy_asset(
     else:
         result = engine.cache.api_client.test_symbol_coverage(symbol)
     supported = result.get("supported", False)
-    mark_asset_verified(strategy_name, symbol, verified=supported)
+    api_symbol = result.get("api_symbol", symbol)
+    notes = None
+    if supported:
+        sample_time = result.get("sample_time", "")
+        date_part = sample_time[:10] if sample_time else "unknown"
+        notes = (
+            f"verified as {api_symbol} | "
+            f"close={result.get('sample_close')} | "
+            f"date={date_part}"
+        )
+    mark_asset_verified(strategy_name, symbol, verified=supported, notes=notes)
     logger.info(
-        f"[ADMIN] Verify asset: {strategy_name}/{symbol} | result={supported} | by={username}"
+        f"[ADMIN] Verify asset: {strategy_name}/{symbol} | "
+        f"api_symbol={api_symbol} | result={supported} | by={username}"
     )
     if supported:
         return JSONResponse(content={
             "success": True,
             "symbol": symbol,
+            "api_symbol": api_symbol,
             "strategy_name": strategy_name,
             "verified": True,
             "sample_close": result.get("sample_close"),
@@ -8404,6 +8457,7 @@ def api_verify_strategy_asset(
         return JSONResponse(content={
             "success": False,
             "symbol": symbol,
+            "api_symbol": api_symbol,
             "strategy_name": strategy_name,
             "verified": False,
             "reason": result.get("reason", "Not supported"),

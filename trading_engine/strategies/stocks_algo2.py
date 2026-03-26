@@ -52,28 +52,30 @@ ET_ZONE = pytz.timezone("America/New_York")
 def _fetch_stock_candles(
     cache: CacheLayer, symbol: str, limit: int = 300
 ) -> list[dict]:
-    """Fetch D1 candles for a NASDAQ equity (same helper as algo1)."""
-    from trading_engine.fcsapi_client import BASE_URL_V4_STOCK, TIMEFRAME_MAP
-    from trading_engine.credit_control import pre_request_check
-    from trading_engine.database import log_api_usage
+    """Fetch D1 candles for a NASDAQ equity using NASDAQ:SYMBOL prefix format."""
     from trading_engine.fcsapi_client import (
+        BASE_URL_V4_STOCK,
+        TIMEFRAME_MAP,
+        get_nasdaq_api_symbol,
         _parse_response_items,
         _validate_candle_prices,
     )
+    from trading_engine.credit_control import pre_request_check
+    from trading_engine.database import log_api_usage
     import requests as _req
 
     api_key = cache.api_client.api_key
     if not api_key:
         return []
 
+    api_symbol = get_nasdaq_api_symbol(symbol)
     params = {
-        "symbol": symbol,
+        "symbol": api_symbol,
         "period": TIMEFRAME_MAP.get("D1", "1d"),
         "length": str(limit),
-        "type": "equity",
-        "exchange": "NASDAQ",
         "access_key": api_key,
     }
+    logger.debug(f"[ALGO2] {symbol} | Fetching as {api_symbol}")
     try:
         pre_request_check()
         url = f"{BASE_URL_V4_STOCK}/history"
