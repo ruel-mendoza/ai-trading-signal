@@ -5196,7 +5196,7 @@ async function loadAssets() {
       if (a.fcsapi_verified) {
           verifiedBadge = '<span class="badge status-active" data-testid="badge-verified-' + a.symbol.replace(/\//g,'-') + '">\u2713 Verified</span>';
       } else {
-          verifiedBadge = '<button class="btn-verify" onclick="verifyAsset(\'' + a.strategy_name + '\', \'' + a.symbol + '\', this)" data-strategy="' + a.strategy_name + '" data-symbol="' + a.symbol + '" data-testid="button-verify-' + a.symbol.replace(/\//g,'-') + '" title="Click to verify against FCSAPI">\u26a1 Verify</button>';
+          verifiedBadge = '<button class="btn-verify" onclick="verifyAsset(\\'' + a.strategy_name + '\\', \\'' + a.symbol + '\\', this)" data-strategy="' + a.strategy_name + '" data-symbol="' + a.symbol + '" data-testid="button-verify-' + a.symbol.replace(/\//g,'-') + '" title="Click to verify against FCSAPI">&#x26A1; Verify</button>';
       }
       var addedBy = a.added_by || '\u2014';
       var createdAt = a.created_at ? a.created_at.slice(0, 10) : '\u2014';
