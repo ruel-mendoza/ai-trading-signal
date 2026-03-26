@@ -1,0 +1,257 @@
+Create a new file restore_signal.py in the project root directory.
+
+This is a standalone CLI tool for manually restoring a live trade that exists
+in the trader's live account but is missing from the prototype engine DB.
+This happens when Replit sleeps mid-transaction, when open_positions is cleared
+on restart and the orphan handler closes the signal, or when the DB is reset
+between deployments.
+
+─────────────────────────────────────────────────────────────────
+OVERVIEW
+─────────────────────────────────────────────────────────────────
+
+The script must:
+1. Accept all signal parameters as CLI arguments (no hardcoded values)
+2. Perform safety checks before inserting anything
+3. Insert the signal into the signals table
+4. Insert the matching record into open_positions table
+5. Derive atr_at_entry automatically from entry/stop_loss if not provided
+6. Invalidate the API cache after restore
+7. Print a clear summary of what was restored
+8. Be fully idempotent — safe to run multiple times without creating duplicates
+
+─────────────────────────────────────────────────────────────────
+CLI ARGUMENTS (all via argparse)
+─────────────────────────────────────────────────────────────────
+
+Required:
+  --asset           Asset symbol e.g. "BTC/USD" or "GBP/USD"
+  --direction       BUY or SELL
+  --entry           Entry price (float)
+  --stop-loss       Stop loss price (float)
+  --strategy        Strategy name: mtf_ema | trend_forex | trend_non_forex |
+                    sp500_momentum | highest_lowest_fx
+
+Optional:
+  --take-profit     Take profit price (float, default None)
+  --atr             ATR at entry (float). If not provided, auto-derive from
+                    entry and stop-loss using the strategy's ATR multiplier:
+                      mtf_ema SL_ATR_MULT = 0.5  → atr = abs(entry - sl) / 0.5
+                      trend_forex/trend_non_forex SL_ATR_MULT = 3.0 → atr = abs(entry - sl) / 3.0
+                      sp500_momentum SL_ATR_MULT = 2.0 → atr = abs(entry - sl) / 2.0
+                      highest_lowest_fx SL_ATR_MULT = 2.0 → atr = abs(entry - sl) / 2.0
+  --timestamp       Signal timestamp in format YYYY-MM-DDTHH:MM:SS
+                    Default: prompt the user to confirm or enter manually
+  --dry-run         Show what would be inserted without writing to DB
+  --force           Skip confirmation prompts
+
+─────────────────────────────────────────────────────────────────
+SAFETY CHECKS (run before any DB write)
+─────────────────────────────────────────────────────────────────
+
+1. Validate --direction is BUY or SELL (case insensitive, normalise to uppercase)
+
+2. Validate --strategy is one of the known strategy names
+
+3. Validate price logic:
+   - If direction=BUY:  stop_loss must be BELOW entry price
+                        take_profit (if provided) must be ABOVE entry price
+   - If direction=SELL: stop_loss must be ABOVE entry price
+                        take_profit (if provided) must be BELOW entry price
+   - If either check fails: print a clear error explaining which value is wrong
+     and exit with code 1 UNLESS --force is passed, in which case log a
+     WARNING and continue
+
+4. Check for existing open signal:
+   - Call get_active_signals(strategy_name=strategy, asset=asset)
+   - If any result found: print warning showing the existing signal id,
+     direction, entry price, and timestamp — then exit with code 0
+     (no duplicate created)
+
+5. Check for existing open position:
+   - Call has_open_position(strategy, asset)
+   - If True: log warning but continue — the position record may exist
+     without a signal record in edge cases
+
+6. Check for duplicate timestamp:
+   - Call signal_exists(strategy, asset, timestamp)
+   - If True: suggest the user change --timestamp by 1 minute and exit
+
+─────────────────────────────────────────────────────────────────
+ATR AUTO-DERIVATION
+─────────────────────────────────────────────────────────────────
+
+If --atr is not provided, compute it automatically:
+
+  SL_MULT_MAP = {
+      "mtf_ema":           0.5,
+      "trend_forex":       3.0,
+      "trend_non_forex":   3.0,
+      "sp500_momentum":    2.0,
+      "highest_lowest_fx": 2.0,
+  }
+
+  sl_distance = abs(entry_price - stop_loss)
+  atr_at_entry = round(sl_distance / SL_MULT_MAP[strategy], 6)
+
+Log the derived value clearly:
+  "Auto-derived atr_at_entry = {atr_at_entry} 
+   (sl_distance={sl_distance} / SL_MULT={mult})"
+
+─────────────────────────────────────────────────────────────────
+CONFIRMATION PROMPT
+─────────────────────────────────────────────────────────────────
+
+Unless --force or --dry-run is passed, print a full summary of what will
+be inserted and ask "Restore this signal? [y/N]: "
+
+Summary must include:
+  Strategy   : mtf_ema
+  Asset      : BTC/USD
+  Direction  : SELL
+  Entry      : 70960.65
+  Stop Loss  : 71967.22
+  Take Profit: 67121.657
+  ATR        : 2013.14 (auto-derived)
+  Timestamp  : 2026-03-25T12:00:00
+
+If user types anything other than y or Y, exit with code 0 and message
+"Restore cancelled."
+
+─────────────────────────────────────────────────────────────────
+DB WRITES
+─────────────────────────────────────────────────────────────────
+
+1. Call insert_signal() with the full signal dict:
+   {
+     "strategy_name":    strategy,
+     "asset":            asset,
+     "direction":        direction,
+     "entry_price":      entry,
+     "stop_loss":        stop_loss,
+     "take_profit":      take_profit,
+     "atr_at_entry":     atr_at_entry,
+     "signal_timestamp": timestamp,
+   }
+
+   If insert_signal() returns None: print error and exit code 1
+
+2. Call open_position() with:
+   {
+     "asset":          asset,
+     "strategy_name":  strategy,
+     "direction":      direction,
+     "entry_price":    entry,
+     "atr_at_entry":   atr_at_entry,
+   }
+
+   If open_position() returns None: print error, note that the signal
+   was already inserted so the user should check the DB manually
+
+3. For mtf_ema SELL signals specifically:
+   Also set lowest_price_since_entry = entry_price on the open_positions
+   record by calling update_position_tracking(pos_id, lowest_price=entry_price)
+   For mtf_ema BUY signals:
+   Also set highest_price_since_entry = entry_price on the open_positions
+   record by calling update_position_tracking(pos_id, highest_price=entry_price)
+   This ensures the trailing stop calculates correctly from day one.
+
+─────────────────────────────────────────────────────────────────
+POST-RESTORE ACTIONS
+─────────────────────────────────────────────────────────────────
+
+After successful DB writes:
+
+1. Invalidate API cache:
+   from trading_engine.api_v1 import invalidate_signal_caches
+   invalidate_signal_caches()
+
+2. Print final confirmation:
+   "✓ Signal restored | id={signal_id} | {strategy} {direction} {asset} 
+    @ {entry} | timestamp={timestamp}"
+   "✓ Open position created | id={pos_id}"
+   "✓ API cache invalidated"
+   "The engine will track exits for this position on the next scheduler tick."
+
+3. Print the exit rule reminder based on strategy:
+   mtf_ema:           "Exit rule: H1 close crosses H1 EMA20, or trailing 
+                       stop (peak/trough - 2×ATR)"
+   trend_forex:       "Exit rule: Dynamic trailing stop 3×ATR ratcheted 
+                       at 5:01 PM ET daily"
+   trend_non_forex:   "Exit rule: Dynamic trailing stop 3×ATR ratcheted 
+                       at 4:01 PM ET daily"
+   sp500_momentum:    "Exit rule: RSI(20) drops below 70 during ARCA session"
+   highest_lowest_fx: "Exit rule: Stop loss 2×ATR or 6-hour time exit"
+
+─────────────────────────────────────────────────────────────────
+DRY RUN MODE
+─────────────────────────────────────────────────────────────────
+
+When --dry-run is passed:
+- Run all safety checks and ATR derivation exactly as normal
+- Print the full confirmation summary
+- Print "DRY RUN — no changes written to database"
+- Exit with code 0
+
+─────────────────────────────────────────────────────────────────
+USAGE EXAMPLES (print these in --help)
+─────────────────────────────────────────────────────────────────
+
+  # BTC/USD SHORT (current missing signal)
+  python3 restore_signal.py \
+    --asset "BTC/USD" \
+    --direction SELL \
+    --entry 70960.65 \
+    --stop-loss 71967.22 \
+    --take-profit 67121.657 \
+    --strategy mtf_ema \
+    --timestamp "2026-03-25T12:00:00"
+
+  # GBP/USD SHORT — already in DB, would be blocked by safety check
+  python3 restore_signal.py \
+    --asset "GBP/USD" \
+    --direction SELL \
+    --entry 1.33707 \
+    --stop-loss 1.34464 \
+    --take-profit 1.32279 \
+    --strategy mtf_ema \
+    --timestamp "2026-03-25T10:00:00"
+
+  # Dry run first to verify before writing
+  python3 restore_signal.py \
+    --asset "BTC/USD" \
+    --direction SELL \
+    --entry 70960.65 \
+    --stop-loss 71967.22 \
+    --strategy mtf_ema \
+    --dry-run
+
+  # Force skip confirmation
+  python3 restore_signal.py \
+    --asset "BTC/USD" \
+    --direction SELL \
+    --entry 70960.65 \
+    --stop-loss 71967.22 \
+    --strategy mtf_ema \
+    --force
+
+─────────────────────────────────────────────────────────────────
+CONSTRAINTS
+─────────────────────────────────────────────────────────────────
+
+- Do NOT modify any existing files
+- Do NOT change any strategy logic, database schema, or API routes
+- Do NOT require the FastAPI app / uvicorn to be running —
+  the script must work standalone from the Replit shell
+- Use sys.path.insert(0, ...) at the top so trading_engine imports
+  resolve correctly from the project root
+- All DB operations must use the existing database.py functions —
+  do NOT write raw SQL
+- Use logging (not print) for all operational messages so output is
+  consistent with the rest of the engine
+- Use print() only for the confirmation prompt and the final
+  human-readable success summary
+- Exit code 0 = success or cancelled by user
+- Exit code 1 = error (bad args, DB write failed, safety check failed)
+- The script must be fully idempotent — running it twice on the same
+  signal must be safe and produce no duplicates
