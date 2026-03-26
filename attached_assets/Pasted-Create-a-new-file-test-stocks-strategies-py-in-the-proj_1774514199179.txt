@@ -1,0 +1,195 @@
+Create a new file test_stocks_strategies.py in the project root.
+This is a standalone test and diagnostic tool that verifies
+Stocks Algo 1 and Stocks Algo 2 are working correctly and can
+cycle through each symbol in their universe.
+
+─────────────────────────────────────────────────────────────────
+OVERVIEW
+─────────────────────────────────────────────────────────────────
+
+The test suite must verify:
+
+1. FCSAPI connectivity for stock symbols using NASDAQ: prefix
+2. NDX market filter (SMA200) is computing correctly
+3. Stocks Algo 1 can fetch candles and compute momentum scores
+   for every symbol in its universe
+4. Stocks Algo 2 can fetch candles and detect death crosses
+   for every symbol in its universe
+5. The monthly cycle (run_monthly) executes without errors
+6. The daily cycle (run_daily) executes without errors
+7. Exit checks (check_exits) execute without errors
+8. The NASDAQ sync (sync_nasdaq100_symbols) works correctly
+9. Full end-to-end signal generation test on a small subset
+
+─────────────────────────────────────────────────────────────────
+CLI ARGUMENTS
+─────────────────────────────────────────────────────────────────
+
+  --test          Which test to run. Options:
+                    connectivity   Test FCSAPI for all symbols
+                    ndx            Test NDX market filter
+                    algo1          Test Stocks Algo 1 full cycle
+                    algo2          Test Stocks Algo 2 full cycle
+                    exits          Test exit checks for both
+                    sync           Test NASDAQ 100 sync
+                    all            Run all tests (default)
+
+  --symbol        Test a single symbol only
+                  e.g. --symbol AAPL
+
+  --limit         Max symbols to test per strategy
+                  Default: 10 (test first 10 symbols)
+                  Use --limit 0 for all symbols
+
+  --dry-run       Run all checks but do not insert any signals
+                  or modify the database
+
+  --verbose       Show full candle data and indicator values
+                  for each symbol
+
+  --fix           Attempt to auto-fix issues found during tests
+                  e.g. re-verify unverified symbols,
+                  refresh stale candle data
+
+Examples:
+  python3 test_stocks_strategies.py
+  python3 test_stocks_strategies.py --test connectivity
+  python3 test_stocks_strategies.py --test algo1 --limit 5
+  python3 test_stocks_strategies.py --symbol AAPL --verbose
+  python3 test_stocks_strategies.py --test all --dry-run
+  python3 test_stocks_strategies.py --test algo1 --limit 0
+
+─────────────────────────────────────────────────────────────────
+SETUP
+─────────────────────────────────────────────────────────────────
+
+At the top of the file:
+
+import sys
+import os
+import argparse
+import logging
+import time
+from datetime import datetime
+from typing import Optional
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(message)s"
+)
+logger = logging.getLogger("test_stocks")
+
+from trading_engine.database import init_db, get_strategy_assets
+from trading_engine.fcsapi_client import FCSAPIClient
+from trading_engine.cache_layer import CacheLayer
+from trading_engine.strategies.stocks_algo1 import (
+    StocksAlgo1Strategy,
+    _fetch_stock_candles,
+    _fetch_ndx_candles,
+    _calculate_momentum,
+    _is_first_trading_day_of_month,
+    MOMENTUM_LONG_BARS,
+    TOP_N,
+    STOP_LOSS_PCT as ALGO1_SL_PCT,
+)
+from trading_engine.strategies.stocks_algo2 import (
+    StocksAlgo2Strategy,
+    _fetch_stock_candles as _fetch_stock_candles_2,
+    _fetch_ndx_candles as _fetch_ndx_candles_2,
+    _death_cross_detected,
+    STOP_LOSS_PCT as ALGO2_SL_PCT,
+    MAX_HOLD_TRADING_DAYS,
+)
+from trading_engine.indicators import IndicatorEngine
+
+─────────────────────────────────────────────────────────────────
+TEST RESULTS TRACKING
+─────────────────────────────────────────────────────────────────
+
+Create a TestResults class to track pass/fail/warn per test:
+
+class TestResults:
+    def __init__(self):
+        self.passed   = []
+        self.failed   = []
+        self.warnings = []
+        self.skipped  = []
+
+    def ok(self, name, detail=""):
+        self.passed.append((name, detail))
+        logger.info(f"  ✓ PASS | {name}" +
+                    (f" | {detail}" if detail else ""))
+
+    def fail(self, name, detail=""):
+        self.failed.append((name, detail))
+        logger.error(f"  ✗ FAIL | {name}" +
+                     (f" | {detail}" if detail else ""))
+
+    def warn(self, name, detail=""):
+        self.warnings.append((name, detail))
+        logger.warning(f"  ⚠ WARN | {name}" +
+                       (f" | {detail}" if detail else ""))
+
+    def skip(self, name, detail=""):
+        self.skipped.append((name, detail))
+        logger.info(f"  ○ SKIP | {name}" +
+                    (f" | {detail}" if detail else ""))
+
+    def summary(self):
+        total = (len(self.passed) + len(self.failed) +
+                 len(self.warnings) + len(self.skipped))
+        print("\n" + "="*60)
+        print(f"TEST SUMMARY")
+        print("="*60)
+        print(f"  ✓ Passed  : {len(self.passed)}")
+        print(f"  ✗ Failed  : {len(self.failed)}")
+        print(f"  ⚠ Warnings: {len(self.warnings)}")
+        print(f"  ○ Skipped : {len(self.skipped)}")
+        print(f"  Total     : {total}")
+        print("="*60)
+        if self.failed:
+            print("\nFAILED TESTS:")
+            for name, detail in self.failed:
+                print(f"  ✗ {name}")
+                if detail:
+                    print(f"    → {detail}")
+        if self.warnings:
+            print("\nWARNINGS:")
+            for name, detail in self.warnings:
+                print(f"  ⚠ {name}")
+                if detail:
+                    print(f"    → {detail}")
+        print()
+        return len(self.failed) == 0
+
+─────────────────────────────────────────────────────────────────
+TEST 1 — FCSAPI CONNECTIVITY
+─────────────────────────────────────────────────────────────────
+
+def test_connectivity(
+    cache: CacheLayer,
+    results: TestResults,
+    symbols: list[str],
+    limit: int,
+    verbose: bool
+):
+    """
+    Test that FCSAPI can fetch candle data for each symbol
+    using the NASDAQ: prefix format.
+    """
+    print("\n" + "─"*60)
+    print("TEST 1 — FCSAPI CONNECTIVITY")
+    print("─"*60)
+
+    test_symbols = symbols[:limit] if limit > 0 else symbols
+    print(f"Testing {len(test_symbols)} symbols "
+          f"(limit={limit if limit > 0 else 'all'})")
+    print(f"Credit cost: {len(test_symbols)} credits\n")
+
+    success_count = 0
+    failed_symbols = []
+
+    for sym in test_symbols:
+        from trading_
