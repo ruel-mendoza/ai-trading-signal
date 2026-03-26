@@ -108,12 +108,6 @@ export function SignalCard({ signal }: { signal: Signal }) {
                 {formatPrice(signal.stopLoss, signal.pair)}
               </p>
             </div>
-            <div className="text-right">
-              <p className="text-xs text-green-500/80 mb-0.5">TP</p>
-              <p className="font-mono text-sm text-green-500">
-                {signal.takeProfit != null ? formatPrice(signal.takeProfit, signal.pair) : "Trailing"}
-              </p>
-            </div>
             <div className="hidden sm:flex flex-col items-end gap-1">
               <Badge variant="secondary" className="no-default-active-elevate text-xs font-mono">
                 {signal.confidence}%

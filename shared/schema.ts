@@ -24,7 +24,6 @@ export const signals = pgTable("signals", {
   direction: text("direction").notNull(),
   entryPrice: real("entry_price").notNull(),
   stopLoss: real("stop_loss").notNull(),
-  takeProfit: real("take_profit").notNull(),
   status: text("status").notNull().default("active"),
   confidence: integer("confidence").notNull().default(75),
   analysis: text("analysis").notNull(),
