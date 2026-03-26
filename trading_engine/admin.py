@@ -241,7 +241,7 @@ _CLASS_COLORS: dict[str, tuple[str, str]] = {
 }
 
 
-def _signals_to_table_rows(signals: list[dict]) -> str:
+def _signals_to_table_rows(signals: list[dict], is_admin: bool = False) -> str:
     """Render signal rows to HTML table rows with Python-side deduplication.
 
     Dedup rules:
@@ -388,8 +388,10 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
             f"How to Exit</span>"
         )
 
-        # Actions column — Close (OPEN only) + Delete
-        if status == "OPEN":
+        # Actions column — Close (OPEN only) + Delete — admin only
+        if not is_admin:
+            actions_html = ""
+        elif status == "OPEN":
             actions_html = (
                 f'<button style="background:rgba(59,130,246,0.15);color:#3b82f6;'
                 f'border:1px solid rgba(59,130,246,0.3);font-size:11px;padding:3px 8px;'
@@ -411,9 +413,14 @@ def _signals_to_table_rows(signals: list[dict]) -> str:
                 f'Delete</button>'
             )
 
+        checkbox_cell = (
+            f'<td style="width:32px;text-align:center;"><input type="checkbox" class="sig-row-cb" value="{sig_id}" onchange="updateBulkDeleteUI()" data-testid="checkbox-signal-{sig_id}"></td>'
+            if is_admin else '<td></td>'
+        )
+
         rows.append(f"""
         <tr>
-            <td style="width:32px;text-align:center;"><input type="checkbox" class="sig-row-cb" value="{sig_id}" onchange="updateBulkDeleteUI()" data-testid="checkbox-signal-{sig_id}"></td>
+            {checkbox_cell}
             <td>{asset_cell}</td>
             <td>{ac_badge}</td>
             <td><span class="badge {dir_class}">{direction}</span></td>
@@ -5796,6 +5803,9 @@ def admin_dashboard(
         base_path = request.scope.get("root_path", "")
         return RedirectResponse(url=base_path + "/admin/login", status_code=302)
 
+    # Compute is_admin early — needed by _signals_to_table_rows() calls below
+    is_admin = user.get("role", "CUSTOMER") == "ADMIN"
+
     signals = get_all_signals(
         strategy_name=strategy_name,
         asset=asset,
@@ -5817,7 +5827,7 @@ def admin_dashboard(
         active_count = sum(1 for s in signals if s.get("status") == "OPEN")
     total_count = len(signals)
 
-    signal_rows = _signals_to_table_rows(signals)
+    signal_rows = _signals_to_table_rows(signals, is_admin=is_admin)
     credit_html = _build_credit_html(usage_stats)
     timezone_html = _build_timezone_html(market_times)
     settings_html = _build_settings_html()
@@ -5827,13 +5837,13 @@ def admin_dashboard(
     spx_signals = get_all_signals(
         strategy_name="sp500_momentum", limit=200, max_age_days=92
     )
-    spx_signal_rows = _signals_to_table_rows(spx_signals)
+    spx_signal_rows = _signals_to_table_rows(spx_signals, is_admin=is_admin)
     spx_signal_count = len(spx_signals)
     spx_html = _build_spx_momentum_html(spx_data, spx_signal_rows, spx_signal_count)
 
     mtf_data = _get_mtf_ema_data()
     mtf_signals = get_all_signals(strategy_name="mtf_ema", limit=200, max_age_days=92)
-    mtf_signal_rows = _signals_to_table_rows(mtf_signals)
+    mtf_signal_rows = _signals_to_table_rows(mtf_signals, is_admin=is_admin)
     mtf_signal_count = len(mtf_signals)
     mtf_html = _build_mtf_ema_html(mtf_data, mtf_signal_rows, mtf_signal_count)
 
@@ -5841,7 +5851,7 @@ def admin_dashboard(
     fx_trend_signals = get_all_signals(
         strategy_name="trend_forex", limit=200, max_age_days=92
     )
-    fx_trend_signal_rows = _signals_to_table_rows(fx_trend_signals)
+    fx_trend_signal_rows = _signals_to_table_rows(fx_trend_signals, is_admin=is_admin)
     fx_trend_signal_count = len(fx_trend_signals)
     forex_trend_html = _build_forex_trend_html(
         fx_trend_data, fx_trend_signal_rows, fx_trend_signal_count
@@ -5859,7 +5869,7 @@ def admin_dashboard(
         key=lambda s: s.get("id", 0),
         reverse=True,
     )
-    tf_signal_rows = _signals_to_table_rows(tf_signals_combined)
+    tf_signal_rows = _signals_to_table_rows(tf_signals_combined, is_admin=is_admin)
     tf_signal_count = len(tf_signals_combined)
     trend_following_html = _build_trend_following_html(
         tf_data, tf_signal_rows, tf_signal_count
@@ -5869,19 +5879,19 @@ def admin_dashboard(
     hlc_signals = get_all_signals(
         strategy_name="highest_lowest_fx", limit=200, max_age_days=92
     )
-    hlc_signal_rows = _signals_to_table_rows(hlc_signals)
+    hlc_signal_rows = _signals_to_table_rows(hlc_signals, is_admin=is_admin)
     hlc_signal_count = len(hlc_signals)
     hlc_fx_html = _build_hlc_fx_html(hlc_data, hlc_signal_rows, hlc_signal_count)
 
     algo1_data = _get_stocks_algo1_data()
     algo1_signals = get_all_signals(strategy_name="stocks_algo1", limit=50, max_age_days=92)
-    algo1_signal_rows = _signals_to_table_rows(algo1_signals)
+    algo1_signal_rows = _signals_to_table_rows(algo1_signals, is_admin=is_admin)
     algo1_signal_count = len(algo1_signals)
     stocks_algo1_html = _build_stocks_algo1_html(algo1_data, algo1_signal_rows, algo1_signal_count)
 
     algo2_data = _get_stocks_algo2_data()
     algo2_signals = get_all_signals(strategy_name="stocks_algo2", limit=50, max_age_days=92)
-    algo2_signal_rows = _signals_to_table_rows(algo2_signals)
+    algo2_signal_rows = _signals_to_table_rows(algo2_signals, is_admin=is_admin)
     algo2_signal_count = len(algo2_signals)
     stocks_algo2_html = _build_stocks_algo2_html(algo2_data, algo2_signal_rows, algo2_signal_count)
 
@@ -6133,15 +6143,12 @@ def admin_dashboard(
                     <span style="color:#94a3b8;font-size:0.8rem;margin-left:8px;">Active: {active_count} | Total: {total_count}</span>
                     <span style="color:#64748b;font-size:0.75rem;margin-left:12px;" title="Closed signals older than 92 days are automatically purged nightly">&#128336; 92-day retention</span>
                 </div>
-                <div id="bulk-delete-bar" style="display:none;margin-bottom:10px;gap:8px;align-items:center;flex-wrap:wrap;">
-                    <button id="bulk-delete-btn" class="btn" style="background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);font-size:13px;" onclick="bulkDeleteSelected()" data-testid="button-bulk-delete">Delete Selected (0)</button>
-                    <input id="bulk-delete-reason" type="text" placeholder="Reason for bulk delete" style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:6px 12px;border-radius:6px;font-size:13px;min-width:240px;" data-testid="input-bulk-delete-reason">
-                </div>
+                {"" if not is_admin else '<div id="bulk-delete-bar" style="display:none;margin-bottom:10px;gap:8px;align-items:center;flex-wrap:wrap;"><button id="bulk-delete-btn" class="btn" style="background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);font-size:13px;" onclick="bulkDeleteSelected()" data-testid="button-bulk-delete">Delete Selected (0)</button><input id="bulk-delete-reason" type="text" placeholder="Reason for bulk delete" style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:6px 12px;border-radius:6px;font-size:13px;min-width:240px;" data-testid="input-bulk-delete-reason"></div>'}
                 <div style="overflow-x:auto;">
                     <table class="data-table" data-testid="signals-table">
                         <thead>
                             <tr>
-                                <th style="width:32px;text-align:center;"><input type="checkbox" onclick="toggleAllSignalCheckboxes(this)" title="Select all" data-testid="checkbox-select-all-signals"></th>
+                                {'<th style="width:32px;text-align:center;"><input type="checkbox" onclick="toggleAllSignalCheckboxes(this)" title="Select all" data-testid="checkbox-select-all-signals"></th>' if is_admin else '<th></th>'}
                                 <th>Asset</th>
                                 <th>Class</th>
                                 <th>Direction</th>

@@ -1,0 +1,42 @@
+In trading_engine/admin.py, in the _signals_to_table_rows() function, the actions_html block currently always renders Close and Delete buttons regardless of who is viewing. The function has no awareness of the current user's role.
+The fix requires two parts:
+1. Pass is_admin into _signals_to_table_rows()
+Change the function signature from:
+pythondef _signals_to_table_rows(signals: list[dict]) -> str:
+to:
+pythondef _signals_to_table_rows(signals: list[dict], is_admin: bool = False) -> str:
+2. Gate the actions column on is_admin
+Find the actions column block inside _signals_to_table_rows(). It currently renders for both OPEN and CLOSED status. Wrap the entire actions HTML so that buttons only render for admins. For non-admins render an empty cell:
+pythonif not is_admin:
+    actions_html = ""
+else:
+    if status == "OPEN":
+        actions_html = (
+            f'<button ...Close...</button>'
+            f'<button ...Delete...</button>'
+        )
+    else:
+        actions_html = (
+            f'<button ...Delete...</button>'
+        )
+3. Update all callers of _signals_to_table_rows() in admin_dashboard()
+Every place _signals_to_table_rows() is called, pass is_admin=is_admin as the second argument. The calls are:
+pythonsignal_rows = _signals_to_table_rows(signals, is_admin=is_admin)
+spx_signal_rows = _signals_to_table_rows(spx_signals, is_admin=is_admin)
+mtf_signal_rows = _signals_to_table_rows(mtf_signals, is_admin=is_admin)
+fx_trend_signal_rows = _signals_to_table_rows(fx_trend_signals, is_admin=is_admin)
+tf_signal_rows = _signals_to_table_rows(tf_signals_combined, is_admin=is_admin)
+hlc_signal_rows = _signals_to_table_rows(hlc_signals, is_admin=is_admin)
+algo1_signal_rows = _signals_to_table_rows(algo1_signals, is_admin=is_admin)
+algo2_signal_rows = _signals_to_table_rows(algo2_signals, is_admin=is_admin)
+4. Also hide the bulk delete bar and checkbox column for non-admins
+In admin_dashboard(), the bulk delete bar HTML block is:
+python<div id="bulk-delete-bar" ...>
+Wrap it in a Python conditional so it only renders when is_admin is True:
+python{"..." if is_admin else ""}
+Do the same for the select-all checkbox <th> in the signals table header — render it as an empty <th></th> for non-admins.
+5. Do NOT change:
+
+The actual admin API endpoints (/admin/api/signals/{id}/close, /admin/api/signals/{id} DELETE etc.) — those already have _admin_role_guard protecting them server-side
+The closeSignal(), deleteSignal(), bulkDeleteSelected() JavaScript functions — they can stay in ADMIN_JS since non-admins will never see the buttons that call them
+Any other part of the dashboard layout or tab visibility logic
