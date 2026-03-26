@@ -5060,8 +5060,41 @@ document.addEventListener('DOMContentLoaded', function() {
     var strategySelect = document.getElementById('new-asset-strategy');
     if (strategySelect && !strategySelect._subCatListenerAdded) {
         strategySelect.addEventListener('change', function() {
-            var w = document.getElementById('sub-category-wrapper');
-            if (w) w.style.display = this.value === 'mtf_ema' ? 'block' : 'none';
+            var strategy = this.value;
+            var subCatWrapper = document.getElementById('sub-category-wrapper');
+            var subCatSelect = document.getElementById('new-asset-sub-category');
+            var assetClassSelect = document.getElementById('new-asset-class');
+            var stockHint = document.getElementById('stock-symbol-hint');
+            var nasdaqNote = document.getElementById('nasdaq-sync-note');
+
+            if (strategy === 'mtf_ema') {
+                if (subCatWrapper) subCatWrapper.style.display = 'block';
+                if (subCatSelect) {
+                    subCatSelect.disabled = false;
+                    subCatSelect.innerHTML = '<option value="">— select sub-category —</option>'
+                        + '<option value="indices">Indices</option>'
+                        + '<option value="commodities">Commodities</option>'
+                        + '<option value="crypto">Crypto</option>'
+                        + '<option value="forex">Forex</option>';
+                }
+                if (assetClassSelect) { assetClassSelect.disabled = false; assetClassSelect.value = 'forex'; }
+                if (stockHint) stockHint.style.display = 'none';
+                if (nasdaqNote) nasdaqNote.style.display = 'none';
+            } else if (strategy === 'stocks_algo1' || strategy === 'stocks_algo2') {
+                if (subCatWrapper) subCatWrapper.style.display = 'block';
+                if (subCatSelect) {
+                    subCatSelect.disabled = true;
+                    subCatSelect.innerHTML = '<option value="nasdaq100" selected>NASDAQ 100</option>';
+                }
+                if (assetClassSelect) { assetClassSelect.value = 'stocks'; assetClassSelect.disabled = true; }
+                if (stockHint) stockHint.style.display = 'block';
+                if (nasdaqNote) nasdaqNote.style.display = 'block';
+            } else {
+                if (subCatWrapper) subCatWrapper.style.display = 'none';
+                if (assetClassSelect) { assetClassSelect.disabled = false; assetClassSelect.value = 'forex'; }
+                if (stockHint) stockHint.style.display = 'none';
+                if (nasdaqNote) nasdaqNote.style.display = 'none';
+            }
         });
         strategySelect._subCatListenerAdded = true;
     }
@@ -5113,6 +5146,8 @@ async function loadAssets() {
       mtf_ema: 'MTF EMA', trend_non_forex: 'Trend Non-Forex',
       trend_forex: 'Trend Forex', sp500_momentum: 'SP500 Momentum',
       highest_lowest_fx: 'Highest/Lowest FX',
+      stocks_algo1: 'Stocks Algo 1 — Monthly Momentum',
+      stocks_algo2: 'Stocks Algo 2 — Mean Reversion',
     };
     var rows = '';
     assets.forEach(function(a) {
@@ -5205,12 +5240,19 @@ async function removeAsset(btn) {
         );
         return;
     }
-    if (!confirm(
-        'Remove ' + symbol + ' from ' + strategyName + '? '
-        + 'This will NOT close any open signals. '
-        + 'The asset will be excluded from future evaluation '
-        + 'cycles and can be re-added at any time.'
-    )) return;
+    var confirmMsg;
+    if (strategyName === 'stocks_algo1' || strategyName === 'stocks_algo2') {
+        confirmMsg = 'Remove ' + symbol + ' from ' + strategyName + '?\n\n'
+            + 'Note: If this symbol is part of the NASDAQ 100, it will be re-added automatically '
+            + 'on the next monthly sync (1st of month). To permanently exclude it, remove it here '
+            + 'AND also remove it from the NASDAQ 100 seed list in nasdaq_sync.py.';
+    } else {
+        confirmMsg = 'Remove ' + symbol + ' from ' + strategyName + '? '
+            + 'This will NOT close any open signals. '
+            + 'The asset will be excluded from future evaluation '
+            + 'cycles and can be re-added at any time.';
+    }
+    if (!confirm(confirmMsg)) return;
     try {
         var res = await fetch(
             BASE + '/admin/api/strategy-assets/remove',
@@ -6038,6 +6080,14 @@ def admin_dashboard(
             <div class="section">
                 <h2>Stocks Algo 1 — Monthly Momentum</h2>
                 {stocks_algo1_html}
+                <div class="timezone-note" style="margin-top:12px;">
+                    <strong>Asset Management:</strong>
+                    <ul>
+                        <li>The NASDAQ 100 universe is managed automatically via monthly sync. To view or modify the symbol list, go to the <strong>Asset Management</strong> tab.</li>
+                        <li>Manually added symbols (added via Asset Management tab) are marked <code>added_by=admin</code> and are preserved across monthly syncs.</li>
+                        <li>Current active symbol count is shown in the Asset Management tab filter.</li>
+                    </ul>
+                </div>
             </div>
         </div>
 
@@ -6045,6 +6095,14 @@ def admin_dashboard(
             <div class="section">
                 <h2>Stocks Algo 2 — Mean Reversion (Death Cross)</h2>
                 {stocks_algo2_html}
+                <div class="timezone-note" style="margin-top:12px;">
+                    <strong>Asset Management:</strong>
+                    <ul>
+                        <li>The NASDAQ 100 universe is managed automatically via monthly sync. To view or modify the symbol list, go to the <strong>Asset Management</strong> tab.</li>
+                        <li>Manually added symbols (added via Asset Management tab) are marked <code>added_by=admin</code> and are preserved across monthly syncs.</li>
+                        <li>Current active symbol count is shown in the Asset Management tab filter.</li>
+                    </ul>
+                </div>
             </div>
         </div>
 
@@ -6891,6 +6949,8 @@ def admin_dashboard(
                                 <option value="trend_forex">Trend Forex</option>
                                 <option value="sp500_momentum">SP500 Momentum</option>
                                 <option value="highest_lowest_fx">Highest/Lowest FX</option>
+                                <option value="stocks_algo1" data-testid="option-stocks-algo1">Stocks Algo 1 — Monthly Momentum</option>
+                                <option value="stocks_algo2" data-testid="option-stocks-algo2">Stocks Algo 2 — Mean Reversion</option>
                             </select>
                         </div>
                         <div>
@@ -6903,7 +6963,7 @@ def admin_dashboard(
                             </select>
                         </div>
                         <div id="sub-category-wrapper">
-                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Sub-Category <span style="color:#64748b;font-size:11px;">(MTF EMA only)</span></label>
+                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Sub-Category</label>
                             <select id="new-asset-sub-category" data-testid="select-new-asset-sub-category"
                                     style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;color:#f1f5f9;font-size:14px;border-radius:6px;cursor:pointer;">
                                 <option value="">— select sub-category —</option>
@@ -6917,6 +6977,20 @@ def admin_dashboard(
                             <button class="btn btn-secondary" onclick="testAssetCoverage()" data-testid="button-test-asset" style="white-space:nowrap;">Test FCSAPI</button>
                             <button class="btn btn-primary" onclick="addAsset()" data-testid="button-add-asset" style="white-space:nowrap;">Add Asset</button>
                         </div>
+                    </div>
+                    <div id="stock-symbol-hint" data-testid="hint-stock-symbol" style="display:none;margin-top:6px;font-size:12px;color:#94a3b8;">
+                        Enter the NASDAQ ticker symbol e.g. AAPL, MSFT, NVDA, TSLA.
+                        The symbol will be verified against FCSAPI before saving.
+                        NASDAQ 100 symbols are synced automatically on the 1st of each month — use this form to add non-standard symbols or correct missing entries.
+                    </div>
+                    <div id="nasdaq-sync-note" data-testid="note-nasdaq-sync" class="timezone-note" style="display:none;margin-top:12px;">
+                        <strong>NASDAQ 100 Auto-Sync:</strong>
+                        <ul>
+                            <li>Symbols for Stocks Algo 1 and Stocks Algo 2 are automatically synced from the NASDAQ 100 constituent list on the <strong>1st of each month at 2:00 AM ET</strong> via the <code>nasdaq100_sync_monthly</code> scheduler job.</li>
+                            <li>Use this form to <strong>manually add</strong> symbols that are missing from the auto-sync, or to add non-NASDAQ-100 stocks you want to track.</li>
+                            <li>Symbols added manually via this form are marked <code>added_by=admin</code> and will NOT be removed by the monthly auto-sync.</li>
+                            <li>To trigger an immediate NASDAQ sync without waiting for the scheduler, run: <code>python3 backfill.py --strategy stocks_algo1</code></li>
+                        </ul>
                     </div>
                     <div id="asset-test-result" style="margin-top:12px;font-size:13px;"></div>
                     <div id="asset-add-result" style="margin-top:8px;font-size:13px;"></div>
@@ -6935,6 +7009,8 @@ def admin_dashboard(
                                 <option value="trend_forex">Trend Forex</option>
                                 <option value="sp500_momentum">SP500 Momentum</option>
                                 <option value="highest_lowest_fx">Highest/Lowest FX</option>
+                                <option value="stocks_algo1" data-testid="filter-stocks-algo1">Stocks Algo 1</option>
+                                <option value="stocks_algo2" data-testid="filter-stocks-algo2">Stocks Algo 2</option>
                             </select>
                             <button class="btn" onclick="loadAssets()" style="font-size:13px;padding:6px 14px;">Refresh</button>
                             <button class="btn" onclick="syncAssetDedup()" data-testid="button-sync-dedup" style="font-size:13px;padding:6px 14px;background:rgba(234,179,8,0.12);color:#eab308;border:1px solid rgba(234,179,8,0.3);">Sync &amp; Remove Duplicates</button>
@@ -8089,9 +8165,12 @@ def api_add_strategy_asset(
         "trend_forex",
         "sp500_momentum",
         "highest_lowest_fx",
+        "stocks_algo1",
+        "stocks_algo2",
     }
     VALID_CLASSES = {"forex", "crypto", "stocks"}
     VALID_SUB_CATEGORIES = {"indices", "commodities", "crypto", "forex"}
+    STOCKS_STRATEGIES = {"stocks_algo1", "stocks_algo2"}
 
     if not symbol:
         return JSONResponse(
@@ -8102,10 +8181,29 @@ def api_add_strategy_asset(
         return JSONResponse(
             content={
                 "success": False,
-                "error": f"Invalid strategy. Must be one of: {', '.join(VALID_STRATEGIES)}",
+                "error": f"Invalid strategy. Must be one of: {', '.join(sorted(VALID_STRATEGIES))}",
             },
             status_code=400,
         )
+
+    # Stocks strategies: reject slash-formatted symbols and force asset_class/sub_category
+    if strategy_name in STOCKS_STRATEGIES:
+        if "/" in symbol:
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "error": "Stock ticker symbols must not contain / (e.g. use AAPL not AAPL/USD)",
+                },
+                status_code=400,
+            )
+        # Backend always enforces correct values regardless of what frontend sends
+        asset_class = "stocks"
+        sub_category = "nasdaq100"
+        logger.info(
+            f"[ADMIN] stocks strategy asset — forcing "
+            f"asset_class=stocks sub_category=nasdaq100 for {symbol}/{strategy_name}"
+        )
+
     if asset_class not in VALID_CLASSES:
         return JSONResponse(
             content={

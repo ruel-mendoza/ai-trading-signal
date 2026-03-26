@@ -1,0 +1,358 @@
+Update the Asset Management tab in the admin panel to support
+manually adding and removing symbols for stocks_algo1 and
+stocks_algo2 strategies. Currently these two strategies are
+excluded from the Asset Management UI — they must be included
+alongside the existing five strategies.
+
+─────────────────────────────────────────────────────────────────
+PART 1 — admin.py UI CHANGES
+─────────────────────────────────────────────────────────────────
+
+────────────────────────────────────
+1a. Update the Add New Asset form
+────────────────────────────────────
+
+In the Asset Management tab HTML (tab-assets), find the strategy
+dropdown with id="new-asset-strategy" and add two new options:
+
+  <option value="stocks_algo1">Stocks Algo 1 — Monthly Momentum</option>
+  <option value="stocks_algo2">Stocks Algo 2 — Mean Reversion</option>
+
+These must appear after the existing five strategy options.
+
+────────────────────────────────────
+1b. Update the sub-category dropdown
+────────────────────────────────────
+
+The sub-category dropdown with id="new-asset-sub-category" is
+currently only shown when strategy=mtf_ema. Update the JavaScript
+showTab/strategy change listener so that:
+
+  - mtf_ema:      show sub-category with options:
+                  indices, commodities, crypto, forex
+  - stocks_algo1: show sub-category with options:
+                  nasdaq100
+                  (pre-select nasdaq100 automatically)
+                  (field is read-only for stocks strategies)
+  - stocks_algo2: show sub-category with options:
+                  nasdaq100
+                  (pre-select nasdaq100 automatically)
+                  (field is read-only for stocks strategies)
+  - all others:   hide sub-category
+
+────────────────────────────────────
+1c. Update the asset class dropdown
+────────────────────────────────────
+
+When strategy is stocks_algo1 or stocks_algo2:
+  - Auto-select asset_class = "stocks"
+  - Make the asset class dropdown read-only (disabled)
+    so the user cannot accidentally set it to forex or crypto
+
+When strategy changes back to a non-stock strategy:
+  - Re-enable the asset class dropdown
+  - Reset to default (forex)
+
+────────────────────────────────────
+1d. Update the strategy filter dropdown
+────────────────────────────────────
+
+Find the filter dropdown with id="filter-strategy-assets" and
+add two new options:
+
+  <option value="stocks_algo1">Stocks Algo 1</option>
+  <option value="stocks_algo2">Stocks Algo 2</option>
+
+────────────────────────────────────
+1e. Update strategy labels in the assets table
+────────────────────────────────────
+
+In the loadAssets() JavaScript function, find the strategyLabels
+object and add:
+
+  stocks_algo1: 'Stocks Algo 1 — Monthly Momentum',
+  stocks_algo2: 'Stocks Algo 2 — Mean Reversion',
+
+────────────────────────────────────
+1f. Add a stock symbol helper note
+────────────────────────────────────
+
+When stocks_algo1 or stocks_algo2 is selected in the strategy
+dropdown, show a helper note below the symbol input:
+
+  <div id="stock-symbol-hint" style="display:none;
+    margin-top:6px;font-size:12px;color:#94a3b8;">
+    Enter the NASDAQ ticker symbol e.g. AAPL, MSFT, NVDA, TSLA.
+    The symbol will be verified against FCSAPI before saving.
+    NASDAQ 100 symbols are synced automatically on the 1st of
+    each month — use this form to add non-standard symbols or
+    correct missing entries.
+  </div>
+
+Show this hint when strategy is stocks_algo1 or stocks_algo2,
+hide it for all other strategies.
+
+─────────────────────────────────────────────────────────────────
+PART 2 — admin.py API ENDPOINT CHANGES
+─────────────────────────────────────────────────────────────────
+
+────────────────────────────────────
+2a. Update api_add_strategy_asset()
+────────────────────────────────────
+
+Find the VALID_STRATEGIES set in api_add_strategy_asset() and
+add the two new strategies:
+
+  VALID_STRATEGIES = {
+      "mtf_ema",
+      "trend_non_forex",
+      "trend_forex",
+      "sp500_momentum",
+      "highest_lowest_fx",
+      "stocks_algo1",      ← ADD
+      "stocks_algo2",      ← ADD
+  }
+
+────────────────────────────────────
+2b. Update sub_category validation
+────────────────────────────────────
+
+The current validation only checks sub_category for mtf_ema.
+Extend it to validate stocks strategies:
+
+  If strategy_name in ("stocks_algo1", "stocks_algo2"):
+    - Force asset_class = "stocks" regardless of what was passed
+    - Force sub_category = "nasdaq100" regardless of what was passed
+    - Log: "[ADMIN] stocks strategy asset — forcing 
+            asset_class=stocks sub_category=nasdaq100"
+
+This means even if the frontend sends wrong values, the backend
+always stores stocks/nasdaq100 for these strategies.
+
+────────────────────────────────────
+2c. Update FCSAPI verification for stocks
+────────────────────────────────────
+
+The current test_symbol_coverage() call works for forex/crypto.
+For stocks_algo1 and stocks_algo2, the FCSAPI test must use the
+stock endpoint correctly.
+
+Add a pre-check before calling test_symbol_coverage():
+
+  If strategy_name in ("stocks_algo1", "stocks_algo2"):
+    - Log that this is a NASDAQ equity symbol
+    - The test_symbol_coverage() in FCSAPIClient already handles
+      stock routing via get_asset_class() and get_v4_base_url()
+      so no special handling is needed
+    - But if the symbol contains "/" it is likely wrong — return
+      a 400 error:
+      {"success": False, "error": "Stock ticker symbols must not
+       contain / (e.g. use AAPL not AAPL/USD)"}
+
+────────────────────────────────────
+2d. Update api_remove_strategy_asset_by_body()
+────────────────────────────────────
+
+No changes needed — the existing remove endpoint already works
+for any strategy_name. Just verify it handles stocks_algo1 and
+stocks_algo2 correctly (it should since it uses strategy_name
+generically).
+
+────────────────────────────────────
+2e. Update api_list_strategy_assets()
+────────────────────────────────────
+
+No changes needed — the existing list endpoint already returns
+all strategies. The new strategies will appear automatically
+once assets are added.
+
+─────────────────────────────────────────────────────────────────
+PART 3 — STOCKS STRATEGY SPECIFIC BEHAVIOUR
+─────────────────────────────────────────────────────────────────
+
+────────────────────────────────────
+3a. Sync note in the UI
+────────────────────────────────────
+
+In the Asset Management tab, add a section below the Add New Asset
+form that explains the automatic NASDAQ sync:
+
+  <div class="timezone-note" style="margin-top:12px;
+    display:none;" id="nasdaq-sync-note">
+    <strong>NASDAQ 100 Auto-Sync:</strong>
+    <ul>
+      <li>Symbols for Stocks Algo 1 and Stocks Algo 2 are 
+          automatically synced from the NASDAQ 100 constituent 
+          list on the <strong>1st of each month at 2:00 AM ET</strong>
+          via the <code>nasdaq100_sync_monthly</code> scheduler job.
+      </li>
+      <li>Use this form to <strong>manually add</strong> symbols 
+          that are missing from the auto-sync, or to add 
+          non-NASDAQ-100 stocks you want to track.
+      </li>
+      <li>Symbols added manually via this form are marked 
+          <code>added_by=admin</code> and will NOT be removed 
+          by the monthly auto-sync.
+      </li>
+      <li>To trigger an immediate NASDAQ sync without waiting 
+          for the scheduler, run:
+          <code>python3 backfill.py --strategy stocks_algo1</code>
+      </li>
+    </ul>
+  </div>
+
+Show this note when stocks_algo1 or stocks_algo2 is selected,
+hide it for all other strategies.
+
+────────────────────────────────────
+3b. Remove button behaviour for stocks
+────────────────────────────────────
+
+The existing removeAsset() JavaScript function works generically
+for all strategies. No changes needed.
+
+However, add a warning in the remove confirmation dialog for
+stocks strategies:
+
+In the removeAsset() function, detect if the strategy is
+stocks_algo1 or stocks_algo2 and change the confirm message to:
+
+  "Remove {symbol} from {strategyName}?
+
+  Note: If this symbol is part of the NASDAQ 100, it will be
+  re-added automatically on the next monthly sync (1st of month).
+  To permanently exclude it, remove it here AND also remove it
+  from the NASDAQ 100 seed list in nasdaq_sync.py."
+
+For all other strategies keep the existing confirm message.
+
+─────────────────────────────────────────────────────────────────
+PART 4 — DATABASE SEED UPDATE (database.py)
+─────────────────────────────────────────────────────────────────
+
+No changes needed to _STRATEGY_ASSET_SEEDS in database.py.
+The stocks strategies already get their symbols from
+sync_nasdaq100_symbols() via nasdaq_sync.py on startup.
+The seed function only runs when the table is empty and would
+not include stocks symbols anyway.
+
+─────────────────────────────────────────────────────────────────
+PART 5 — ADMIN PANEL STRATEGY RULES SECTION
+─────────────────────────────────────────────────────────────────
+
+In the Stocks Algo 1 tab (tab-stocks_algo1), below the existing
+strategy rules timezone-note div, add a note about manual
+asset management:
+
+  <div class="timezone-note" style="margin-top:12px;">
+    <strong>Asset Management:</strong>
+    <ul>
+      <li>The NASDAQ 100 universe is managed automatically via 
+          monthly sync. To view or modify the symbol list, go to 
+          the <strong>Asset Management</strong> tab.</li>
+      <li>Manually added symbols (added via Asset Management tab) 
+          are marked <code>added_by=admin</code> and are preserved 
+          across monthly syncs.</li>
+      <li>Current active symbol count is shown in the Asset 
+          Management tab filter.</li>
+    </ul>
+  </div>
+
+Add the same note to the Stocks Algo 2 tab (tab-stocks_algo2).
+
+─────────────────────────────────────────────────────────────────
+PART 6 — JAVASCRIPT UPDATES (ADMIN_JS)
+─────────────────────────────────────────────────────────────────
+
+Update the strategy change event listener that controls the
+sub-category wrapper visibility. Find this block in ADMIN_JS:
+
+  var strategySelect = document.getElementById('new-asset-strategy');
+  if (strategySelect && !strategySelect._subCatListenerAdded) {
+      strategySelect.addEventListener('change', function() {
+          var w = document.getElementById('sub-category-wrapper');
+          if (w) w.style.display = this.value === 'mtf_ema' 
+                                   ? 'block' : 'none';
+      });
+
+Replace the event listener body with this expanded version:
+
+  strategySelect.addEventListener('change', function() {
+      var strategy = this.value;
+      var subCatWrapper = document.getElementById(
+                          'sub-category-wrapper');
+      var subCatSelect = document.getElementById(
+                         'new-asset-sub-category');
+      var assetClassSelect = document.getElementById(
+                             'new-asset-class');
+      var stockHint = document.getElementById('stock-symbol-hint');
+      var nasdaqNote = document.getElementById('nasdaq-sync-note');
+
+      // Sub-category visibility and options
+      if (strategy === 'mtf_ema') {
+          subCatWrapper.style.display = 'block';
+          subCatSelect.disabled = false;
+          subCatSelect.innerHTML = `
+              <option value="">— select sub-category —</option>
+              <option value="indices">Indices</option>
+              <option value="commodities">Commodities</option>
+              <option value="crypto">Crypto</option>
+              <option value="forex">Forex</option>`;
+          if (assetClassSelect) {
+              assetClassSelect.disabled = false;
+              assetClassSelect.value = 'forex';
+          }
+          if (stockHint) stockHint.style.display = 'none';
+          if (nasdaqNote) nasdaqNote.style.display = 'none';
+
+      } else if (strategy === 'stocks_algo1' || 
+                 strategy === 'stocks_algo2') {
+          subCatWrapper.style.display = 'block';
+          subCatSelect.disabled = true;
+          subCatSelect.innerHTML = `
+              <option value="nasdaq100" selected>
+                NASDAQ 100</option>`;
+          if (assetClassSelect) {
+              assetClassSelect.value = 'stocks';
+              assetClassSelect.disabled = true;
+          }
+          if (stockHint) stockHint.style.display = 'block';
+          if (nasdaqNote) nasdaqNote.style.display = 'block';
+
+      } else {
+          subCatWrapper.style.display = 'none';
+          if (assetClassSelect) {
+              assetClassSelect.disabled = false;
+              assetClassSelect.value = 'forex';
+          }
+          if (stockHint) stockHint.style.display = 'none';
+          if (nasdaqNote) nasdaqNote.style.display = 'none';
+      }
+  });
+
+─────────────────────────────────────────────────────────────────
+CONSTRAINTS
+─────────────────────────────────────────────────────────────────
+
+- Do NOT modify any existing strategy logic in stocks_algo1.py
+  or stocks_algo2.py
+- Do NOT modify the nasdaq_sync.py auto-sync logic
+- Do NOT change the existing five strategy options in the form —
+  only add the two new ones
+- Do NOT change the FCSAPI verification flow — only add the
+  slash-check guard for stock tickers
+- Do NOT change database.py seed data
+- Preserve all existing Asset Management tab functionality
+  including the Test FCSAPI button, Sync & Remove Duplicates
+  button, and the existing filter/refresh controls
+- The backend must always enforce asset_class=stocks and
+  sub_category=nasdaq100 for stocks strategies regardless of
+  what the frontend sends — never trust the client for this
+- All existing data-testid attributes must be preserved
+- Add data-testid attributes to all new UI elements:
+    data-testid="option-stocks-algo1"
+    data-testid="option-stocks-algo2"
+    data-testid="hint-stock-symbol"
+    data-testid="note-nasdaq-sync"
+    data-testid="filter-stocks-algo1"
+    data-testid="filter-stocks-algo2"
