@@ -1,0 +1,376 @@
+Apply the NASDAQ: prefix fix to _fetch_stock_candles() in both
+stocks_algo1.py and stocks_algo2.py so that FCSAPI receives
+NASDAQ:AAPL instead of AAPL when fetching stock candle history.
+
+Also add the get_nasdaq_api_symbol() helper to fcsapi_client.py
+if it does not already exist.
+
+─────────────────────────────────────────────────────────────────
+PART 1 — fcsapi_client.py
+─────────────────────────────────────────────────────────────────
+
+Check if get_nasdaq_api_symbol() already exists in
+fcsapi_client.py. If it does NOT exist, add it as a
+module-level function directly after the existing
+get_asset_class() function:
+
+def get_nasdaq_api_symbol(symbol: str) -> str:
+    """
+    Convert a clean NASDAQ ticker to the FCSAPI v4 format.
+
+    FCSAPI v4 requires exchange-prefixed symbols for NASDAQ
+    equity stocks:
+      AAPL  →  NASDAQ:AAPL
+      MSFT  →  NASDAQ:MSFT
+      NVDA  →  NASDAQ:NVDA
+
+    Symbols that already contain a colon or slash are returned
+    unchanged — this covers forex (EUR/USD), crypto (BTC/USD),
+    and any symbol already prefixed (NASDAQ:AAPL).
+
+    This function must ONLY be used for plain NASDAQ equity
+    tickers. Do NOT apply it to:
+      - ETF symbols (CORN, USO, SGOL) — handled by ETF routing
+      - Index symbols (SPX, NDX, DJI) — in STOCK_INDEX_SYMBOLS
+      - Crypto symbols (BTC/USD) — contain slash
+      - Forex symbols (EUR/USD) — contain slash
+      - Commodity symbols (XAU/USD) — contain slash
+    """
+    if ":" in symbol or "/" in symbol:
+        return symbol
+    return f"NASDAQ:{symbol}"
+
+If get_nasdaq_api_symbol() already exists, do not add it again
+and do not modify the existing implementation.
+
+─────────────────────────────────────────────────────────────────
+PART 2 — stocks_algo1.py
+─────────────────────────────────────────────────────────────────
+
+Find the _fetch_stock_candles() function in stocks_algo1.py.
+
+It currently looks like this:
+
+  def _fetch_stock_candles(
+      cache: CacheLayer, symbol: str, limit: int = 300
+  ) -> list[dict]:
+      from trading_engine.fcsapi_client import (
+          BASE_URL_V4_STOCK,
+          TIMEFRAME_MAP,
+      )
+      ...
+      params = {
+          "symbol": symbol,
+          "period": tf_api,
+          "length": str(limit),
+          "type": "equity",
+          "exchange": "NASDAQ",
+          "access_key": api_key,
+      }
+      try:
+          ...
+          resp = _req.get(url, params=params, timeout=30)
+          ...
+
+Replace the entire _fetch_stock_candles() function with this
+updated version:
+
+def _fetch_stock_candles(
+    cache: CacheLayer, symbol: str, limit: int = 300
+) -> list[dict]:
+    """
+    Fetch D1 candles for a NASDAQ-listed equity via FCSAPI v4.
+
+    Uses NASDAQ: prefix format as required by FCSAPI v4:
+      AAPL → NASDAQ:AAPL
+      MSFT → NASDAQ:MSFT
+
+    The prefix is applied by get_nasdaq_api_symbol() and is
+    only added to plain ticker symbols — symbols containing
+    slashes or colons are passed through unchanged.
+    """
+    from trading_engine.fcsapi_client import (
+        BASE_URL_V4_STOCK,
+        TIMEFRAME_MAP,
+        get_nasdaq_api_symbol,
+        _parse_response_items,
+        _validate_candle_prices,
+    )
+    from trading_engine.credit_control import pre_request_check
+    from trading_engine.database import log_api_usage
+    import requests as _req
+
+    api_key = cache.api_client.api_key
+    if not api_key:
+        logger.warning(
+            f"[ALGO1] No API key — "
+            f"cannot fetch candles for {symbol}"
+        )
+        return []
+
+    # Apply NASDAQ: prefix — key fix for FCSAPI v4
+    api_symbol = get_nasdaq_api_symbol(symbol)
+    tf_api     = TIMEFRAME_MAP.get("D1", "1d")
+    url        = f"{BASE_URL_V4_STOCK}/history"
+
+    params = {
+        "symbol":     api_symbol,   # NASDAQ:AAPL not AAPL
+        "period":     tf_api,
+        "length":     str(limit),
+        "access_key": api_key,
+    }
+
+    logger.info(
+        f"[ALGO1] Fetching candles | "
+        f"symbol={symbol} | "
+        f"api_symbol={api_symbol} | "
+        f"period={tf_api} | "
+        f"length={limit}"
+    )
+
+    try:
+        pre_request_check()
+        resp = _req.get(url, params=params, timeout=30)
+
+        if resp.status_code == 400:
+            logger.error(
+                f"[ALGO1] {symbol} | "
+                f"400 Bad Request | "
+                f"api_symbol={api_symbol} | "
+                f"body={resp.text[:200]}"
+            )
+            return []
+
+        resp.raise_for_status()
+        data = resp.json()
+        log_api_usage(
+            endpoint=f"stock/history/{symbol}"
+        )
+
+        if not data.get("status") or not data.get("response"):
+            logger.warning(
+                f"[ALGO1] {symbol} | "
+                f"No data returned | "
+                f"msg={data.get('msg', '')}"
+            )
+            return []
+
+        candles = _parse_response_items(data["response"])
+        candles = _validate_candle_prices(candles, symbol)
+
+        logger.info(
+            f"[ALGO1] {symbol} | "
+            f"✓ {len(candles)} candles returned | "
+            f"latest_close="
+            f"{candles[-1]['close'] if candles else 'N/A'}"
+        )
+        return candles
+
+    except Exception as e:
+        logger.warning(
+            f"[ALGO1] {symbol} | "
+            f"Candle fetch failed: {e}"
+        )
+        return []
+
+─────────────────────────────────────────────────────────────────
+PART 3 — stocks_algo2.py
+─────────────────────────────────────────────────────────────────
+
+Find the _fetch_stock_candles() function in stocks_algo2.py.
+It is identical in structure to the one in stocks_algo1.py
+but is a separate function definition in a separate file.
+
+Apply exactly the same replacement as Part 2 but with these
+differences in the log prefix and function docstring:
+
+  - Change all [ALGO1] log prefixes to [ALGO2]
+  - Change the docstring first line to:
+    "Fetch D1 candles for a NASDAQ-listed equity via FCSAPI v4.
+     Used by Stocks Algo 2 (Mean Reversion / Death Cross)."
+  - Everything else is identical to the Part 2 replacement
+
+The resulting function in stocks_algo2.py must be:
+
+def _fetch_stock_candles(
+    cache: CacheLayer, symbol: str, limit: int = 300
+) -> list[dict]:
+    """
+    Fetch D1 candles for a NASDAQ-listed equity via FCSAPI v4.
+    Used by Stocks Algo 2 (Mean Reversion / Death Cross).
+
+    Uses NASDAQ: prefix format as required by FCSAPI v4:
+      AAPL → NASDAQ:AAPL
+      MSFT → NASDAQ:MSFT
+    """
+    from trading_engine.fcsapi_client import (
+        BASE_URL_V4_STOCK,
+        TIMEFRAME_MAP,
+        get_nasdaq_api_symbol,
+        _parse_response_items,
+        _validate_candle_prices,
+    )
+    from trading_engine.credit_control import pre_request_check
+    from trading_engine.database import log_api_usage
+    import requests as _req
+
+    api_key = cache.api_client.api_key
+    if not api_key:
+        logger.warning(
+            f"[ALGO2] No API key — "
+            f"cannot fetch candles for {symbol}"
+        )
+        return []
+
+    api_symbol = get_nasdaq_api_symbol(symbol)
+    tf_api     = TIMEFRAME_MAP.get("D1", "1d")
+    url        = f"{BASE_URL_V4_STOCK}/history"
+
+    params = {
+        "symbol":     api_symbol,
+        "period":     tf_api,
+        "length":     str(limit),
+        "access_key": api_key,
+    }
+
+    logger.info(
+        f"[ALGO2] Fetching candles | "
+        f"symbol={symbol} | "
+        f"api_symbol={api_symbol} | "
+        f"period={tf_api} | "
+        f"length={limit}"
+    )
+
+    try:
+        pre_request_check()
+        resp = _req.get(url, params=params, timeout=30)
+
+        if resp.status_code == 400:
+            logger.error(
+                f"[ALGO2] {symbol} | "
+                f"400 Bad Request | "
+                f"api_symbol={api_symbol} | "
+                f"body={resp.text[:200]}"
+            )
+            return []
+
+        resp.raise_for_status()
+        data = resp.json()
+        log_api_usage(
+            endpoint=f"stock/history/{symbol}"
+        )
+
+        if not data.get("status") or not data.get("response"):
+            logger.warning(
+                f"[ALGO2] {symbol} | "
+                f"No data returned | "
+                f"msg={data.get('msg', '')}"
+            )
+            return []
+
+        candles = _parse_response_items(data["response"])
+        candles = _validate_candle_prices(candles, symbol)
+
+        logger.info(
+            f"[ALGO2] {symbol} | "
+            f"✓ {len(candles)} candles returned | "
+            f"latest_close="
+            f"{candles[-1]['close'] if candles else 'N/A'}"
+        )
+        return candles
+
+    except Exception as e:
+        logger.warning(
+            f"[ALGO2] {symbol} | "
+            f"Candle fetch failed: {e}"
+        )
+        return []
+
+─────────────────────────────────────────────────────────────────
+PART 4 — VERIFICATION IN SHELL AFTER DEPLOY
+─────────────────────────────────────────────────────────────────
+
+After deploying these changes, add instructions to verify
+the fix works by running this test in the Replit shell:
+
+  python3 -c "
+  import sys
+  sys.path.insert(0, '.')
+  from trading_engine.database import init_db
+  from trading_engine.fcsapi_client import (
+      FCSAPIClient,
+      get_nasdaq_api_symbol,
+  )
+  from trading_engine.cache_layer import CacheLayer
+  from trading_engine.strategies.stocks_algo1 import (
+      _fetch_stock_candles,
+  )
+
+  init_db()
+  cache = CacheLayer(FCSAPIClient())
+
+  # Verify the prefix is applied correctly
+  print('Prefix test:')
+  print(f'  AAPL  → {get_nasdaq_api_symbol(\"AAPL\")}')
+  print(f'  MSFT  → {get_nasdaq_api_symbol(\"MSFT\")}')
+  print(f'  BTC/USD → {get_nasdaq_api_symbol(\"BTC/USD\")}')
+  print(f'  EUR/USD → {get_nasdaq_api_symbol(\"EUR/USD\")}')
+  print(f'  NDX   → {get_nasdaq_api_symbol(\"NDX\")}')
+  print()
+
+  # Verify candle fetch works with NASDAQ: prefix
+  print('Fetching AAPL candles (limit=5)...')
+  candles = _fetch_stock_candles(cache, 'AAPL', limit=5)
+  if candles:
+      print(f'  ✓ {len(candles)} candles returned')
+      print(f'  Latest close : {candles[-1][\"close\"]}')
+      print(f'  Latest date  : {candles[-1][\"timestamp\"]}')
+  else:
+      print('  ✗ No candles returned — check API key and plan')
+  "
+
+─────────────────────────────────────────────────────────────────
+CONSTRAINTS
+─────────────────────────────────────────────────────────────────
+
+- Only modify these three files:
+    fcsapi_client.py      (add get_nasdaq_api_symbol only)
+    stocks_algo1.py       (replace _fetch_stock_candles only)
+    stocks_algo2.py       (replace _fetch_stock_candles only)
+
+- Do NOT modify any other files
+
+- Do NOT change any strategy entry or exit logic in
+  stocks_algo1.py or stocks_algo2.py beyond replacing
+  _fetch_stock_candles()
+
+- Do NOT change run_monthly(), run_daily(), check_exits(),
+  _calculate_momentum(), or _death_cross_detected()
+
+- Do NOT change any existing ETF or index symbol routing
+  in fcsapi_client.py — get_nasdaq_api_symbol() is a new
+  additive function only
+
+- Do NOT apply the NASDAQ: prefix to ETF symbols
+  (CORN, USO, SGOL, DBB etc) — they are handled by the
+  existing ETF routing via asset_class=etf
+
+- Do NOT apply the NASDAQ: prefix to index symbols
+  (SPX, NDX, DJI, RUT, OSX) — they are in
+  STOCK_INDEX_SYMBOLS and handled separately
+
+- The params dict must NOT include type or exchange fields —
+  the NASDAQ: prefix in the symbol itself is sufficient for
+  FCSAPI v4 to route the request correctly
+
+- The 400 status code must be caught explicitly without
+  raising an exception so a bad symbol does not crash
+  the entire strategy cycle
+
+- All log lines must use the [ALGO1] or [ALGO2] prefix
+  consistently so Replit logs are easy to filter
+
+- The import of get_nasdaq_api_symbol must be inside the
+  function body (local import) to match the existing
+  import style in both files and avoid circular import
+  issues at module load time

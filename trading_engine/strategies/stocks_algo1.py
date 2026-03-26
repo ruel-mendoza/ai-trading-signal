@@ -10,7 +10,7 @@ Mirrors the QC algorithm "UglyTanDinosaur":
 
 FCSAPI mapping
   • NDX index candles  → /indices/history  symbol=NDX  period=1d
-  • Stock candles      → /stock/history    symbol=<TICKER>  exchange=NASDAQ  period=1d
+  • Stock candles      → /stock/history    symbol=NASDAQ:<TICKER>  period=1d
 """
 
 import logging
