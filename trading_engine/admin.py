@@ -3988,6 +3988,45 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 #exit-modal .exit-modal-close { cursor:pointer; color:#64748b; font-size:1.1rem; line-height:1; padding:2px 4px; }
 #exit-modal .exit-modal-close:hover { color:#f1f5f9; }
 #exit-modal .exit-modal-body { font-size:0.83rem; color:#cbd5e1; line-height:1.55; }
+.btn-verify {
+    background: rgba(245,158,11,0.12);
+    color: #f59e0b;
+    border: 1px solid rgba(245,158,11,0.3);
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+.btn-verify:hover { background: rgba(245,158,11,0.25); border-color: #f59e0b; }
+.btn-verify:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-verify.verifying { background: rgba(59,130,246,0.12); color: #3b82f6; border-color: rgba(59,130,246,0.3); }
+.btn-verify.verified { background: rgba(34,197,94,0.12); color: #22c55e; border-color: rgba(34,197,94,0.3); }
+.btn-verify.failed { background: rgba(239,68,68,0.12); color: #ef4444; border-color: rgba(239,68,68,0.3); }
+.verify-toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 400px;
+    animation: slideInRight 0.3s ease;
+}
+.verify-toast.success { background: #052e16; border: 1px solid #166534; color: #86efac; }
+.verify-toast.error { background: #450a0a; border: 1px solid #991b1b; color: #fca5a5; }
+.verify-toast.info { background: #0c1a2e; border: 1px solid #1e40af; color: #93c5fd; }
+@keyframes slideInRight { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes fadeOut { from { opacity: 1; } to { opacity: 0; transform: translateY(10px); } }
+.nasdaq-prefix { color: #3b82f6; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; margin-right: 2px; }
 """
 
 ADMIN_JS = """
@@ -5153,18 +5192,29 @@ async function loadAssets() {
     assets.forEach(function(a) {
       var cc = classColors[a.asset_class] || ['rgba(100,116,139,0.15)', '#94a3b8'];
       var classBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.7rem;font-weight:600;text-transform:uppercase;background:' + cc[0] + ';color:' + cc[1] + ';">' + a.asset_class + '</span>';
-      var verifiedBadge = a.fcsapi_verified
-        ? '<span class="badge status-active" style="font-size:0.65rem;">\u2713 Verified</span>'
-        : '<span class="badge status-expired" style="font-size:0.65rem;">Unverified</span>';
+      var verifiedBadge;
+      if (a.fcsapi_verified) {
+          verifiedBadge = '<span class="badge status-active" data-testid="badge-verified-' + a.symbol.replace(/\//g,'-') + '">\u2713 Verified</span>';
+      } else {
+          verifiedBadge = '<button class="btn-verify" onclick="verifyAsset(\'' + a.strategy_name + '\', \'' + a.symbol + '\', this)" data-strategy="' + a.strategy_name + '" data-symbol="' + a.symbol + '" data-testid="button-verify-' + a.symbol.replace(/\//g,'-') + '" title="Click to verify against FCSAPI">\u26a1 Verify</button>';
+      }
       var addedBy = a.added_by || '\u2014';
       var createdAt = a.created_at ? a.created_at.slice(0, 10) : '\u2014';
       var notes = a.notes ? '<span title="' + a.notes.replace(/"/g, '&quot;') + '" style="cursor:help;color:#64748b;">&#x1F4DD;</span>' : '\u2014';
       var subCatLabel = a.sub_category
         ? a.sub_category.charAt(0).toUpperCase() + a.sub_category.slice(1)
         : '\u2014';
+      var displaySymbol;
+      var symbolSubline = '';
+      if (a.sub_category === 'nasdaq100' || a.asset_class === 'stocks') {
+          displaySymbol = '<span class="nasdaq-prefix">NASDAQ:</span><span style="font-weight:700;">' + a.symbol + '</span>';
+          symbolSubline = '<div style="font-size:10px;color:#64748b;margin-top:1px;letter-spacing:0.02em;">NASDAQ Equity</div>';
+      } else {
+          displaySymbol = '<span style="font-weight:700;">' + a.symbol + '</span>';
+      }
       var removeBtn = '<button class="btn" style="font-size:12px;padding:4px 10px;background:rgba(239,68,68,0.12);color:#ef4444;" onclick="removeAsset(this)" data-strategy="' + a.strategy_name + '" data-symbol="' + a.symbol + '" data-testid="button-remove-asset-' + a.symbol.replace(/\//g,'-') + '">Remove</button>';
       rows += '<tr data-testid="row-asset-' + a.symbol.replace(/\//g,'-') + '">'
-        + '<td style="font-weight:600;color:#f1f5f9;">' + a.symbol + '</td>'
+        + '<td style="color:#f1f5f9;">' + displaySymbol + symbolSubline + '</td>'
         + '<td>' + (strategyLabels[a.strategy_name] || a.strategy_name) + '</td>'
         + '<td>' + classBadge + '</td>'
         + '<td style="font-size:13px;color:#94a3b8;">' + subCatLabel + '</td>'
@@ -5184,16 +5234,22 @@ async function loadAssets() {
 
 async function testAssetCoverage() {
   var symbol = document.getElementById('new-asset-symbol').value.trim().toUpperCase();
+  var strategy = document.getElementById('new-asset-strategy') ? document.getElementById('new-asset-strategy').value : '';
   var resultEl = document.getElementById('asset-test-result');
   if (!symbol) { resultEl.innerHTML = '<span style="color:#ef4444;">Enter a symbol first.</span>'; return; }
   resultEl.innerHTML = '<span style="color:#94a3b8;">Testing ' + symbol + ' against FCSAPI...</span>';
   try {
-    var res = await fetch(BASE + '/admin/api/strategy-assets/test?symbol=' + encodeURIComponent(symbol));
+    var url = BASE + '/admin/api/strategy-assets/test?symbol=' + encodeURIComponent(symbol);
+    if (strategy) url += '&strategy=' + encodeURIComponent(strategy);
+    var res = await fetch(url);
     var data = await res.json();
     if (data.supported) {
-      resultEl.innerHTML = '<div class="result-success">\u2705 <strong>' + symbol + '</strong> is supported | API symbol: ' + data.api_symbol + ' | Class: ' + data.asset_class + ' | Sample close: ' + data.sample_close + ' | Candles returned: ' + data.candles_returned + '</div>';
+      var prefix = (strategy === 'stocks_algo1' || strategy === 'stocks_algo2') ? 'NASDAQ:' : '';
+      resultEl.innerHTML = '<div class="result-success">\u2705 <strong>' + prefix + symbol + '</strong> is supported | Close: ' + data.sample_close + ' | Candles: ' + data.candles_returned + '</div>';
+      showVerifyToast(prefix + symbol + ' verified \u2014 supported by FCSAPI', 'success', 3000);
     } else {
-      resultEl.innerHTML = '<div class="result-error">\u274c <strong>' + symbol + '</strong> not supported on current plan | Reason: ' + data.reason + '</div>';
+      resultEl.innerHTML = '<div class="result-error">\u274c <strong>' + symbol + '</strong> not supported | Reason: ' + data.reason + '</div>';
+      showVerifyToast(symbol + ' not supported: ' + data.reason, 'error', 5000);
     }
   } catch(e) {
     resultEl.innerHTML = '<span style="color:#ef4444;">Test failed: ' + e.message + '</span>';
@@ -5576,6 +5632,89 @@ async function bulkDeleteSelected() {
     } catch (e) {
         alert('Network error: ' + e.message);
     }
+}
+
+function showVerifyToast(message, type, duration) {
+    duration = duration || 3000;
+    var existing = document.getElementById('verify-toast-el');
+    if (existing) existing.remove();
+    var icons = { success: '\u2713', error: '\u2717', info: '\u24d8' };
+    var toast = document.createElement('div');
+    toast.id = 'verify-toast-el';
+    toast.className = 'verify-toast ' + type;
+    toast.setAttribute('data-testid', 'toast-verify-result');
+    toast.innerHTML = '<span style="font-size:16px;">' + (icons[type] || '\u24d8') + '</span><span>' + message + '</span>';
+    document.body.appendChild(toast);
+    setTimeout(function() {
+        if (toast.parentNode) {
+            toast.style.animation = 'fadeOut 0.4s ease forwards';
+            setTimeout(function() { if (toast.parentNode) toast.remove(); }, 400);
+        }
+    }, duration);
+}
+
+async function verifyAsset(strategyName, symbol, btnEl) {
+    btnEl.disabled = true;
+    btnEl.textContent = '\u23f3 Verifying...';
+    btnEl.className = 'btn-verify verifying';
+    showVerifyToast('Verifying ' + symbol + ' against FCSAPI...', 'info', 10000);
+    try {
+        var res = await fetch(BASE + '/admin/api/strategy-assets/verify', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ strategy_name: strategyName, symbol: symbol })
+        });
+        var data = await res.json();
+        if (data.success && data.verified) {
+            btnEl.textContent = '\u2713 Verified';
+            btnEl.className = 'btn-verify verified';
+            btnEl.disabled = true;
+            btnEl.style.cursor = 'default';
+            var detail = '';
+            if (data.sample_close) detail = ' | Close: ' + data.sample_close;
+            if (data.candles_returned) detail += ' | ' + data.candles_returned + ' candles';
+            showVerifyToast('\u2713 ' + symbol + ' verified successfully' + detail, 'success', 4000);
+            var cell = btnEl.closest('td');
+            if (cell) {
+                cell.innerHTML = '<span class="badge status-active" data-testid="badge-verified-' + symbol.replace(/\//g,'-') + '">\u2713 Verified</span>';
+            }
+        } else {
+            btnEl.disabled = false;
+            btnEl.textContent = '\u2717 Failed \u2014 Retry';
+            btnEl.className = 'btn-verify failed';
+            showVerifyToast('\u2717 ' + symbol + ' verification failed: ' + (data.reason || data.message || 'Not supported on current plan'), 'error', 6000);
+        }
+    } catch (err) {
+        btnEl.disabled = false;
+        btnEl.textContent = '\u26a1 Verify';
+        btnEl.className = 'btn-verify';
+        showVerifyToast('\u2717 Network error verifying ' + symbol + ': ' + err.message, 'error', 5000);
+    }
+}
+
+async function verifyAllUnverified() {
+    var buttons = document.querySelectorAll('.btn-verify:not(:disabled)');
+    if (buttons.length === 0) {
+        showVerifyToast('All assets are already verified', 'info', 3000);
+        return;
+    }
+    var confirmed = confirm('Verify ' + buttons.length + ' unverified asset(s)?\\n\\nThis will use ' + buttons.length + ' FCSAPI credit(s).');
+    if (!confirmed) return;
+    showVerifyToast('Verifying ' + buttons.length + ' asset(s) \u2014 please wait...', 'info', buttons.length * 2000);
+    var success = 0;
+    var failed  = 0;
+    for (var i = 0; i < buttons.length; i++) {
+        var btn = buttons[i];
+        var strategy = btn.dataset.strategy;
+        var symbol   = btn.dataset.symbol;
+        await verifyAsset(strategy, symbol, btn);
+        if (btn.classList.contains('verified')) { success++; } else { failed++; }
+        if (i < buttons.length - 1) {
+            await new Promise(function(r) { setTimeout(r, 1500); });
+        }
+    }
+    showVerifyToast('Batch verify complete: ' + success + ' passed, ' + failed + ' failed', failed > 0 ? 'error' : 'success', 5000);
+    loadAssets();
 }
 """
 
@@ -7010,6 +7149,7 @@ def admin_dashboard(
                                 <option value="stocks_algo2" data-testid="filter-stocks-algo2">Stocks Algo 2</option>
                             </select>
                             <button class="btn" onclick="loadAssets()" style="font-size:13px;padding:6px 14px;">Refresh</button>
+                            <button class="btn" onclick="verifyAllUnverified()" data-testid="button-verify-all-unverified" style="font-size:13px;padding:6px 14px;background:rgba(245,158,11,0.12);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);">&#x26A1; Verify All Unverified</button>
                             <button class="btn" onclick="syncAssetDedup()" data-testid="button-sync-dedup" style="font-size:13px;padding:6px 14px;background:rgba(234,179,8,0.12);color:#eab308;border:1px solid rgba(234,179,8,0.3);">Sync &amp; Remove Duplicates</button>
                         </div>
                     </div>
@@ -7018,7 +7158,7 @@ def admin_dashboard(
                             <thead>
                                 <tr>
                                     <th>Symbol</th><th>Strategy</th><th>Asset Class</th>
-                                    <th>Sub-Category</th><th>FCSAPI</th><th>Added By</th><th>Added</th>
+                                    <th>Sub-Category</th><th title="Click Verify on unverified assets to test them against the live FCSAPI feed. Uses 1 credit per verification.">FCSAPI &#9432;</th><th>Added By</th><th>Added</th>
                                     <th>Notes</th><th>Actions</th>
                                 </tr>
                             </thead>
@@ -8121,10 +8261,73 @@ def api_list_strategy_assets(
     return JSONResponse(content={"assets": assets, "count": len(assets)})
 
 
+def _verify_stock_symbol(symbol: str, api_client) -> dict:
+    """
+    Verify a NASDAQ equity symbol using the exact same endpoint and parameters
+    as _fetch_stock_candles() in stocks_algo1.py / stocks_algo2.py.
+    """
+    from trading_engine.fcsapi_client import (
+        BASE_URL_V4_STOCK,
+        TIMEFRAME_MAP,
+        _parse_response_items,
+        _validate_candle_prices,
+    )
+    from trading_engine.credit_control import pre_request_check
+    from trading_engine.database import log_api_usage
+    import requests as _req
+
+    api_key = api_client.api_key
+    if not api_key:
+        return {"supported": False, "reason": "No API key configured"}
+
+    params = {
+        "symbol": symbol,
+        "period": TIMEFRAME_MAP.get("D1", "1d"),
+        "length": "2",
+        "type": "equity",
+        "exchange": "NASDAQ",
+        "access_key": api_key,
+    }
+    try:
+        pre_request_check()
+        url = f"{BASE_URL_V4_STOCK}/history"
+        resp = _req.get(url, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        log_api_usage(endpoint=f"stock/history/verify/{symbol}")
+        if not data.get("status") or not data.get("response"):
+            return {
+                "supported": False,
+                "symbol": symbol,
+                "reason": data.get("msg", "No data returned"),
+            }
+        candles = _parse_response_items(data["response"])
+        candles = _validate_candle_prices(candles, symbol)
+        if not candles:
+            return {
+                "supported": False,
+                "symbol": symbol,
+                "reason": "API returned data but no valid candles",
+            }
+        return {
+            "supported": True,
+            "symbol": symbol,
+            "api_symbol": symbol,
+            "asset_class": "stocks",
+            "base_url": BASE_URL_V4_STOCK,
+            "sample_close": candles[-1]["close"],
+            "sample_time": candles[-1]["timestamp"],
+            "candles_returned": len(candles),
+        }
+    except Exception as e:
+        return {"supported": False, "symbol": symbol, "reason": str(e)}
+
+
 @router.get("/api/strategy-assets/test")
 def api_test_strategy_asset(
     request: Request,
     symbol: str = Query(...),
+    strategy: Optional[str] = Query(None),
 ):
     guard = _admin_role_guard(request)
     if guard:
@@ -8137,8 +8340,75 @@ def api_test_strategy_asset(
             content={"supported": False, "reason": "Engine not available"},
             status_code=503,
         )
-    result = engine.cache.api_client.test_symbol_coverage(symbol.upper().strip())
+    sym = symbol.upper().strip()
+    if strategy in ("stocks_algo1", "stocks_algo2"):
+        result = _verify_stock_symbol(sym, engine.cache.api_client)
+    else:
+        result = engine.cache.api_client.test_symbol_coverage(sym)
     return JSONResponse(content=result)
+
+
+@router.post("/api/strategy-assets/verify")
+def api_verify_strategy_asset(
+    request: Request,
+    body: dict = Body(...),
+):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    user = _get_session_user(request)
+    username = user.get("username", "admin") if user else "admin"
+    strategy_name = (body.get("strategy_name") or "").strip()
+    symbol = (body.get("symbol") or "").strip().upper()
+    if not strategy_name or not symbol:
+        return JSONResponse(
+            content={"success": False, "error": "strategy_name and symbol are required"},
+            status_code=400,
+        )
+    rows = get_strategy_assets_full(strategy_name=strategy_name)
+    match = next((r for r in rows if r.get("symbol") == symbol), None)
+    if not match:
+        return JSONResponse(
+            content={"success": False, "error": f"{symbol} not found in {strategy_name}"},
+            status_code=404,
+        )
+    from trading_engine import engine_registry
+    engine = engine_registry.get_engine()
+    if engine is None:
+        return JSONResponse(
+            content={"success": False, "error": "Engine not ready — retry in a few seconds"},
+            status_code=503,
+        )
+    if strategy_name in ("stocks_algo1", "stocks_algo2"):
+        result = _verify_stock_symbol(symbol, engine.cache.api_client)
+    else:
+        result = engine.cache.api_client.test_symbol_coverage(symbol)
+    supported = result.get("supported", False)
+    mark_asset_verified(strategy_name, symbol, verified=supported)
+    logger.info(
+        f"[ADMIN] Verify asset: {strategy_name}/{symbol} | result={supported} | by={username}"
+    )
+    if supported:
+        return JSONResponse(content={
+            "success": True,
+            "symbol": symbol,
+            "strategy_name": strategy_name,
+            "verified": True,
+            "sample_close": result.get("sample_close"),
+            "sample_time": result.get("sample_time"),
+            "candles_returned": result.get("candles_returned"),
+            "asset_class": result.get("asset_class"),
+            "message": f"{symbol} verified successfully against FCSAPI",
+        })
+    else:
+        return JSONResponse(content={
+            "success": False,
+            "symbol": symbol,
+            "strategy_name": strategy_name,
+            "verified": False,
+            "reason": result.get("reason", "Not supported"),
+            "message": f"{symbol} failed FCSAPI verification: {result.get('reason')}",
+        })
 
 
 @router.post("/api/strategy-assets")
@@ -8235,7 +8505,10 @@ def api_add_strategy_asset(
             status_code=503,
         )
     verified = False
-    test_result = engine.cache.api_client.test_symbol_coverage(symbol)
+    if strategy_name in ("stocks_algo1", "stocks_algo2"):
+        test_result = _verify_stock_symbol(symbol, engine.cache.api_client)
+    else:
+        test_result = engine.cache.api_client.test_symbol_coverage(symbol)
     if not test_result.get("supported"):
         return JSONResponse(
             content={

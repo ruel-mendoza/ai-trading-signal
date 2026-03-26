@@ -1,0 +1,784 @@
+Update the Asset Management tab in the admin panel to add a
+verify-on-demand button for unverified assets, implement proper
+NASDAQ symbol display prefix, and add auto-dismissing status
+messages for verification results.
+
+─────────────────────────────────────────────────────────────────
+PART 1 — DATABASE LAYER (database.py)
+─────────────────────────────────────────────────────────────────
+
+No changes needed to database.py. The existing
+mark_asset_verified() function already handles updating
+fcsapi_verified on a strategy_asset row:
+
+  mark_asset_verified(strategy_name, symbol, verified=True)
+
+This is what the new verify endpoint will call.
+
+─────────────────────────────────────────────────────────────────
+PART 2 — NEW ADMIN API ENDPOINT (admin.py)
+─────────────────────────────────────────────────────────────────
+
+Add a new endpoint to admin.py:
+
+POST /admin/api/strategy-assets/verify
+
+Body:
+{
+  "strategy_name": "stocks_algo1",
+  "symbol": "AAPL"
+}
+
+Logic:
+
+1. Validate strategy_name and symbol are present
+   If missing: return 400 {"success": False, 
+   "error": "strategy_name and symbol are required"}
+
+2. Fetch the asset row from DB:
+   rows = get_strategy_assets_full(strategy_name)
+   Find the row matching symbol.
+   If not found: return 404 {"success": False,
+   "error": f"{symbol} not found in {strategy_name}"}
+
+3. Run verification based on strategy type:
+
+   For stocks_algo1 and stocks_algo2:
+   Use the dedicated _verify_stock_symbol() function
+   (defined below — add as a module-level helper in admin.py)
+
+   For all other strategies:
+   Use engine.cache.api_client.test_symbol_coverage(symbol)
+   Get engine via:
+     from trading_engine import engine_registry
+     engine = engine_registry.get_engine()
+     if engine is None:
+         return 503 {"success": False, 
+         "error": "Engine not ready — retry in a few seconds"}
+
+4. If verification passes (supported=True):
+   - Call mark_asset_verified(strategy_name, symbol, verified=True)
+   - Return 200:
+     {
+       "success": True,
+       "symbol": symbol,
+       "strategy_name": strategy_name,
+       "verified": True,
+       "sample_close": result.get("sample_close"),
+       "sample_time": result.get("sample_time"),
+       "candles_returned": result.get("candles_returned"),
+       "asset_class": result.get("asset_class"),
+       "message": f"{symbol} verified successfully against FCSAPI"
+     }
+
+5. If verification fails (supported=False):
+   - Call mark_asset_verified(strategy_name, symbol, verified=False)
+   - Return 200 (not 4xx — the request succeeded, the asset
+     just failed verification):
+     {
+       "success": False,
+       "symbol": symbol,
+       "strategy_name": strategy_name,
+       "verified": False,
+       "reason": result.get("reason", "Not supported"),
+       "message": f"{symbol} failed FCSAPI verification: 
+                   {result.get('reason')}"
+     }
+
+6. Log every verification attempt at INFO level:
+   [ADMIN] Verify asset: {strategy_name}/{symbol} | 
+   result={supported} | by={username}
+
+────────────────────────────────────
+Add _verify_stock_symbol() helper
+────────────────────────────────────
+
+Add this as a module-level function in admin.py (not inside a
+route handler) so it can be reused by both the verify endpoint
+and the add asset endpoint:
+
+def _verify_stock_symbol(symbol: str, api_client) -> dict:
+    """
+    Verify a NASDAQ equity symbol using the exact same endpoint
+    and parameters as _fetch_stock_candles() in stocks_algo1.py
+    and stocks_algo2.py. Ensures verification accurately reflects
+    whether the strategy can actually fetch data for this symbol.
+    """
+    from trading_engine.fcsapi_client import (
+        BASE_URL_V4_STOCK,
+        TIMEFRAME_MAP,
+        _parse_response_items,
+        _validate_candle_prices,
+    )
+    from trading_engine.credit_control import pre_request_check
+    from trading_engine.database import log_api_usage
+    import requests as _req
+
+    api_key = api_client.api_key
+    if not api_key:
+        return {
+            "supported": False,
+            "reason": "No API key configured"
+        }
+
+    params = {
+        "symbol": symbol,
+        "period": TIMEFRAME_MAP.get("D1", "1d"),
+        "length": "2",
+        "type": "equity",
+        "exchange": "NASDAQ",
+        "access_key": api_key,
+    }
+
+    try:
+        pre_request_check()
+        url = f"{BASE_URL_V4_STOCK}/history"
+        resp = _req.get(url, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        log_api_usage(endpoint=f"stock/history/verify/{symbol}")
+
+        if not data.get("status") or not data.get("response"):
+            return {
+                "supported": False,
+                "symbol": symbol,
+                "reason": data.get("msg", "No data returned"),
+            }
+
+        candles = _parse_response_items(data["response"])
+        candles = _validate_candle_prices(candles, symbol)
+
+        if not candles:
+            return {
+                "supported": False,
+                "symbol": symbol,
+                "reason": "API returned data but no valid candles",
+            }
+
+        return {
+            "supported": True,
+            "symbol": symbol,
+            "api_symbol": symbol,
+            "asset_class": "stocks",
+            "base_url": BASE_URL_V4_STOCK,
+            "sample_close": candles[-1]["close"],
+            "sample_time": candles[-1]["timestamp"],
+            "candles_returned": len(candles),
+        }
+
+    except Exception as e:
+        return {
+            "supported": False,
+            "symbol": symbol,
+            "reason": str(e),
+        }
+
+Also update api_add_strategy_asset() to use _verify_stock_symbol()
+for stocks_algo1 and stocks_algo2 instead of the generic
+test_symbol_coverage():
+
+  If strategy_name in ("stocks_algo1", "stocks_algo2"):
+      from trading_engine import engine_registry
+      engine = engine_registry.get_engine()
+      if engine is None:
+          return JSONResponse(
+              content={"success": False,
+              "error": "Engine not ready"},
+              status_code=503)
+      test_result = _verify_stock_symbol(
+          symbol, engine.cache.api_client)
+  else:
+      test_result = engine.cache.api_client\
+                    .test_symbol_coverage(symbol)
+
+─────────────────────────────────────────────────────────────────
+PART 3 — ASSET TABLE UI CHANGES (admin.py HTML + JS)
+─────────────────────────────────────────────────────────────────
+
+────────────────────────────────────
+3a. Update the FCSAPI verified badge
+────────────────────────────────────
+
+In the loadAssets() JavaScript function, find where the
+verifiedBadge is constructed:
+
+  var verifiedBadge = a.fcsapi_verified
+    ? '<span class="badge status-active">✓ Verified</span>'
+    : '<span class="badge status-expired">Unverified</span>';
+
+Replace with this logic that renders a clickable button for
+unverified assets and a static badge for verified ones:
+
+  var verifiedBadge;
+  if (a.fcsapi_verified) {
+      verifiedBadge =
+          '<span class="badge status-active" ' +
+          'data-testid="badge-verified-' +
+          a.symbol.replace(/\//g, '-') + '">' +
+          '✓ Verified</span>';
+  } else {
+      verifiedBadge =
+          '<button ' +
+          'class="btn-verify" ' +
+          'onclick="verifyAsset(\'' + a.strategy_name +
+          '\', \'' + a.symbol + '\', this)" ' +
+          'data-strategy="' + a.strategy_name + '" ' +
+          'data-symbol="' + a.symbol + '" ' +
+          'data-testid="button-verify-' +
+          a.symbol.replace(/\//g, '-') + '" ' +
+          'title="Click to verify against FCSAPI">' +
+          '⚡ Verify</button>';
+  }
+
+────────────────────────────────────
+3b. Update symbol display for NASDAQ stocks
+────────────────────────────────────
+
+In the loadAssets() JavaScript function, find where the symbol
+cell is rendered in the table rows:
+
+  '<td style="font-weight:600;color:#f1f5f9;">' + 
+  a.symbol + '</td>'
+
+Replace with:
+
+  var displaySymbol = a.symbol;
+  var symbolExtra = '';
+  if (a.sub_category === 'nasdaq100' || 
+      a.asset_class === 'stocks') {
+      displaySymbol = 'NASDAQ:' + a.symbol;
+      symbolExtra = 
+          '<div style="font-size:10px;color:#64748b;' +
+          'margin-top:1px;">NASDAQ Listed</div>';
+  }
+
+  '<td style="font-weight:600;color:#f1f5f9;">' +
+  displaySymbol + symbolExtra + '</td>'
+
+This makes stocks show as NASDAQ:AAPL, NASDAQ:MSFT etc in the
+table while non-stock symbols remain unchanged (EUR/USD, BTC/USD).
+
+────────────────────────────────────
+3c. Update the FCSAPI column header tooltip
+────────────────────────────────────
+
+In the assets table thead, find:
+  <th>FCSAPI</th>
+
+Replace with:
+  <th title="Click Verify on unverified assets to test them 
+  against the live FCSAPI feed. Uses 1 credit per verification.">
+  FCSAPI ⓘ</th>
+
+─────────────────────────────────────────────────────────────────
+PART 4 — CSS (ADMIN_CSS in admin.py)
+─────────────────────────────────────────────────────────────────
+
+Add these new CSS rules to ADMIN_CSS:
+
+  .btn-verify {
+      background: rgba(245,158,11,0.12);
+      color: #f59e0b;
+      border: 1px solid rgba(245,158,11,0.3);
+      padding: 3px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+  }
+  .btn-verify:hover {
+      background: rgba(245,158,11,0.25);
+      border-color: #f59e0b;
+  }
+  .btn-verify:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+  }
+  .btn-verify.verifying {
+      background: rgba(59,130,246,0.12);
+      color: #3b82f6;
+      border-color: rgba(59,130,246,0.3);
+  }
+  .btn-verify.verified {
+      background: rgba(34,197,94,0.12);
+      color: #22c55e;
+      border-color: rgba(34,197,94,0.3);
+  }
+  .btn-verify.failed {
+      background: rgba(239,68,68,0.12);
+      color: #ef4444;
+      border-color: rgba(239,68,68,0.3);
+  }
+
+  /* Auto-dismiss toast notification */
+  .verify-toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      max-width: 400px;
+      animation: slideInRight 0.3s ease;
+  }
+  .verify-toast.success {
+      background: #052e16;
+      border: 1px solid #166534;
+      color: #86efac;
+  }
+  .verify-toast.error {
+      background: #450a0a;
+      border: 1px solid #991b1b;
+      color: #fca5a5;
+  }
+  .verify-toast.info {
+      background: #0c1a2e;
+      border: 1px solid #1e40af;
+      color: #93c5fd;
+  }
+  @keyframes slideInRight {
+      from { transform: translateX(100px); opacity: 0; }
+      to   { transform: translateX(0);     opacity: 1; }
+  }
+  @keyframes fadeOut {
+      from { opacity: 1; }
+      to   { opacity: 0; transform: translateY(10px); }
+  }
+
+  /* NASDAQ symbol prefix styling */
+  .nasdaq-prefix {
+      color: #3b82f6;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      margin-right: 2px;
+  }
+
+─────────────────────────────────────────────────────────────────
+PART 5 — JAVASCRIPT (ADMIN_JS in admin.py)
+─────────────────────────────────────────────────────────────────
+
+Add these JavaScript functions to ADMIN_JS:
+
+────────────────────────────────────
+showVerifyToast(message, type, duration)
+────────────────────────────────────
+
+Creates and auto-dismisses a toast notification:
+
+  type: 'success' | 'error' | 'info'
+  duration: milliseconds before auto-dismiss (default 3000)
+
+Implementation:
+
+function showVerifyToast(message, type, duration) {
+    duration = duration || 3000;
+
+    // Remove any existing toast
+    var existing = document.getElementById('verify-toast-el');
+    if (existing) existing.remove();
+
+    var icons = {
+        success: '✓',
+        error:   '✗',
+        info:    'ⓘ'
+    };
+
+    var toast = document.createElement('div');
+    toast.id = 'verify-toast-el';
+    toast.className = 'verify-toast ' + type;
+    toast.setAttribute('data-testid', 'toast-verify-result');
+    toast.innerHTML =
+        '<span style="font-size:16px;">' +
+        (icons[type] || 'ⓘ') + '</span>' +
+        '<span>' + message + '</span>';
+
+    document.body.appendChild(toast);
+
+    // Auto-dismiss
+    setTimeout(function() {
+        if (toast.parentNode) {
+            toast.style.animation =
+                'fadeOut 0.4s ease forwards';
+            setTimeout(function() {
+                if (toast.parentNode) toast.remove();
+            }, 400);
+        }
+    }, duration);
+}
+
+────────────────────────────────────
+async verifyAsset(strategyName, symbol, btnEl)
+────────────────────────────────────
+
+Calls the verify endpoint and updates the button state inline:
+
+async function verifyAsset(strategyName, symbol, btnEl) {
+    // Update button to loading state
+    btnEl.disabled = true;
+    btnEl.textContent = '⏳ Verifying...';
+    btnEl.className = 'btn-verify verifying';
+
+    // Show info toast while verifying
+    showVerifyToast(
+        'Verifying ' + symbol + ' against FCSAPI...',
+        'info',
+        10000
+    );
+
+    try {
+        var res = await fetch(
+            BASE + '/admin/api/strategy-assets/verify',
+            {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    strategy_name: strategyName,
+                    symbol: symbol
+                })
+            }
+        );
+        var data = await res.json();
+
+        if (data.success && data.verified) {
+            // Update button to verified state
+            btnEl.textContent = '✓ Verified';
+            btnEl.className = 'btn-verify verified';
+            btnEl.disabled = true;
+            btnEl.style.cursor = 'default';
+
+            // Show success toast with sample data
+            var detail = '';
+            if (data.sample_close) {
+                detail = ' | Close: ' + data.sample_close;
+            }
+            if (data.candles_returned) {
+                detail += ' | ' + data.candles_returned + 
+                          ' candles';
+            }
+            showVerifyToast(
+                '✓ ' + symbol + ' verified successfully' + 
+                detail,
+                'success',
+                4000
+            );
+
+            // Update the badge in the table cell
+            // without reloading the whole table
+            var cell = btnEl.closest('td');
+            if (cell) {
+                cell.innerHTML =
+                    '<span class="badge status-active" ' +
+                    'data-testid="badge-verified-' +
+                    symbol.replace(/\//g, '-') + '">' +
+                    '✓ Verified</span>';
+            }
+
+        } else {
+            // Update button to failed state
+            btnEl.disabled = false;
+            btnEl.textContent = '✗ Failed — Retry';
+            btnEl.className = 'btn-verify failed';
+
+            showVerifyToast(
+                '✗ ' + symbol + ' verification failed: ' +
+                (data.reason || data.message || 
+                 'Not supported on current plan'),
+                'error',
+                6000
+            );
+        }
+
+    } catch (err) {
+        btnEl.disabled = false;
+        btnEl.textContent = '⚡ Verify';
+        btnEl.className = 'btn-verify';
+
+        showVerifyToast(
+            '✗ Network error verifying ' + symbol + 
+            ': ' + err.message,
+            'error',
+            5000
+        );
+    }
+}
+
+────────────────────────────────────
+async verifyAllUnverified()
+────────────────────────────────────
+
+Add a "Verify All Unverified" button handler that iterates
+through all visible verify buttons and calls verifyAsset()
+on each with a 1.5 second delay between calls to avoid
+hammering the FCSAPI:
+
+async function verifyAllUnverified() {
+    var buttons = document.querySelectorAll(
+        '.btn-verify:not(:disabled)'
+    );
+    if (buttons.length === 0) {
+        showVerifyToast(
+            'All assets are already verified', 
+            'info', 
+            3000
+        );
+        return;
+    }
+
+    var confirmed = confirm(
+        'Verify ' + buttons.length + ' unverified asset(s)?' +
+        '\n\nThis will use ' + buttons.length + 
+        ' FCSAPI credit(s).'
+    );
+    if (!confirmed) return;
+
+    showVerifyToast(
+        'Verifying ' + buttons.length + 
+        ' asset(s) — please wait...',
+        'info',
+        buttons.length * 2000
+    );
+
+    var success = 0;
+    var failed  = 0;
+
+    for (var i = 0; i < buttons.length; i++) {
+        var btn = buttons[i];
+        var strategy = btn.dataset.strategy;
+        var symbol   = btn.dataset.symbol;
+
+        await verifyAsset(strategy, symbol, btn);
+
+        // Read result from button class
+        if (btn.classList.contains('verified')) {
+            success++;
+        } else {
+            failed++;
+        }
+
+        // Delay between calls to avoid rate limiting
+        if (i < buttons.length - 1) {
+            await new Promise(r => setTimeout(r, 1500));
+        }
+    }
+
+    showVerifyToast(
+        'Batch verify complete: ' + success + 
+        ' passed, ' + failed + ' failed',
+        failed > 0 ? 'error' : 'success',
+        5000
+    );
+}
+
+─────────────────────────────────────────────────────────────────
+PART 6 — ADD VERIFY ALL BUTTON TO ASSET MANAGEMENT TAB
+─────────────────────────────────────────────────────────────────
+
+In the Asset Management tab HTML, find the controls row that
+contains the filter dropdown, Refresh button, and
+Sync & Remove Duplicates button:
+
+  <div style="display:flex;align-items:center;
+  justify-content:space-between;margin-bottom:12px;">
+
+Add a new "Verify All Unverified" button to this controls row,
+between the Refresh button and the Sync button:
+
+  <button 
+    class="btn" 
+    onclick="verifyAllUnverified()" 
+    data-testid="button-verify-all-unverified"
+    style="font-size:13px;padding:6px 14px;
+           background:rgba(245,158,11,0.12);
+           color:#f59e0b;
+           border:1px solid rgba(245,158,11,0.3);">
+    ⚡ Verify All Unverified
+  </button>
+
+─────────────────────────────────────────────────────────────────
+PART 7 — NASDAQ SYMBOL DISPLAY REFINEMENT
+─────────────────────────────────────────────────────────────────
+
+Update the symbol display logic in loadAssets() to use styled
+prefix rendering instead of plain text concatenation:
+
+  var displaySymbol;
+  var symbolSubline = '';
+
+  if (a.sub_category === 'nasdaq100' || 
+      a.asset_class === 'stocks') {
+      displaySymbol =
+          '<span class="nasdaq-prefix">NASDAQ:</span>' +
+          '<span style="font-weight:700;">' +
+          a.symbol + '</span>';
+      symbolSubline =
+          '<div style="font-size:10px;color:#64748b;' +
+          'margin-top:1px;letter-spacing:0.02em;">' +
+          'NASDAQ Equity</div>';
+  } else {
+      displaySymbol =
+          '<span style="font-weight:700;">' +
+          a.symbol + '</span>';
+  }
+
+  // In the table row td:
+  '<td style="color:#f1f5f9;">' + 
+  displaySymbol + symbolSubline + '</td>'
+
+─────────────────────────────────────────────────────────────────
+PART 8 — VERIFICATION STATUS IN ADD ASSET FLOW
+─────────────────────────────────────────────────────────────────
+
+Update the existing testAssetCoverage() function to use
+_verify_stock_symbol logic when a stocks strategy is selected:
+
+In the testAssetCoverage() JavaScript function, update the
+fetch URL to pass the currently selected strategy:
+
+  async function testAssetCoverage() {
+      var symbol   = document.getElementById(
+                     'new-asset-symbol').value
+                     .trim().toUpperCase();
+      var strategy = document.getElementById(
+                     'new-asset-strategy').value;
+      var resultEl = document.getElementById(
+                     'asset-test-result');
+
+      if (!symbol) {
+          resultEl.innerHTML =
+              '<span style="color:#ef4444;">' +
+              'Enter a symbol first.</span>';
+          return;
+      }
+
+      resultEl.innerHTML =
+          '<span style="color:#94a3b8;">' +
+          'Testing ' + symbol + ' against FCSAPI...</span>';
+
+      try {
+          // Pass strategy so backend uses correct 
+          // verification path (stock vs forex/crypto)
+          var url = BASE + 
+              '/admin/api/strategy-assets/test?symbol=' +
+              encodeURIComponent(symbol) +
+              '&strategy=' + encodeURIComponent(strategy);
+
+          var res  = await fetch(url);
+          var data = await res.json();
+
+          if (data.supported) {
+              var prefix = (strategy === 'stocks_algo1' || 
+                            strategy === 'stocks_algo2')
+                           ? 'NASDAQ:' : '';
+              resultEl.innerHTML =
+                  '<div class="result-success">' +
+                  '✅ <strong>' + prefix + symbol +
+                  '</strong> is supported' +
+                  ' | Close: ' + data.sample_close +
+                  ' | Candles: ' + data.candles_returned +
+                  '</div>';
+
+              // Show toast for successful test
+              showVerifyToast(
+                  prefix + symbol + 
+                  ' verified — supported by FCSAPI',
+                  'success',
+                  3000
+              );
+          } else {
+              resultEl.innerHTML =
+                  '<div class="result-error">' +
+                  '❌ <strong>' + symbol +
+                  '</strong> not supported | Reason: ' +
+                  data.reason + '</div>';
+
+              showVerifyToast(
+                  symbol + ' not supported: ' + data.reason,
+                  'error',
+                  5000
+              );
+          }
+      } catch (e) {
+          resultEl.innerHTML =
+              '<span style="color:#ef4444;">' +
+              'Test failed: ' + e.message + '</span>';
+      }
+  }
+
+Also update the existing api_test_strategy_asset() endpoint in
+admin.py to accept an optional strategy query param and route
+to _verify_stock_symbol() for stocks strategies:
+
+  @router.get("/api/strategy-assets/test")
+  def api_test_strategy_asset(
+      request: Request,
+      symbol: str = Query(...),
+      strategy: str = Query(None),   ← ADD THIS PARAM
+  ):
+      guard = _admin_role_guard(request)
+      if guard:
+          return guard
+
+      from trading_engine import engine_registry
+      engine = engine_registry.get_engine()
+      if engine is None:
+          return JSONResponse(
+              content={
+                  "supported": False,
+                  "reason": "Engine not available"
+              },
+              status_code=503,
+          )
+
+      sym = symbol.upper().strip()
+
+      if strategy in ("stocks_algo1", "stocks_algo2"):
+          result = _verify_stock_symbol(
+              sym, engine.cache.api_client)
+      else:
+          result = engine.cache.api_client\
+                   .test_symbol_coverage(sym)
+
+      return JSONResponse(content=result)
+
+─────────────────────────────────────────────────────────────────
+CONSTRAINTS
+─────────────────────────────────────────────────────────────────
+
+- Do NOT modify any existing endpoints other than
+  api_test_strategy_asset() as described above
+- Do NOT change any strategy logic in stocks_algo1.py or
+  stocks_algo2.py
+- Do NOT change the existing verified badge rendering for
+  assets that are already verified — only unverified assets
+  get the clickable button
+- The NASDAQ: prefix must only appear for assets where
+  asset_class=stocks OR sub_category=nasdaq100 — never
+  for forex, crypto, or ETF symbols
+- The toast notification must auto-dismiss — it must never
+  require a user click to close
+- The toast must stack correctly if multiple verifications
+  fire in quick succession — each new toast replaces the
+  previous one
+- The verifyAllUnverified() function must always add a delay
+  between API calls to avoid triggering FCSAPI rate limits
+- The Verify All button must show a credit cost confirmation
+  before proceeding
+- All new data-testid attributes must follow the existing
+  naming convention
+- Preserve all existing Asset Management functionality
+  including add, remove, filter, refresh, and sync-dedup
+- The inline badge update after successful verification
+  (updating the cell without reloading the table) must work
+  correctly — do not reload the entire assets table on
+  single-asset verification success
+- For batch verify, reload the table after all verifications
+  complete rather than updating cells individually
