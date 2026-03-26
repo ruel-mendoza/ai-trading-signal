@@ -1,0 +1,35 @@
+In this trading signal engine codebase, make the following targeted changes to hide take profit numbers from user-facing surfaces only. The internal DB columns and strategy logic must remain completely untouched.
+1. api_v1.py — Public API responses
+In _format_signal_public(), remove take_profit from the response dict entirely — do not include the field even as null. Keep exit_instructions in the response as-is.
+In _format_signal(), remove take_profit and trailing_stop from the returned dict entirely. Keep exit_instructions in the response as-is.
+In SignalPublic Pydantic model, remove only the take_profit field. Keep exit_instructions.
+In SignalLegacy Pydantic model, remove only the take_profit and trailing_stop fields. Keep exit_instructions.
+2. admin.py — Admin panel HTML
+In _signals_to_table_rows(), the Take Profit column cell (tp_cell) currently renders the TP value plus the "How to Exit" link like this:
+pythontp_cell = (
+    f'{tp_str}'
+    f'<br><span class="exit-link" '
+    f"onclick=\"showExitLogic('{strategy_js}', '{direction_js}', this)\">"
+    f"How to Exit</span>"
+)
+Change it so the TP value is always rendered as — but keep the "How to Exit" link exactly as-is:
+pythontp_cell = (
+    f'—'
+    f'<br><span class="exit-link" '
+    f"onclick=\"showExitLogic('{strategy_js}', '{direction_js}', this)\">"
+    f"How to Exit</span>"
+)
+This applies to the single _signals_to_table_rows() function only — all signals tables across the admin panel (signals, spx, mtf, tf, forex_trend, hlc_fx, algo1, algo2) use this same function so they will all update automatically.
+Do NOT remove or change the #exit-modal, #exit-modal-overlay, closeExitModal(), showExitLogic() function, EXIT_INSTRUCTIONS constant, .exit-link CSS, or any exit modal HTML — all of that must remain fully intact since the "How to Exit" link is still active.
+3. api/v1/public_signals.py (the hardened public signals router)
+If take_profit appears in any response schema or serialization in that file, remove it from the output. Keep exit_instructions if present.
+4. Do NOT change:
+
+Any database column (take_profit, exit_price, exit_reason)
+Any strategy logic that calculates or stores take profit
+The _get_exit_instruction() function and EXIT_INSTRUCTIONS dict
+The exit_instructions field in all API responses
+The "How to Exit" link in the admin signals table
+The exit modal and all its supporting JS/CSS
+The admin panel's internal strategy rule description sections
+Any internal DB logging or signal metadata

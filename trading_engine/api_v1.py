@@ -72,6 +72,7 @@ class SignalPublic(BaseModel):
     stop_loss: float = Field(..., example=1.0790)
     strategy: str = Field(..., example="mtf_ema")
     published_at: str = Field(..., example="2026-03-02T12:00:00Z")
+    exit_instructions: Optional[str] = Field(None, description="Human-readable exit rule for this strategy and direction.")
     meta: Optional[dict] = None
 
 class SignalsLatestResponse(BaseModel):
@@ -90,6 +91,7 @@ class SignalLegacy(BaseModel):
     direction: str
     entry_price: float
     stop_loss: float
+    exit_instructions: Optional[str] = None
     status: str
     exit_price: Optional[float] = None
     exit_reason: Optional[str] = None
@@ -551,6 +553,7 @@ def _format_signal_public(s: dict, position: Optional[dict] = None) -> dict:
         "stop_loss": s["stop_loss"],
         "strategy": s["strategy_name"],
         "published_at": ts,
+        "exit_instructions": _get_exit_instruction(s.get("strategy_name", ""), s.get("direction", "")),
     }
     if meta:
         result["meta"] = meta
@@ -568,6 +571,7 @@ def _format_signal(s: dict) -> dict:
         "direction": s["direction"],
         "entry_price": s["entry_price"],
         "stop_loss": s["stop_loss"],
+        "exit_instructions": _get_exit_instruction(s.get("strategy_name", ""), s.get("direction", "")),
         "status": s["status"],
         "exit_price": s.get("exit_price"),
         "exit_reason": s.get("exit_reason"),
