@@ -1,0 +1,94 @@
+Create backfill.py in the project root directory.
+
+The script must:
+
+1. Import and initialise the existing trading engine components:
+   - FCSAPIClient from trading_engine.fcsapi_client
+   - CacheLayer from trading_engine.cache_layer
+   - init_db from trading_engine.database
+   - get_strategy_assets_full from trading_engine.database
+
+2. Define ASSET_TIMEFRAMES mapping each strategy to the timeframes it needs:
+   - mtf_ema: ["D1", "4H", "1H"]
+   - trend_forex: ["D1"]
+   - trend_non_forex: ["D1"]
+   - sp500_momentum: ["30m", "D1"]
+   - highest_lowest_fx: ["1H", "D1"]
+   - stocks_algo1: ["D1"]
+   - stocks_algo2: ["D1"]
+
+3. Define get_all_assets() function that:
+   - Queries get_strategy_assets_full() for each strategy
+   - Filters to active assets only (is_active=True or is_active==1)
+   - Returns a dict of {timeframe: set_of_symbols} — symbols are deduplicated
+     across strategies automatically via the set
+   - Logs how many unique symbols were found per timeframe
+
+4. Define run_backfill() function that:
+   - Calls init_db() first
+   - Creates FCSAPIClient() and CacheLayer(api_client)
+   - Aborts with a clear error message if api_client.api_key is empty
+   - Calls get_all_assets() to build the full refresh list
+   - Iterates over each timeframe/symbol combination
+   - For each, calls cache.force_refresh(symbol, tf, limit=300)
+   - Logs for each symbol:
+       symbol/timeframe | candle count | date range (earliest → latest timestamp) | latest close price
+   - Tracks success count, failed count, skipped count
+   - On exception per symbol: logs the error and increments failed, continues to next symbol (never aborts the whole run)
+   - After all symbols, prints a summary: total attempted, succeeded, failed
+   - If any failures, logs a warning listing the failed symbols and suggesting to check FCSAPI key, credit balance, and symbol mapping
+
+5. Add a __main__ block that calls run_backfill()
+
+6. Add argparse support for the following optional flags:
+   --strategy  Filter to a single strategy (e.g. --strategy mtf_ema)
+   --timeframe Filter to a single timeframe (e.g. --timeframe D1)
+   --symbol    Filter to a single symbol (e.g. --symbol "XAU/USD")
+   --dry-run   Print what would be fetched without making any API calls
+   --limit     Override the candle limit (default 300, max 300)
+
+   Examples:
+     python3 backfill.py                          # refresh everything
+     python3 backfill.py --strategy mtf_ema       # only MTF EMA assets
+     python3 backfill.py --symbol "XAU/USD"       # only XAU/USD all timeframes
+     python3 backfill.py --timeframe D1           # only D1 across all strategies
+     python3 backfill.py --dry-run                # print plan without API calls
+
+7. Logging:
+   - Use Python logging with INFO level
+   - Format: %(asctime)s [%(name)s] %(message)s
+   - Log a clear section header per timeframe group
+   - Use ✓ prefix for success lines and ✗ prefix for failure lines
+   - Log credit usage warning if more than 100 API calls will be made
+     (compute this during --dry-run so the user can see cost before running)
+
+8. Credit cost estimate:
+   - Before starting any fetches, compute and log the estimated FCSAPI credit cost
+   - Each force_refresh call = 1 credit
+   - Log: "Estimated credit cost: X credits" 
+   - If credits > 200, log a WARNING and ask for confirmation unless --force flag is passed
+
+9. Add --force flag:
+   - Skips the credit confirmation prompt
+   - Use alongside large refreshes
+
+10. After all fetches complete, automatically flush the API cache by calling:
+    from trading_engine.api_v1 import invalidate_signal_caches
+    invalidate_signal_caches()
+    Log: "API cache invalidated — fresh data will be served on next request"
+
+CONSTRAINTS:
+- Do NOT modify any existing files
+- Do NOT change any strategy logic, database schema, or API routes
+- Do NOT import anything that requires the FastAPI app to be running —
+  the script must work standalone from the shell without uvicorn
+- All imports must be inside functions or guarded so that importing the
+  trading_engine package works without a running event loop
+- The script must be safe to run multiple times (idempotent) —
+  force_refresh overwrites existing candles via upsert so re-running
+  is always safe
+- Handle the URL encoding of symbols with slashes (e.g. XAU/USD) 
+  internally — the user just passes the raw symbol string
+- Use sys.path.insert(0, ...) to ensure the project root is on the path
+  so trading_engine imports resolve correctly from the project root
+- Exit with code 0 on full success, code 1 if any symbols failed
