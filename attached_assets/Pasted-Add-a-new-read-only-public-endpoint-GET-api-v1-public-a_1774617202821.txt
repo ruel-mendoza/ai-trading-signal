@@ -1,0 +1,163 @@
+Add a new read-only public endpoint GET /api/v1/public/assets/list that returns all available tradeable assets with their metadata including a user-friendly category label.
+1. In trading_engine/api/v1/public_signals.py
+Add a new endpoint at the bottom of the file:
+python@router.get("/public/assets/list")
+def list_all_assets(
+    asset_class: Optional[str] = Query(None, description="Filter by asset class: forex, crypto, stocks"),
+    strategy: Optional[str] = Query(None, description="Filter by strategy name e.g. mtf_ema"),
+    category: Optional[str] = Query(None, description="Filter by category label: Forex, Crypto, Commodities, Indices, Stocks, ETFs"),
+):
+    """
+    Returns the full catalogue of all active tradeable assets
+    across all strategies. No signal data — purely asset metadata:
+    symbol, full name, asset class, category label, and strategies.
+    """
+    from trading_engine.database import get_strategy_assets_full, get_full_name_for_asset
+
+    # User-friendly category mapping based on symbol and sub_category
+    def _resolve_category(symbol: str, asset_class: str, sub_category: str) -> str:
+        if asset_class == "stocks" or sub_category == "nasdaq100":
+            return "Stocks"
+        if asset_class == "crypto" or sub_category == "crypto":
+            return "Crypto"
+        if sub_category == "indices":
+            return "Indices"
+        if sub_category == "commodities":
+            return "Commodities"
+        # ETF symbols — no slash, not an index, not crypto
+        if "/" not in symbol and asset_class == "forex":
+            return "ETFs"
+        # Forex pairs — contain a slash
+        if "/" in symbol and asset_class == "forex":
+            return "Forex"
+        return "Other"
+
+    rows = get_strategy_assets_full()
+
+    # Deduplicate by symbol — merge strategy names into a list
+    assets: dict[str, dict] = {}
+    for row in rows:
+        if not (row.get("is_active") is True or row.get("is_active") == 1):
+            continue
+        symbol = row["symbol"]
+        asset_class_val = row.get("asset_class", "other")
+        sub_category_val = row.get("sub_category") or ""
+        category_label = _resolve_category(symbol, asset_class_val, sub_category_val)
+
+        if symbol not in assets:
+            assets[symbol] = {
+                "symbol": symbol,
+                "full_name": row.get("full_name") or get_full_name_for_asset(symbol),
+                "asset_class": asset_class_val,
+                "sub_category": sub_category_val or None,
+                "category": category_label,
+                "strategies": [],
+            }
+        strat = row.get("strategy_name")
+        if strat and strat not in assets[symbol]["strategies"]:
+            assets[symbol]["strategies"].append(strat)
+
+    # Apply filters
+    result = list(assets.values())
+
+    if asset_class:
+        result = [a for a in result if a["asset_class"] == asset_class.lower()]
+
+    if strategy:
+        result = [a for a in result if strategy in a["strategies"]]
+
+    if category:
+        result = [a for a in result if a["category"].lower() == category.lower()]
+
+    # Sort: by category then symbol
+    CATEGORY_ORDER = {
+        "Forex": 1,
+        "Crypto": 2,
+        "Commodities": 3,
+        "Indices": 4,
+        "ETFs": 5,
+        "Stocks": 6,
+        "Other": 7,
+    }
+    result = sorted(
+        result,
+        key=lambda x: (CATEGORY_ORDER.get(x["category"], 99), x["symbol"])
+    )
+
+    return {
+        "count": len(result),
+        "categories": sorted(list({a["category"] for a in result}), key=lambda c: CATEGORY_ORDER.get(c, 99)),
+        "assets": result,
+    }
+2. Sample response shape
+json{
+  "count": 5,
+  "categories": ["Forex", "Crypto", "Commodities", "Indices", "ETFs", "Stocks"],
+  "assets": [
+    {
+      "symbol": "EUR/USD",
+      "full_name": "Euro / US Dollar",
+      "asset_class": "forex",
+      "sub_category": "forex",
+      "category": "Forex",
+      "strategies": ["mtf_ema", "trend_forex", "highest_lowest_fx"]
+    },
+    {
+      "symbol": "BTC/USD",
+      "full_name": "Bitcoin",
+      "asset_class": "crypto",
+      "sub_category": "crypto",
+      "category": "Crypto",
+      "strategies": ["mtf_ema", "trend_non_forex"]
+    },
+    {
+      "symbol": "XAU/USD",
+      "full_name": "Gold",
+      "asset_class": "forex",
+      "sub_category": "commodities",
+      "category": "Commodities",
+      "strategies": ["mtf_ema"]
+    },
+    {
+      "symbol": "SPX",
+      "full_name": "S&P 500",
+      "asset_class": "forex",
+      "sub_category": "indices",
+      "category": "Indices",
+      "strategies": ["mtf_ema", "sp500_momentum"]
+    },
+    {
+      "symbol": "USO",
+      "full_name": "United States Oil Fund",
+      "asset_class": "forex",
+      "sub_category": null,
+      "category": "ETFs",
+      "strategies": ["trend_non_forex"]
+    },
+    {
+      "symbol": "AAPL",
+      "full_name": "Apple Inc.",
+      "asset_class": "stocks",
+      "sub_category": "nasdaq100",
+      "category": "Stocks",
+      "strategies": ["stocks_algo1", "stocks_algo2"]
+    }
+  ]
+}
+3. Add to the API Catalog in trading_engine/admin.py
+In admin_dashboard(), find the API Catalog market data table and add a new row after the /api/v1/market/indicators row:
+html<tr>
+    <td><span class="badge status-open">GET</span></td>
+    <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/public/assets/list</td>
+    <td>Full asset catalogue — symbol, full name, asset class, category (Forex/Crypto/Commodities/Indices/ETFs/Stocks), and strategies. Supports filtering.</td>
+    <td><span style="color:#22c55e;">60s</span></td>
+    <td style="font-size:12px;color:#94a3b8;">asset_class, strategy, category</td>
+    <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/public/assets/list')">Copy</button></td>
+</tr>
+4. Do NOT change:
+
+Any existing endpoints including /api/v1/public/assets
+Any strategy logic or database schema
+The get_strategy_assets_full() or get_full_name_for_asset() functions
+The _resolve_asset_class() or CATEGORY_MAP in api_v1.py
+Any existing signal endpoints or response shapes

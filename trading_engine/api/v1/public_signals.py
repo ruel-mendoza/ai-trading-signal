@@ -287,48 +287,69 @@ def list_assets(
 def list_all_assets(
     asset_class: Optional[str] = Query(None, description="Filter by asset class: forex, crypto, stocks"),
     strategy: Optional[str] = Query(None, description="Filter by strategy name e.g. mtf_ema"),
+    category: Optional[str] = Query(None, description="Filter by category label: Forex, Crypto, Commodities, Indices, Stocks, ETFs"),
 ):
     """
     Returns the full catalogue of all active tradeable assets
-    across all strategies. No signal data is included —
-    this is purely asset metadata: symbol, full name,
-    asset class, and which strategies cover it.
+    across all strategies. No signal data — purely asset metadata:
+    symbol, full name, asset class, category label, and strategies.
     """
     from trading_engine.database import get_strategy_assets_full, get_full_name_for_asset
 
+    def _resolve_category(symbol: str, ac: str, sub: str) -> str:
+        if ac == "stocks" or sub == "nasdaq100":
+            return "Stocks"
+        if ac == "crypto" or sub == "crypto":
+            return "Crypto"
+        if sub == "indices":
+            return "Indices"
+        if sub == "commodities":
+            return "Commodities"
+        if "/" not in symbol and ac == "forex":
+            return "ETFs"
+        if "/" in symbol and ac == "forex":
+            return "Forex"
+        return "Other"
+
+    CATEGORY_ORDER = {"Forex": 1, "Crypto": 2, "Commodities": 3, "Indices": 4, "ETFs": 5, "Stocks": 6, "Other": 7}
+
     rows = get_strategy_assets_full()
 
-    # Deduplicate by symbol — a symbol can appear in multiple strategies
     assets: dict[str, dict] = {}
     for row in rows:
         if not (row.get("is_active") is True or row.get("is_active") == 1):
             continue
         symbol = row["symbol"]
+        ac_val = row.get("asset_class", "other")
+        sub_val = row.get("sub_category") or ""
+        cat_label = _resolve_category(symbol, ac_val, sub_val)
+
         if symbol not in assets:
             assets[symbol] = {
                 "symbol": symbol,
                 "full_name": row.get("full_name") or get_full_name_for_asset(symbol),
-                "asset_class": row.get("asset_class", "other"),
-                "sub_category": row.get("sub_category"),
+                "asset_class": ac_val,
+                "sub_category": sub_val or None,
+                "category": cat_label,
                 "strategies": [],
             }
         strat = row.get("strategy_name")
         if strat and strat not in assets[symbol]["strategies"]:
             assets[symbol]["strategies"].append(strat)
 
-    # Sort by asset_class then symbol
-    sorted_assets = sorted(
-        assets.values(),
-        key=lambda x: (x["asset_class"], x["symbol"])
-    )
+    result = list(assets.values())
 
-    # Apply optional filters
     if asset_class:
-        sorted_assets = [a for a in sorted_assets if a["asset_class"] == asset_class]
+        result = [a for a in result if a["asset_class"] == asset_class.lower()]
     if strategy:
-        sorted_assets = [a for a in sorted_assets if strategy in a["strategies"]]
+        result = [a for a in result if strategy in a["strategies"]]
+    if category:
+        result = [a for a in result if a["category"].lower() == category.lower()]
+
+    result = sorted(result, key=lambda x: (CATEGORY_ORDER.get(x["category"], 99), x["symbol"]))
 
     return {
-        "count": len(sorted_assets),
-        "assets": sorted_assets,
+        "count": len(result),
+        "categories": sorted({a["category"] for a in result}, key=lambda c: CATEGORY_ORDER.get(c, 99)),
+        "assets": result,
     }

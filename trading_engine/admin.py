@@ -6910,9 +6910,9 @@ def admin_dashboard(
                             <tr>
                                 <td><span class="badge status-open">GET</span></td>
                                 <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/public/assets/list</td>
-                                <td>Full asset catalogue — symbol, full name, asset class, and strategies. Supports ?asset_class= and ?strategy= filters.</td>
+                                <td>Full asset catalogue — symbol, full name, asset class, category (Forex/Crypto/Commodities/Indices/ETFs/Stocks), and strategies. Supports filtering.</td>
                                 <td><span style="color:#22c55e;">60s</span></td>
-                                <td style="font-size:12px;color:#94a3b8;">asset_class, strategy</td>
+                                <td style="font-size:12px;color:#94a3b8;">asset_class, strategy, category</td>
                                 <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/public/assets/list')" data-testid="copy-assets-list">Copy</button></td>
                             </tr>
                         </tbody>
