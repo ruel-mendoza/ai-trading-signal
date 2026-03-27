@@ -382,8 +382,7 @@ def _signals_to_table_rows(signals: list[dict], is_admin: bool = False) -> str:
         direction_js = direction.replace("'", "\\'")
         asset_js = asset_ticker.replace("'", "\\'")
         tp_cell = (
-            f'—'
-            f'<br><span class="exit-link" '
+            f'<span class="exit-link" '
             f"onclick=\"showExitLogic('{strategy_js}', '{direction_js}', this)\">"
             f"How to Exit</span>"
         )
@@ -871,7 +870,7 @@ def _build_spx_momentum_html(
                         <th>Direction</th>
                         <th>Entry Price</th>
                         <th>Stop Loss</th>
-                        <th>TP</th>
+                        <th>Exit Rules</th>
                         <th>Strategy</th>
                         <th>Status</th>
                         <th>Timestamp</th>
@@ -1343,7 +1342,7 @@ def _build_mtf_ema_html(
                         <th>Direction</th>
                         <th>Entry Price</th>
                         <th>Stop Loss</th>
-                        <th>TP</th>
+                        <th>Exit Rules</th>
                         <th>Strategy</th>
                         <th>Status</th>
                         <th>Timestamp</th>
@@ -2000,7 +1999,7 @@ def _build_trend_following_html(
                         <th>Direction</th>
                         <th>Entry Price</th>
                         <th>Stop Loss</th>
-                        <th>TP</th>
+                        <th>Exit Rules</th>
                         <th>Strategy</th>
                         <th>Status</th>
                         <th>Timestamp</th>
@@ -2303,7 +2302,7 @@ def _build_forex_trend_html(
                         <th>Direction</th>
                         <th>Entry Price</th>
                         <th>Stop Loss</th>
-                        <th>TP</th>
+                        <th>Exit Rules</th>
                         <th>Strategy</th>
                         <th>Status</th>
                         <th>Timestamp</th>
@@ -2609,7 +2608,7 @@ def _build_hlc_fx_html(
                             <th>Entry ATR(100)</th>
                             <th>Tracked Extreme</th>
                             <th>Trailing Stop</th>
-                            <th>TP</th>
+                            <th>Exit Rules</th>
                             <th>Current Close</th>
                             <th>P&amp;L</th>
                             <th>Opened</th>
@@ -2659,7 +2658,7 @@ def _build_hlc_fx_html(
                         <th>Direction</th>
                         <th>Entry Price</th>
                         <th>Stop Loss</th>
-                        <th>TP</th>
+                        <th>Exit Rules</th>
                         <th>Strategy</th>
                         <th>Status</th>
                         <th>Timestamp</th>
@@ -2874,7 +2873,7 @@ def _build_stocks_algo1_html(
                         <th>Direction</th>
                         <th>Entry Price</th>
                         <th>Stop Loss</th>
-                        <th>TP</th>
+                        <th>Exit Rules</th>
                         <th>Strategy</th>
                         <th>Status</th>
                         <th>Timestamp</th>
@@ -3052,7 +3051,7 @@ def _build_stocks_algo2_html(
                         <th>Direction</th>
                         <th>Entry Price</th>
                         <th>Stop Loss</th>
-                        <th>TP</th>
+                        <th>Exit Rules</th>
                         <th>Strategy</th>
                         <th>Status</th>
                         <th>Timestamp</th>
@@ -6160,7 +6159,7 @@ def admin_dashboard(
                                 <th>Direction</th>
                                 <th>Entry Price</th>
                                 <th>Stop Loss</th>
-                                <th>TP</th>
+                                <th>Exit Rules</th>
                                 <th>Strategy</th>
                                 <th>Status</th>
                                 <th>Timestamp</th>
