@@ -1,0 +1,100 @@
+Add a new read-only public endpoint GET /api/v1/public/assets/list that returns all available tradeable assets with their metadata — not signals, just the asset catalogue itself.
+1. In trading_engine/api/v1/public_signals.py
+Add a new endpoint at the bottom of the file:
+python@router.get("/public/assets/list")
+def list_all_assets():
+    """
+    Returns the full catalogue of all active tradeable assets
+    across all strategies. No signal data is included —
+    this is purely asset metadata: symbol, full name,
+    asset class, and which strategies cover it.
+    """
+    from trading_engine.database import get_strategy_assets_full, get_full_name_for_asset
+
+    rows = get_strategy_assets_full()
+    
+    # Deduplicate by symbol — a symbol can appear in multiple strategies
+    # Keep all unique symbols, merge strategy names into a list
+    assets: dict[str, dict] = {}
+    for row in rows:
+        if not (row.get("is_active") is True or row.get("is_active") == 1):
+            continue
+        symbol = row["symbol"]
+        if symbol not in assets:
+            assets[symbol] = {
+                "symbol": symbol,
+                "full_name": row.get("full_name") or get_full_name_for_asset(symbol),
+                "asset_class": row.get("asset_class", "other"),
+                "sub_category": row.get("sub_category"),
+                "strategies": [],
+            }
+        strat = row.get("strategy_name")
+        if strat and strat not in assets[symbol]["strategies"]:
+            assets[symbol]["strategies"].append(strat)
+
+    # Sort: by asset_class then symbol
+    sorted_assets = sorted(
+        assets.values(),
+        key=lambda x: (x["asset_class"], x["symbol"])
+    )
+
+    return {
+        "count": len(sorted_assets),
+        "assets": sorted_assets,
+    }
+2. Sample response shape
+json{
+  "count": 3,
+  "assets": [
+    {
+      "symbol": "BTC/USD",
+      "full_name": "Bitcoin",
+      "asset_class": "crypto",
+      "sub_category": "crypto",
+      "strategies": ["mtf_ema", "trend_non_forex"]
+    },
+    {
+      "symbol": "EUR/USD",
+      "full_name": "Euro / US Dollar",
+      "asset_class": "forex",
+      "sub_category": "forex",
+      "strategies": ["mtf_ema", "trend_forex", "highest_lowest_fx"]
+    },
+    {
+      "symbol": "AAPL",
+      "full_name": "Apple Inc.",
+      "asset_class": "stocks",
+      "sub_category": "nasdaq100",
+      "strategies": ["stocks_algo1", "stocks_algo2"]
+    }
+  ]
+}
+3. Optional query parameters to add
+Add these optional filters to the endpoint so the frontend can request subsets:
+python@router.get("/public/assets/list")
+def list_all_assets(
+    asset_class: Optional[str] = Query(None, description="Filter by asset class: forex, crypto, stocks"),
+    strategy: Optional[str] = Query(None, description="Filter by strategy name e.g. mtf_ema"),
+):
+Apply them before building the sorted list:
+python    if asset_class:
+        sorted_assets = [a for a in sorted_assets if a["asset_class"] == asset_class]
+    if strategy:
+        sorted_assets = [a for a in sorted_assets if strategy in a["strategies"]]
+4. Add to the API Catalog in trading_engine/admin.py
+In the admin_dashboard() function, find the API Catalog tab section where the market data endpoints table is defined. Add a new row for this endpoint after the existing /api/v1/market/indicators row:
+html<tr>
+    <td><span class="badge status-open">GET</span></td>
+    <td style="font-family:monospace;font-size:13px;color:#38bdf8;">/api/v1/public/assets/list</td>
+    <td>Full asset catalogue — symbol, full name, asset class, and strategies. Supports ?asset_class= and ?strategy= filters.</td>
+    <td><span style="color:#22c55e;">60s</span></td>
+    <td style="font-size:12px;color:#94a3b8;">asset_class, strategy</td>
+    <td><button class="btn-copy" onclick="copyApiUrl('/api/v1/public/assets/list')">Copy</button></td>
+</tr>
+5. Do NOT change:
+
+The existing /api/v1/public/assets endpoint if it exists
+Any strategy logic or database schema
+The get_strategy_assets_full() function
+Any existing signal endpoints
+The get_full_name_for_asset() function

@@ -281,3 +281,54 @@ def list_assets(
         return {"assets": assets, "count": len(assets)}
 
     return _inner(asset_class=asset_class)
+
+
+@router.get("/assets/list")
+def list_all_assets(
+    asset_class: Optional[str] = Query(None, description="Filter by asset class: forex, crypto, stocks"),
+    strategy: Optional[str] = Query(None, description="Filter by strategy name e.g. mtf_ema"),
+):
+    """
+    Returns the full catalogue of all active tradeable assets
+    across all strategies. No signal data is included —
+    this is purely asset metadata: symbol, full name,
+    asset class, and which strategies cover it.
+    """
+    from trading_engine.database import get_strategy_assets_full, get_full_name_for_asset
+
+    rows = get_strategy_assets_full()
+
+    # Deduplicate by symbol — a symbol can appear in multiple strategies
+    assets: dict[str, dict] = {}
+    for row in rows:
+        if not (row.get("is_active") is True or row.get("is_active") == 1):
+            continue
+        symbol = row["symbol"]
+        if symbol not in assets:
+            assets[symbol] = {
+                "symbol": symbol,
+                "full_name": row.get("full_name") or get_full_name_for_asset(symbol),
+                "asset_class": row.get("asset_class", "other"),
+                "sub_category": row.get("sub_category"),
+                "strategies": [],
+            }
+        strat = row.get("strategy_name")
+        if strat and strat not in assets[symbol]["strategies"]:
+            assets[symbol]["strategies"].append(strat)
+
+    # Sort by asset_class then symbol
+    sorted_assets = sorted(
+        assets.values(),
+        key=lambda x: (x["asset_class"], x["symbol"])
+    )
+
+    # Apply optional filters
+    if asset_class:
+        sorted_assets = [a for a in sorted_assets if a["asset_class"] == asset_class]
+    if strategy:
+        sorted_assets = [a for a in sorted_assets if strategy in a["strategies"]]
+
+    return {
+        "count": len(sorted_assets),
+        "assets": sorted_assets,
+    }
