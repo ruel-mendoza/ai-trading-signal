@@ -92,6 +92,8 @@ EXIT_RULES: dict[str, str] = {
     "trend_non_forex":   "Exit rule: Dynamic trailing stop 3×ATR ratcheted at 4:01 PM ET daily",
     "sp500_momentum":    "Exit rule: RSI(20) drops below 70 during ARCA session",
     "highest_lowest_fx": "Exit rule: Stop loss 2×ATR or 6-hour time exit",
+    "stocks_algo1":      "Exit rule: Monthly rebalance drop from top 20 momentum ranking, or 8% static stop loss from entry price. Checked on 1st–3rd trading day of each month at 9:35 AM ET.",
+    "stocks_algo2":      "Exit rule: 4% static stop loss from entry price, or 5-trading-day hold period expiry — whichever comes first. Checked daily at 4:15 PM ET.",
 }
 
 

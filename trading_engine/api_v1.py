@@ -44,6 +44,12 @@ _EXIT_INSTRUCTIONS: dict[str, dict[str, str]] = {
     "sp500_momentum": {
         "_default": "Exit when the 30-minute RSI(20) falls below 70. No trailing stop is used — the RSI threshold is the sole exit trigger.",
     },
+    "stocks_algo1": {
+        "_default": "Exit at monthly rebalance if the symbol drops out of the top 20 momentum ranking, or immediately if price falls 8% below entry. Positions are reviewed on the 1st–3rd trading day of each month at 9:35 AM ET.",
+    },
+    "stocks_algo2": {
+        "_default": "Exit when price falls 4% below entry (stop loss), or automatically after 5 trading days — whichever comes first. Checked daily after market close at 4:15 PM ET.",
+    },
 }
 
 

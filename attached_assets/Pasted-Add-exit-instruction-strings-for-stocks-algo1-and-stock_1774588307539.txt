@@ -1,0 +1,35 @@
+Add exit instruction strings for stocks_algo1 and stocks_algo2 to every place in the codebase where exit instructions are defined. There are exactly two places that need to be updated.
+1. trading_engine/api_v1.py — _EXIT_INSTRUCTIONS dict
+Find the existing _EXIT_INSTRUCTIONS dict which currently has entries for mtf_ema, trend_forex, trend_non_forex, highest_lowest_fx, and sp500_momentum. Add two new entries at the end of the dict:
+python"stocks_algo1": {
+    "_default": "Exit at monthly rebalance if the symbol drops out of the top 20 momentum ranking, or immediately if price falls 8% below entry. Positions are reviewed on the 1st–3rd trading day of each month at 9:35 AM ET.",
+},
+"stocks_algo2": {
+    "_default": "Exit when price falls 4% below entry (stop loss), or automatically after 5 trading days — whichever comes first. Checked daily after market close at 4:15 PM ET.",
+},
+2. trading_engine/admin.py — EXIT_INSTRUCTIONS constant in ADMIN_JS
+Find the EXIT_INSTRUCTIONS JavaScript constant inside the ADMIN_JS string. It currently looks like this:
+javascriptconst EXIT_INSTRUCTIONS = {
+  mtf_ema: { ... },
+  trend_forex: { ... },
+  trend_non_forex: { ... },
+  highest_lowest_fx: { ... },
+  sp500_momentum: { ... }
+};
+Add two new entries at the end before the closing };:
+javascript  stocks_algo1: {
+    _default: "Exit at monthly rebalance if the symbol drops out of the top 20 momentum ranking, or immediately if price falls 8% below entry. Positions are reviewed on the 1st–3rd trading day of each month at 9:35 AM ET."
+  },
+  stocks_algo2: {
+    _default: "Exit when price falls 4% below entry (stop loss), or automatically after 5 trading days — whichever comes first. Checked daily after market close at 4:15 PM ET."
+  }
+3. trading_engine/admin.py — EXIT_RULES dict in restore_signal.py
+Find the EXIT_RULES dict in restore_signal.py which currently has entries for mtf_ema, trend_forex, trend_non_forex, sp500_momentum, and highest_lowest_fx. Add two new entries:
+python"stocks_algo1": "Exit rule: Monthly rebalance drop from top 20 momentum ranking, or 8% static stop loss from entry price. Checked on 1st–3rd trading day of each month at 9:35 AM ET.",
+"stocks_algo2": "Exit rule: 4% static stop loss from entry price, or 5-trading-day hold period expiry — whichever comes first. Checked daily at 4:15 PM ET.",
+4. Do NOT change:
+
+Any strategy logic in stocks_algo1.py or stocks_algo2.py
+The check_exits() or run_monthly() or run_daily() methods
+Any database columns or signal fields
+The _get_exit_instruction() function logic — it already handles _default keys correctly so stocks_algo1 and stocks_algo2 signals will automatically pick up the new exit instructions in all API responses and the How to Exit tooltip in the admin panel
