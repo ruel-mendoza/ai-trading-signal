@@ -10,6 +10,7 @@ from trading_engine.database import (
     get_all_signals,
     get_active_signals,
     get_all_open_positions,
+    get_full_name_for_asset,
 )
 from trading_engine.api_v1 import (
     cache_pool,
@@ -40,6 +41,7 @@ class SignalRead(BaseModel):
 
 class AssetRead(BaseModel):
     symbol: str = Field(..., example="EUR/USD", description="Asset symbol")
+    full_name: Optional[str] = Field(None, description="Human-readable name of the asset")
     asset_class: str = Field(..., example="forex", description="Asset class: forex | crypto | stocks")
     active_signals: int = Field(..., description="Number of currently OPEN signals for this asset")
     strategies: list[str] = Field(..., description="Strategies that have generated signals for this asset")
@@ -262,7 +264,7 @@ def list_assets(
             if asset_class and cls != asset_class.lower():
                 continue
             if sym not in asset_map:
-                asset_map[sym] = {"symbol": sym, "asset_class": cls, "active_signals": 0, "strategies": set()}
+                asset_map[sym] = {"symbol": sym, "full_name": get_full_name_for_asset(sym), "asset_class": cls, "active_signals": 0, "strategies": set()}
             if _g(s, "status") == "OPEN":
                 asset_map[sym]["active_signals"] += 1
             sn = _g(s, "strategy_name")
@@ -273,6 +275,7 @@ def list_assets(
         for v in sorted(asset_map.values(), key=lambda x: x["symbol"]):
             assets.append(AssetRead(
                 symbol=v["symbol"],
+                full_name=v["full_name"],
                 asset_class=v["asset_class"],
                 active_signals=v["active_signals"],
                 strategies=sorted(v["strategies"]),
@@ -294,7 +297,7 @@ def list_all_assets(
     across all strategies. No signal data — purely asset metadata:
     symbol, full name, asset class, category label, and strategies.
     """
-    from trading_engine.database import get_strategy_assets_full, get_full_name_for_asset
+    from trading_engine.database import get_strategy_assets_full
 
     def _resolve_category(symbol: str, ac: str, sub: str) -> str:
         if ac == "stocks" or sub == "nasdaq100":

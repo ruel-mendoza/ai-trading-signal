@@ -1,0 +1,69 @@
+In trading_engine/api/v1/public_signals.py, find the endpoint that serves GET /api/v1/public/assets. It currently builds each asset dict with symbol, asset_class, active_signals, and strategies. Add full_name to every asset object in the response.
+Find the asset building block inside the endpoint function. It will look something like this:
+pythonassets[symbol] = {
+    "symbol": symbol,
+    "asset_class": ...,
+    "active_signals": ...,
+    "strategies": [...],
+}
+Replace it with:
+pythonfrom trading_engine.database import get_full_name_for_asset as _get_name
+
+assets[symbol] = {
+    "symbol": symbol,
+    "full_name": _get_name(symbol),
+    "asset_class": ...,
+    "active_signals": ...,
+    "strategies": [...],
+}
+The import should be added at the top of the function body or at module level — do not add a duplicate import if get_full_name_for_asset is already imported elsewhere in the file.
+Expected response shape after the fix:
+json{
+  "count": 17,
+  "assets": [
+    {
+      "symbol": "BTC/USD",
+      "full_name": "Bitcoin",
+      "asset_class": "crypto",
+      "active_signals": 1,
+      "strategies": ["mtf_ema"]
+    },
+    {
+      "symbol": "GBP/USD",
+      "full_name": "British Pound / US Dollar",
+      "asset_class": "forex",
+      "active_signals": 1,
+      "strategies": ["mtf_ema"]
+    },
+    {
+      "symbol": "IDXX",
+      "full_name": "IDEXX Laboratories Inc.",
+      "asset_class": "stocks",
+      "active_signals": 1,
+      "strategies": ["stocks_algo2"]
+    },
+    {
+      "symbol": "NXPI",
+      "full_name": "NXP Semiconductors N.V.",
+      "asset_class": "stocks",
+      "active_signals": 1,
+      "strategies": ["stocks_algo2"]
+    },
+    {
+      "symbol": "XAU/USD",
+      "full_name": "Gold",
+      "asset_class": "forex",
+      "active_signals": 0,
+      "strategies": ["mtf_ema"]
+    }
+  ]
+}
+get_full_name_for_asset() already handles all asset types — it checks _ASSET_NAME_MAP for forex/crypto/ETFs/commodities/indices, then _NDX100_COMPANY_NAMES for NASDAQ stocks, then falls back to the strategy_assets.full_name DB column, then returns None if nothing is found. So full_name may be null for any symbol not yet in those maps — that is acceptable.
+Do NOT change:
+
+The endpoint path or any query parameters
+The active_signals count logic
+The strategies list logic
+The cache decorator if one is applied to this endpoint
+The /api/v1/public/assets/list endpoint added previously
+Any other endpoints in the file
