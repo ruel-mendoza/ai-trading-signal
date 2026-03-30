@@ -246,18 +246,43 @@ class StocksAlgo2Strategy(BaseStrategy):
             }
             sig_id = insert_signal(signal)
             if sig_id:
-                open_stock_algo2_position(
+                pos_id = open_stock_algo2_position(
                     symbol=sym,
                     signal_id=sig_id,
                     entry_price=entry_price,
                     stop_loss=stop_loss,
                     entry_date=signal_timestamp,
                 )
+                if pos_id is None:
+                    logger.error(
+                        f"[ALGO2] CRITICAL: signal #{sig_id} inserted for {sym} but "
+                        f"open_stock_algo2_position() returned None — "
+                        f"position row missing, attempting direct insert"
+                    )
+                    from trading_engine.database import SessionFactory
+                    from trading_engine.models import StockAlgo2Position
+                    with SessionFactory() as session:
+                        try:
+                            session.add(StockAlgo2Position(
+                                symbol=sym,
+                                signal_id=sig_id,
+                                entry_price=entry_price,
+                                stop_loss=stop_loss,
+                                entry_date=signal_timestamp,
+                                trading_days_held=0,
+                            ))
+                            session.commit()
+                            logger.info(f"[ALGO2] Recovery insert succeeded for {sym} signal #{sig_id}")
+                        except Exception as e:
+                            session.rollback()
+                            logger.error(f"[ALGO2] Recovery insert also failed for {sym}: {e}")
+                else:
+                    logger.info(
+                        f"[ALGO2] LONG {sym} @ {entry_price:.4f} | "
+                        f"SL={stop_loss:.4f} (4%) | hold_days=5 | "
+                        f"signal_id={sig_id} | pos_id={pos_id}"
+                    )
                 result["signals_opened"] += 1
-                logger.info(
-                    f"[ALGO2] LONG {sym} @ {entry_price:.4f} | "
-                    f"SL={stop_loss:.4f} (4%) | hold_days=5 | id={sig_id}"
-                )
 
         # ── 3. Run exit checks ───────────────────────────────────────────────
         closed = self.check_exits()
@@ -274,6 +299,53 @@ class StocksAlgo2Strategy(BaseStrategy):
     # ─────────────────────────────────────────────────────────────────────────
     def check_exits(self) -> list[dict]:
         closed: list[dict] = []
+
+        # ── Orphan detection: find OPEN signals with no matching position row ──
+        from trading_engine.database import get_active_signals, SessionFactory
+        from trading_engine.models import StockAlgo2Position
+
+        active_sigs = get_active_signals(strategy_name=STRATEGY_NAME)
+        positions = get_all_stock_algo2_positions()
+        position_signal_ids = {p["signal_id"] for p in positions}
+
+        for sig in active_sigs:
+            if sig["id"] not in position_signal_ids:
+                logger.warning(
+                    f"[ALGO2-EXIT] ORPHAN SIGNAL detected | id={sig['id']} | "
+                    f"asset={sig['asset']} | no stock_algo2_positions row — inserting now"
+                )
+                with SessionFactory() as session:
+                    try:
+                        existing = session.query(StockAlgo2Position).filter_by(
+                            symbol=sig["asset"]
+                        ).first()
+                        if not existing:
+                            session.add(StockAlgo2Position(
+                                symbol=sig["asset"],
+                                signal_id=sig["id"],
+                                entry_price=sig["entry_price"],
+                                stop_loss=sig["stop_loss"],
+                                entry_date=sig.get("signal_timestamp", ""),
+                                trading_days_held=0,
+                            ))
+                            session.commit()
+                            logger.info(
+                                f"[ALGO2-EXIT] Orphan position row inserted for "
+                                f"{sig['asset']} signal #{sig['id']}"
+                            )
+                        else:
+                            logger.info(
+                                f"[ALGO2-EXIT] Position row already exists for "
+                                f"{sig['asset']} — skipping orphan insert"
+                            )
+                    except Exception as e:
+                        session.rollback()
+                        logger.error(
+                            f"[ALGO2-EXIT] Failed to insert orphan position for "
+                            f"{sig['asset']}: {e}"
+                        )
+
+        # Re-fetch positions after orphan fix
         positions = get_all_stock_algo2_positions()
 
         if not positions:
