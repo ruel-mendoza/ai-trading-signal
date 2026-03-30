@@ -1,0 +1,206 @@
+In trading_engine/strategies/stocks_algo1.py, apply the same two fixes that were applied to stocks_algo2.py — error logging when position insert fails and orphan detection in check_exits().
+1. Fix run_monthly() — log and recover when open_position() returns None
+Find this block in run_monthly():
+pythonsig_id = insert_signal(signal)
+if sig_id:
+    db_open_position(
+        {
+            "asset": sym,
+            "strategy_name": STRATEGY_NAME,
+            "direction": "BUY",
+            "entry_price": entry_price,
+            "atr_at_entry": None,
+        }
+    )
+    result["signals_opened"] += 1
+    logger.info(
+        f"[ALGO1] LONG {sym} @ {entry_price:.4f} | SL={stop_loss:.4f} (8%) | id={sig_id}"
+    )
+Replace with:
+pythonsig_id = insert_signal(signal)
+if sig_id:
+    pos_id = db_open_position(
+        {
+            "asset": sym,
+            "strategy_name": STRATEGY_NAME,
+            "direction": "BUY",
+            "entry_price": entry_price,
+            "atr_at_entry": None,
+        }
+    )
+    if pos_id is None:
+        logger.error(
+            f"[ALGO1] CRITICAL: signal #{sig_id} inserted for {sym} but "
+            f"db_open_position() returned None — "
+            f"position row missing, attempting direct insert"
+        )
+        from trading_engine.database import SessionFactory
+        from trading_engine.models import OpenPosition
+        with SessionFactory() as session:
+            try:
+                existing = session.query(OpenPosition).filter_by(
+                    asset=sym,
+                    strategy_name=STRATEGY_NAME,
+                ).first()
+                if not existing:
+                    session.add(OpenPosition(
+                        asset=sym,
+                        strategy_name=STRATEGY_NAME,
+                        direction="BUY",
+                        entry_price=entry_price,
+                        atr_at_entry=None,
+                        highest_price_since_entry=entry_price,
+                        lowest_price_since_entry=None,
+                    ))
+                    session.commit()
+                    logger.info(
+                        f"[ALGO1] Recovery position insert succeeded for {sym} signal #{sig_id}"
+                    )
+                else:
+                    logger.info(
+                        f"[ALGO1] Position row already exists for {sym} — skipping recovery insert"
+                    )
+            except Exception as e:
+                session.rollback()
+                logger.error(f"[ALGO1] Recovery insert failed for {sym}: {e}")
+    else:
+        logger.info(
+            f"[ALGO1] LONG {sym} @ {entry_price:.4f} | SL={stop_loss:.4f} (8%) | "
+            f"signal_id={sig_id} | pos_id={pos_id}"
+        )
+    result["signals_opened"] += 1
+2. Add orphan detection at the top of check_exits()
+Find the existing check_exits() method which starts like:
+pythondef check_exits(self) -> list[dict]:
+    closed: list[dict] = []
+    positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
+
+    if not positions:
+        return closed
+
+    logger.info(f"[ALGO1-EXIT] Checking {len(positions)} position(s)")
+Replace with:
+pythondef check_exits(self) -> list[dict]:
+    closed: list[dict] = []
+
+    # ── Orphan detection: find OPEN signals with no matching open_positions row ──
+    from trading_engine.database import get_active_signals, SessionFactory
+    from trading_engine.models import OpenPosition
+    import pytz as _pytz
+
+    active_sigs = get_active_signals(strategy_name=STRATEGY_NAME)
+    existing_positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
+    position_assets = {p["asset"] for p in existing_positions}
+
+    for sig in active_sigs:
+        asset = sig["asset"]
+        if asset not in position_assets:
+            logger.warning(
+                f"[ALGO1-EXIT] ORPHAN SIGNAL detected | id={sig['id']} | "
+                f"asset={asset} | no open_positions row — inserting now"
+            )
+            with SessionFactory() as session:
+                try:
+                    existing = session.query(OpenPosition).filter_by(
+                        asset=asset,
+                        strategy_name=STRATEGY_NAME,
+                    ).first()
+                    if not existing:
+                        session.add(OpenPosition(
+                            asset=asset,
+                            strategy_name=STRATEGY_NAME,
+                            direction=sig.get("direction", "BUY"),
+                            entry_price=sig["entry_price"],
+                            atr_at_entry=None,
+                            highest_price_since_entry=sig["entry_price"],
+                            lowest_price_since_entry=None,
+                        ))
+                        session.commit()
+                        logger.info(
+                            f"[ALGO1-EXIT] Orphan position row inserted for "
+                            f"{asset} signal #{sig['id']}"
+                        )
+                    else:
+                        logger.info(
+                            f"[ALGO1-EXIT] Position row already exists for "
+                            f"{asset} — skipping orphan insert"
+                        )
+                except Exception as e:
+                    session.rollback()
+                    logger.error(
+                        f"[ALGO1-EXIT] Failed to insert orphan position for "
+                        f"{asset}: {e}"
+                    )
+
+    # Re-fetch positions after orphan fix
+    positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
+
+    if not positions:
+        return closed
+
+    logger.info(f"[ALGO1-EXIT] Checking {len(positions)} position(s)")
+    # ... rest of existing check_exits() loop unchanged
+3. Also add stocks_algo1 and stocks_algo2 to restore_signal.py KNOWN_STRATEGIES and SL_MULT_MAP and EXIT_RULES
+Find in restore_signal.py:
+pythonKNOWN_STRATEGIES = [
+    "mtf_ema",
+    "trend_forex",
+    "trend_non_forex",
+    "sp500_momentum",
+    "highest_lowest_fx",
+]
+
+SL_MULT_MAP: dict[str, float] = {
+    "mtf_ema":           0.5,
+    "trend_forex":       3.0,
+    "trend_non_forex":   3.0,
+    "sp500_momentum":    2.0,
+    "highest_lowest_fx": 2.0,
+}
+
+EXIT_RULES: dict[str, str] = {
+    "mtf_ema":           "Exit rule: H1 close crosses H1 EMA20, or trailing stop (peak/trough - 2×ATR)",
+    "trend_forex":       "Exit rule: Dynamic trailing stop 3×ATR ratcheted at 5:01 PM ET daily",
+    "trend_non_forex":   "Exit rule: Dynamic trailing stop 3×ATR ratcheted at 4:01 PM ET daily",
+    "sp500_momentum":    "Exit rule: RSI(20) drops below 70 during ARCA session",
+    "highest_lowest_fx": "Exit rule: Stop loss 2×ATR or 6-hour time exit",
+}
+Replace with:
+pythonKNOWN_STRATEGIES = [
+    "mtf_ema",
+    "trend_forex",
+    "trend_non_forex",
+    "sp500_momentum",
+    "highest_lowest_fx",
+    "stocks_algo1",
+    "stocks_algo2",
+]
+
+SL_MULT_MAP: dict[str, float] = {
+    "mtf_ema":           0.5,
+    "trend_forex":       3.0,
+    "trend_non_forex":   3.0,
+    "sp500_momentum":    2.0,
+    "highest_lowest_fx": 2.0,
+    "stocks_algo1":      0.08,
+    "stocks_algo2":      0.04,
+}
+
+EXIT_RULES: dict[str, str] = {
+    "mtf_ema":           "Exit rule: H1 close crosses H1 EMA20, or trailing stop (peak/trough - 2×ATR)",
+    "trend_forex":       "Exit rule: Dynamic trailing stop 3×ATR ratcheted at 5:01 PM ET daily",
+    "trend_non_forex":   "Exit rule: Dynamic trailing stop 3×ATR ratcheted at 4:01 PM ET daily",
+    "sp500_momentum":    "Exit rule: RSI(20) drops below 70 during ARCA session",
+    "highest_lowest_fx": "Exit rule: Stop loss 2×ATR or 6-hour time exit",
+    "stocks_algo1":      "Exit rule: Monthly rebalance drop from top 20 momentum ranking, or 8% static stop loss from entry price",
+    "stocks_algo2":      "Exit rule: 4% static stop loss from entry price, or 5-trading-day hold period expiry — whichever comes first",
+}
+4. Do NOT change:
+
+The open_position() function in database.py
+The OpenPosition model in models.py
+The run_monthly() scoring and ranking logic
+The stop loss percentage calculation in check_exits()
+Any other strategy files
+The scheduler job definitions in main.py
+The _get_stocks_algo1_data() function in admin.py which already calls get_all_open_positions(strategy_name="stocks_algo1") correctly

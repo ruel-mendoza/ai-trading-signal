@@ -76,6 +76,8 @@ KNOWN_STRATEGIES = [
     "trend_non_forex",
     "sp500_momentum",
     "highest_lowest_fx",
+    "stocks_algo1",
+    "stocks_algo2",
 ]
 
 SL_MULT_MAP: dict[str, float] = {
@@ -84,6 +86,8 @@ SL_MULT_MAP: dict[str, float] = {
     "trend_non_forex":   3.0,
     "sp500_momentum":    2.0,
     "highest_lowest_fx": 2.0,
+    "stocks_algo1":      0.08,
+    "stocks_algo2":      0.04,
 }
 
 EXIT_RULES: dict[str, str] = {

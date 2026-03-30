@@ -293,7 +293,7 @@ class StocksAlgo1Strategy(BaseStrategy):
             }
             sig_id = insert_signal(signal)
             if sig_id:
-                db_open_position(
+                pos_id = db_open_position(
                     {
                         "asset": sym,
                         "strategy_name": STRATEGY_NAME,
@@ -302,10 +302,47 @@ class StocksAlgo1Strategy(BaseStrategy):
                         "atr_at_entry": None,
                     }
                 )
+                if pos_id is None:
+                    logger.error(
+                        f"[ALGO1] CRITICAL: signal #{sig_id} inserted for {sym} but "
+                        f"db_open_position() returned None — "
+                        f"position row missing, attempting direct insert"
+                    )
+                    from trading_engine.database import SessionFactory
+                    from trading_engine.models import OpenPosition
+                    with SessionFactory() as session:
+                        try:
+                            existing = session.query(OpenPosition).filter_by(
+                                asset=sym,
+                                strategy_name=STRATEGY_NAME,
+                            ).first()
+                            if not existing:
+                                session.add(OpenPosition(
+                                    asset=sym,
+                                    strategy_name=STRATEGY_NAME,
+                                    direction="BUY",
+                                    entry_price=entry_price,
+                                    atr_at_entry=None,
+                                    highest_price_since_entry=entry_price,
+                                    lowest_price_since_entry=None,
+                                ))
+                                session.commit()
+                                logger.info(
+                                    f"[ALGO1] Recovery position insert succeeded for {sym} signal #{sig_id}"
+                                )
+                            else:
+                                logger.info(
+                                    f"[ALGO1] Position row already exists for {sym} — skipping recovery insert"
+                                )
+                        except Exception as e:
+                            session.rollback()
+                            logger.error(f"[ALGO1] Recovery insert failed for {sym}: {e}")
+                else:
+                    logger.info(
+                        f"[ALGO1] LONG {sym} @ {entry_price:.4f} | SL={stop_loss:.4f} (8%) | "
+                        f"signal_id={sig_id} | pos_id={pos_id}"
+                    )
                 result["signals_opened"] += 1
-                logger.info(
-                    f"[ALGO1] LONG {sym} @ {entry_price:.4f} | SL={stop_loss:.4f} (8%) | id={sig_id}"
-                )
 
         logger.info(
             f"[ALGO1] ====== Monthly cycle complete | "
@@ -322,6 +359,56 @@ class StocksAlgo1Strategy(BaseStrategy):
         Does NOT evaluate monthly rebalancing — that is handled by run_monthly().
         """
         closed: list[dict] = []
+
+        # ── Orphan detection: find OPEN signals with no matching open_positions row ──
+        from trading_engine.database import get_active_signals, SessionFactory
+        from trading_engine.models import OpenPosition
+
+        active_sigs = get_active_signals(strategy_name=STRATEGY_NAME)
+        existing_positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
+        position_assets = {p["asset"] for p in existing_positions}
+
+        for sig in active_sigs:
+            asset = sig["asset"]
+            if asset not in position_assets:
+                logger.warning(
+                    f"[ALGO1-EXIT] ORPHAN SIGNAL detected | id={sig['id']} | "
+                    f"asset={asset} | no open_positions row — inserting now"
+                )
+                with SessionFactory() as session:
+                    try:
+                        existing = session.query(OpenPosition).filter_by(
+                            asset=asset,
+                            strategy_name=STRATEGY_NAME,
+                        ).first()
+                        if not existing:
+                            session.add(OpenPosition(
+                                asset=asset,
+                                strategy_name=STRATEGY_NAME,
+                                direction=sig.get("direction", "BUY"),
+                                entry_price=sig["entry_price"],
+                                atr_at_entry=None,
+                                highest_price_since_entry=sig["entry_price"],
+                                lowest_price_since_entry=None,
+                            ))
+                            session.commit()
+                            logger.info(
+                                f"[ALGO1-EXIT] Orphan position row inserted for "
+                                f"{asset} signal #{sig['id']}"
+                            )
+                        else:
+                            logger.info(
+                                f"[ALGO1-EXIT] Position row already exists for "
+                                f"{asset} — skipping orphan insert"
+                            )
+                    except Exception as e:
+                        session.rollback()
+                        logger.error(
+                            f"[ALGO1-EXIT] Failed to insert orphan position for "
+                            f"{asset}: {e}"
+                        )
+
+        # Re-fetch positions after orphan fix
         positions = get_all_open_positions(strategy_name=STRATEGY_NAME)
 
         if not positions:
