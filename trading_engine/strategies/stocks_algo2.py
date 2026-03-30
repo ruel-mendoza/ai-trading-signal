@@ -320,13 +320,25 @@ class StocksAlgo2Strategy(BaseStrategy):
                             symbol=sig["asset"]
                         ).first()
                         if not existing:
+                            from datetime import datetime
+                            import pytz
+                            _et = pytz.timezone("America/New_York")
+                            _now = datetime.now(pytz.utc).astimezone(_et)
+                            _ts = sig.get("signal_timestamp", "")
+                            _days = 0
+                            try:
+                                _entry_dt = datetime.strptime(str(_ts)[:19], "%Y-%m-%dT%H:%M:%S")
+                                _entry_dt = _et.localize(_entry_dt)
+                                _days = max(0, (_now.date() - _entry_dt.date()).days)
+                            except Exception:
+                                pass
                             session.add(StockAlgo2Position(
                                 symbol=sig["asset"],
                                 signal_id=sig["id"],
                                 entry_price=sig["entry_price"],
                                 stop_loss=sig["stop_loss"],
-                                entry_date=sig.get("signal_timestamp", ""),
-                                trading_days_held=0,
+                                entry_date=_ts,
+                                trading_days_held=_days,
                             ))
                             session.commit()
                             logger.info(
