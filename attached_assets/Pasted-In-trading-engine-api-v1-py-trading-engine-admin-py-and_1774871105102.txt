@@ -1,0 +1,93 @@
+In trading_engine/api_v1.py, trading_engine/admin.py, and trading_engine/restore_signal.py, update all exit rule text strings with the correct LONG and SHORT specific text for every strategy.
+1. Update _EXIT_INSTRUCTIONS in api_v1.py
+Find and replace the entire _EXIT_INSTRUCTIONS dict:
+python_EXIT_INSTRUCTIONS: dict[str, dict[str, str]] = {
+    "mtf_ema": {
+        "BUY":  "Close the trade at the next hourly candlestick which closes below the EMA (20) on the H1 price chart.",
+        "SELL": "Close the trade at the next hourly candlestick which closes above the EMA (20) on the H1 price chart.",
+    },
+    "trend_forex": {
+        "BUY":  "Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) below the highest daily close of the trade.",
+        "SELL": "Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) above the lowest daily close of the trade.",
+    },
+    "trend_non_forex": {
+        "BUY":      "Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) below the highest daily close of the trade.",
+        "_default": "Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) below the highest daily close of the trade.",
+    },
+    "highest_lowest_fx": {
+        "BUY":      "Close the trade 6 hours after entering it.",
+        "SELL":     "Close the trade 6 hours after entering it.",
+        "_default": "Close the trade 6 hours after entering it.",
+    },
+    "sp500_momentum": {
+        "_default": "Close the trade at the next 30m candlestick which closes with the RSI (20) below 70.",
+    },
+    "stocks_algo1": {
+        "_default": "Close the trade at the first New York open of the next calendar month if the stock is not still displayed as a signal.",
+    },
+    "stocks_algo2": {
+        "_default": "Close the trade 5 market days after you open it.",
+    },
+}
+2. Update EXIT_RULES_PUBLIC in api_v1.py
+Find and replace the entire EXIT_RULES_PUBLIC dict:
+pythonEXIT_RULES_PUBLIC: dict[str, str] = {
+    "mtf_ema":           "LONG: Close the trade at the next hourly candlestick which closes below the EMA (20) on the H1 price chart. SHORT: Close the trade at the next hourly candlestick which closes above the EMA (20) on the H1 price chart.",
+    "trend_forex":       "LONG: Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) below the highest daily close of the trade. SHORT: Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) above the lowest daily close of the trade.",
+    "trend_non_forex":   "Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) below the highest daily close of the trade.",
+    "sp500_momentum":    "Close the trade at the next 30m candlestick which closes with the RSI (20) below 70.",
+    "highest_lowest_fx": "Close the trade 6 hours after entering it.",
+    "stocks_algo1":      "Close the trade at the first New York open of the next calendar month if the stock is not still displayed as a signal.",
+    "stocks_algo2":      "Close the trade 5 market days after you open it.",
+}
+3. Update EXIT_INSTRUCTIONS in ADMIN_JS in admin.py
+Find and replace the entire EXIT_INSTRUCTIONS JavaScript constant:
+javascriptconst EXIT_INSTRUCTIONS = {
+  mtf_ema: {
+    BUY:  "Close the trade at the next hourly candlestick which closes below the EMA (20) on the H1 price chart.",
+    SELL: "Close the trade at the next hourly candlestick which closes above the EMA (20) on the H1 price chart."
+  },
+  trend_forex: {
+    BUY:      "Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) below the highest daily close of the trade.",
+    SELL:     "Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) above the lowest daily close of the trade.",
+    _default: "Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) below the highest daily close of the trade."
+  },
+  trend_non_forex: {
+    _default: "Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) below the highest daily close of the trade."
+  },
+  highest_lowest_fx: {
+    BUY:      "Close the trade 6 hours after entering it.",
+    SELL:     "Close the trade 6 hours after entering it.",
+    _default: "Close the trade 6 hours after entering it."
+  },
+  sp500_momentum: {
+    _default: "Close the trade at the next 30m candlestick which closes with the RSI (20) below 70."
+  },
+  stocks_algo1: {
+    _default: "Close the trade at the first New York open of the next calendar month if the stock is not still displayed as a signal."
+  },
+  stocks_algo2: {
+    _default: "Close the trade 5 market days after you open it."
+  }
+};
+4. Update EXIT_RULES in restore_signal.py
+Find and replace the entire EXIT_RULES dict:
+pythonEXIT_RULES: dict[str, str] = {
+    "mtf_ema":           "LONG: Close the trade at the next hourly candlestick which closes below the EMA (20) on the H1 price chart. SHORT: Close the trade at the next hourly candlestick which closes above the EMA (20) on the H1 price chart.",
+    "trend_forex":       "LONG: Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) below the highest daily close of the trade. SHORT: Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) above the lowest daily close of the trade.",
+    "trend_non_forex":   "Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) below the highest daily close of the trade.",
+    "sp500_momentum":    "Close the trade at the next 30m candlestick which closes with the RSI (20) below 70.",
+    "highest_lowest_fx": "Close the trade 6 hours after entering it.",
+    "stocks_algo1":      "Close the trade at the first New York open of the next calendar month if the stock is not still displayed as a signal.",
+    "stocks_algo2":      "Close the trade 5 market days after you open it.",
+}
+5. Flush cache after all changes:
+bashcurl -s -X POST http://localhost:5001/api/v1/cache/flush | python3 -m json.tool
+6. Do NOT change:
+
+Any strategy logic or actual exit condition code
+Any database columns or signal fields
+Any endpoint paths or response structures
+The _get_exit_instruction() function logic — it already correctly checks direction key first then falls back to _default so BUY/SELL specific text will automatically be served correctly
+The Pydantic models
+Any other part of the codebase

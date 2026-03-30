@@ -4059,26 +4059,30 @@ const BASE = window.location.pathname.replace(/\\/admin\\/?$/, '');
 // ── Exit Logic Tooltip Modal ─────────────────────────────────────────────────
 const EXIT_INSTRUCTIONS = {
   mtf_ema: {
-    BUY:  "Exit when the H1 candle closes below the H1 EMA 20. The 2× ATR(100) trailing stop also acts as a hard floor — if price breaches it before the EMA crossover, the position is closed immediately.",
-    SELL: "Exit when the H1 candle closes above the H1 EMA 20. The 2× ATR(100) trailing stop acts as a hard ceiling — if price breaches it before the EMA crossover, the position is closed immediately."
+    BUY:  "Close the trade at the next hourly candlestick which closes below the EMA (20) on the H1 price chart.",
+    SELL: "Close the trade at the next hourly candlestick which closes above the EMA (20) on the H1 price chart."
   },
   trend_forex: {
-    _default: "Exit at 5:01 PM ET (1 min after NY close) if the daily close is at or below the ATR-based trailing stop. The trailing stop ratchets up as price advances — it never moves against the trade."
+    BUY:      "Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) below the highest daily close of the trade.",
+    SELL:     "Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) above the lowest daily close of the trade.",
+    _default: "Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) below the highest daily close of the trade."
   },
   trend_non_forex: {
-    _default: "Exit at 4:01 PM ET if the daily close is at or below the 3× ATR(100) trailing stop. The stop tightens automatically as the highest observed close increases, locking in profit over time."
+    _default: "Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) below the highest daily close of the trade."
   },
   highest_lowest_fx: {
-    _default: "Exit after 6 hours from entry, or immediately if the 2× ATR stop loss is hit — whichever comes first."
+    BUY:      "Close the trade 6 hours after entering it.",
+    SELL:     "Close the trade 6 hours after entering it.",
+    _default: "Close the trade 6 hours after entering it."
   },
   sp500_momentum: {
-    _default: "Exit when the 30-minute RSI(20) falls below 70. No trailing stop is used — the RSI threshold is the sole exit trigger."
+    _default: "Close the trade at the next 30m candlestick which closes with the RSI (20) below 70."
   },
   stocks_algo1: {
-    _default: "Exit at monthly rebalance if the symbol drops out of the top 20 momentum ranking, or immediately if price falls 8% below entry. Positions are reviewed on the 1st–3rd trading day of each month at 9:35 AM ET."
+    _default: "Close the trade at the first New York open of the next calendar month if the stock is not still displayed as a signal."
   },
   stocks_algo2: {
-    _default: "Exit when price falls 4% below entry (stop loss), or automatically after 5 trading days — whichever comes first. Checked daily after market close at 4:15 PM ET."
+    _default: "Close the trade 5 market days after you open it."
   }
 };
 

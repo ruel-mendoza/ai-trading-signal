@@ -91,13 +91,13 @@ SL_MULT_MAP: dict[str, float] = {
 }
 
 EXIT_RULES: dict[str, str] = {
-    "mtf_ema":           "Exit rule: H1 close crosses H1 EMA20, or trailing stop (peak/trough - 2×ATR)",
-    "trend_forex":       "Exit rule: Dynamic trailing stop 3×ATR ratcheted at 5:01 PM ET daily",
-    "trend_non_forex":   "Exit rule: Dynamic trailing stop 3×ATR ratcheted at 4:01 PM ET daily",
-    "sp500_momentum":    "Exit rule: RSI(20) drops below 70 during ARCA session",
-    "highest_lowest_fx": "Exit rule: Stop loss 2×ATR or 6-hour time exit",
-    "stocks_algo1":      "Exit rule: Monthly rebalance drop from top 20 momentum ranking, or 8% static stop loss from entry price. Checked on 1st–3rd trading day of each month at 9:35 AM ET.",
-    "stocks_algo2":      "Exit rule: 4% static stop loss from entry price, or 5-trading-day hold period expiry — whichever comes first. Checked daily at 4:15 PM ET.",
+    "mtf_ema":           "LONG: Close the trade at the next hourly candlestick which closes below the EMA (20) on the H1 price chart. SHORT: Close the trade at the next hourly candlestick which closes above the EMA (20) on the H1 price chart.",
+    "trend_forex":       "LONG: Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) below the highest daily close of the trade. SHORT: Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) above the lowest daily close of the trade.",
+    "trend_non_forex":   "Close the trade at the first daily (New York) close which is more than 3 × the ATR (100) indicator (daily chart) below the highest daily close of the trade.",
+    "sp500_momentum":    "Close the trade at the next 30m candlestick which closes with the RSI (20) below 70.",
+    "highest_lowest_fx": "Close the trade 6 hours after entering it.",
+    "stocks_algo1":      "Close the trade at the first New York open of the next calendar month if the stock is not still displayed as a signal.",
+    "stocks_algo2":      "Close the trade 5 market days after you open it.",
 }
 
 
