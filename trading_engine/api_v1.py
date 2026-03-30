@@ -22,6 +22,7 @@ from trading_engine.database import (
     get_scheduler_health_summary,
     get_signal_metrics,
     get_all_signal_metrics,
+    get_full_name_for_asset as _get_name,
 )
 
 logger = logging.getLogger("trading_engine.api_v1")
@@ -552,7 +553,7 @@ def _format_signal_public(s: dict, position: Optional[dict] = None) -> dict:
 
     result = {
         "asset": s["asset"],
-        "full_name": s.get("full_name"),
+        "full_name": s.get("full_name") or _get_name(s["asset"]),
         "asset_class": s.get("asset_class") or CATEGORY_MAP.get(s["asset"], "other"),
         "direction": DIRECTION_MAP.get(s["direction"], s["direction"]),
         "entry": s["entry_price"],
@@ -570,7 +571,7 @@ def _format_signal(s: dict) -> dict:
     return {
         "id": s["id"],
         "asset": s["asset"],
-        "full_name": s.get("full_name"),
+        "full_name": s.get("full_name") or _get_name(s["asset"]),
         "category": s.get("asset_class") or CATEGORY_MAP.get(s["asset"], "other"),
         "strategy": s["strategy_name"],
         "strategy_label": STRATEGY_LABELS.get(s["strategy_name"], s["strategy_name"]),
@@ -967,8 +968,6 @@ def get_positions(
     """
     positions = get_all_open_positions(strategy_name=strategy, asset=asset)
 
-    from trading_engine.database import get_full_name_for_asset as _get_name
-
     formatted = []
     for p in positions:
         sym = p.get("asset", "")
@@ -1009,8 +1008,6 @@ def get_metrics(
     if period not in ("all_time", "7d", "30d"):
         raise HTTPException(status_code=400, detail="Invalid period. Use: all_time, 7d, 30d")
 
-    from trading_engine.database import get_full_name_for_asset as _get_name
-
     metrics = get_signal_metrics(
         strategy_name=strategy,
         asset=asset,
@@ -1046,6 +1043,10 @@ def get_metrics_summary():
     overall_win_rate = round(total_won / total_closed * 100, 1) if total_closed > 0 else 0.0
 
     computed = max((m["computed_at"] for m in all_metrics), default=None) if all_metrics else None
+
+    for row in summary_rows:
+        sym = row.get("asset")
+        row["full_name"] = _get_name(sym) if sym else None
 
     return {
         "total_signals": total_signals,

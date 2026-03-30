@@ -26,6 +26,7 @@ logger = logging.getLogger("trading_engine.api_v1.public_signals")
 class SignalRead(BaseModel):
     id: int = Field(..., description="Unique signal identifier")
     asset: str = Field(..., example="EUR/USD", description="Trading pair / asset symbol")
+    full_name: Optional[str] = Field(None, description="Human-readable asset name")
     asset_class: str = Field(..., example="forex", description="Asset class: forex | crypto | stocks")
     strategy: str = Field(..., example="mtf_ema", description="Strategy that generated this signal")
     strategy_label: str = Field(..., example="MTF EMA", description="Human-readable strategy name")
@@ -100,6 +101,7 @@ def _to_signal_read(s) -> dict:
     return SignalRead(
         id=_g(s, "id", 0),
         asset=asset,
+        full_name=_g(s, "full_name") or get_full_name_for_asset(asset),
         asset_class=CATEGORY_MAP.get(asset, "unknown"),
         strategy=strategy_name,
         strategy_label=STRATEGY_LABELS.get(strategy_name, strategy_name),

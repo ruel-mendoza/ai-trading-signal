@@ -1,0 +1,55 @@
+Prompt:
+In trading_engine/api_v1.py, add full_name to every signal and position response that doesn't already include it. The get_full_name_for_asset() function is already imported via from trading_engine.database import get_full_name_for_asset as _get_name — add this import at the top of the file if it isn't already there.
+1. _format_signal_public() — /api/v1/signals/latest
+This function already has full_name from s.get("full_name"). Ensure the fallback calls get_full_name_for_asset if the DB value is None:
+pythonresult = {
+    "asset": s["asset"],
+    "full_name": s.get("full_name") or get_full_name_for_asset(s["asset"]),
+    ...
+}
+2. _format_signal() — used by /api/v1/signals, /api/v1/signals/history, /api/v1/signals/active, /api/v1/signals/{id}
+This function already has full_name from s.get("full_name"). Apply the same fallback:
+pythonreturn {
+    "id": s["id"],
+    "asset": s["asset"],
+    "full_name": s.get("full_name") or get_full_name_for_asset(s["asset"]),
+    ...
+}
+3. get_positions() — /api/v1/positions
+This endpoint already calls _get_name(sym) for full_name. Verify it is present — if not add:
+pythonformatted.append({
+    "id": p.get("id"),
+    "asset": sym,
+    "full_name": p.get("full_name") or _get_name(sym),
+    ...
+})
+4. get_metrics() — /api/v1/metrics
+Currently adds full_name only for asset-level rows. Ensure it is also added for strategy-level summary rows where asset is None by adding a safe fallback:
+pythonfor m in metrics:
+    sym = m.get("asset")
+    m["full_name"] = _get_name(sym) if sym else None
+5. get_metrics_summary() — /api/v1/metrics/summary
+The strategies list in the summary response contains metric rows. Add full_name to each:
+pythonfor row in summary_rows:
+    sym = row.get("asset")
+    row["full_name"] = _get_name(sym) if sym else None
+6. list_strategies() — /api/v1/strategies
+Currently returns name, label, total, open, closed per strategy. No asset-level full_name needed here since strategies are not per-asset — skip this endpoint.
+7. get_scheduler_jobs() and get_scheduler_status() — /api/v1/scheduler/*
+No signal or asset data returned — skip these endpoints.
+8. In trading_engine/api/v1/public_signals.py
+Find every place a signal dict is built or returned in any endpoint in this file. For each one add:
+python"full_name": s.get("full_name") or get_full_name_for_asset(s.get("asset", ""))
+Make sure get_full_name_for_asset is imported at the top of the file:
+pythonfrom trading_engine.database import get_full_name_for_asset
+9. Flush cache after changes are saved
+bashcurl -s -X POST http://localhost:5001/api/v1/cache/flush | python3 -m json.tool
+Do NOT change:
+
+Any database columns or models
+The get_full_name_for_asset() function itself
+Any strategy logic
+The admin panel HTML rendering
+The _ASSET_NAME_MAP or _NDX100_COMPANY_NAMES dicts
+Any endpoint paths, query parameters, or cache decorators
+The SignalPublic, SignalLegacy, PositionItem, MetricItem Pydantic models — just ensure full_name: Optional[str] = None is present in each one that returns asset-level data
