@@ -53,6 +53,16 @@ _EXIT_INSTRUCTIONS: dict[str, dict[str, str]] = {
     },
 }
 
+EXIT_RULES_PUBLIC: dict[str, str] = {
+    "mtf_ema": "Exit when H1 close crosses below H1 EMA20 (LONG) or above H1 EMA20 (SHORT), or when the 2× ATR trailing stop is breached.",
+    "trend_forex": "Dynamic 3× ATR trailing stop ratcheted daily at 5:01 PM ET. Stop only moves in the trade's favour — never back.",
+    "trend_non_forex": "Dynamic 3× ATR trailing stop ratcheted daily at 4:01 PM ET. Stop only moves in the trade's favour — never back.",
+    "sp500_momentum": "Exit when RSI(20) drops below 70 during ARCA session (09:30–15:30 ET). No trailing stop — RSI threshold is the sole exit trigger.",
+    "highest_lowest_fx": "Exit after 6 hours from entry (time exit), or immediately if the 2× ATR(100) stop loss is hit — whichever comes first.",
+    "stocks_algo1": "Exit at monthly rebalance if the symbol drops out of the top 20 momentum ranking, or immediately if price falls 8% below entry.",
+    "stocks_algo2": "Exit when price falls 4% below entry (stop loss), or automatically after 5 trading days — whichever comes first.",
+}
+
 
 def _get_exit_instruction(strategy: str, direction: str) -> Optional[str]:
     """Return the exit instruction string for a strategy + direction combo."""
@@ -131,6 +141,7 @@ class StrategySummary(BaseModel):
     total: int
     open: int
     closed: int
+    exit_rules: Optional[str] = None
 
 class StrategiesResponse(BaseModel):
     strategies: list[StrategySummary]
@@ -853,6 +864,7 @@ def list_strategies():
                 "total": 0,
                 "open": 0,
                 "closed": 0,
+                "exit_rules": EXIT_RULES_PUBLIC.get(name),
             }
         strategy_stats[name]["total"] += 1
         if s["status"] == "OPEN":
