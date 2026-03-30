@@ -18,6 +18,7 @@ from trading_engine.api_v1 import (
     CATEGORY_MAP,
     STRATEGY_LABELS,
     _resolve_asset_class,
+    _get_exit_instruction,
 )
 
 logger = logging.getLogger("trading_engine.api_v1.public_signals")
@@ -38,6 +39,7 @@ class SignalRead(BaseModel):
     closed_at: Optional[str] = Field(None, description="ISO 8601 timestamp when signal was closed (null if OPEN)")
     exit_price: Optional[float] = Field(None, description="Price at which position was exited (null if OPEN)")
     exit_reason: Optional[str] = Field(None, description="Reason for exit: stop_loss, take_profit, trailing_stop, manual")
+    exit_instructions: Optional[str] = Field(None, description="Human-readable exit rule for this signal")
 
 
 class AssetRead(BaseModel):
@@ -113,6 +115,7 @@ def _to_signal_read(s) -> dict:
         closed_at=_g(s, "updated_at") if status == "CLOSED" else None,
         exit_price=_g(s, "exit_price") if status == "CLOSED" else None,
         exit_reason=_g(s, "exit_reason") if status == "CLOSED" else None,
+        exit_instructions=_get_exit_instruction(strategy_name, direction_raw),
     ).model_dump()
 
 

@@ -1,0 +1,64 @@
+In trading_engine/api/v1/public_signals.py, find the endpoint that serves GET /api/v1/public/signals. It builds signal objects and returns them. Add exit_instructions to every signal object in the response by calling _get_exit_instruction() from api_v1.py.
+1. Add the import at the top of public_signals.py
+Add this import if not already present:
+pythonfrom trading_engine.api_v1 import _get_exit_instruction
+2. Find where each signal dict is built in the /api/v1/public/signals endpoint
+It will look something like this:
+python{
+    "symbol": s.get("asset") or s.get("symbol"),
+    "direction": ...,
+    "entry": ...,
+    ...
+}
+Add exit_instructions to every signal dict:
+python{
+    "symbol": s.get("asset") or s.get("symbol"),
+    "direction": ...,
+    "entry": ...,
+    ...
+    "exit_instructions": _get_exit_instruction(
+        s.get("strategy_name", ""),
+        s.get("direction", "")
+    ),
+}
+3. If there is a Pydantic response model for this endpoint, find it and add:
+pythonexit_instructions: Optional[str] = None
+4. Also apply to any other endpoints in public_signals.py that return signal objects — for example if there is a /api/v1/public/signals/{id} or /api/v1/public/signals/active endpoint in the same file, add exit_instructions to those response dicts too using the same pattern.
+5. Expected response shape after the fix:
+json{
+  "signals": [
+    {
+      "symbol": "BTC/USD",
+      "full_name": "Bitcoin",
+      "direction": "SELL",
+      "entry": 70960.65,
+      "stop_loss": 71967.22,
+      "strategy": "mtf_ema",
+      "published_at": "2026-03-26T05:34:00Z",
+      "exit_instructions": "Exit when the H1 candle closes above the H1 EMA 20. The 2× ATR(100) trailing stop acts as a hard ceiling — if price breaches it before the EMA crossover, the position is closed immediately.",
+      "asset_class": "crypto"
+    },
+    {
+      "symbol": "GBP/USD",
+      "full_name": "British Pound / US Dollar",
+      "direction": "SELL",
+      "entry": 1.33707,
+      "stop_loss": 1.34464,
+      "strategy": "mtf_ema",
+      "published_at": "2026-03-25T14:00:00Z",
+      "exit_instructions": "Exit when the H1 candle closes above the H1 EMA 20. The 2× ATR(100) trailing stop acts as a hard ceiling — if price breaches it before the EMA crossover, the position is closed immediately.",
+      "asset_class": "forex"
+    }
+  ],
+  "count": 2
+}
+6. Flush cache after changes:
+bashcurl -s -X POST http://localhost:5001/api/v1/cache/flush | python3 -m json.tool
+7. Do NOT change:
+
+The _get_exit_instruction() function or _EXIT_INSTRUCTIONS dict in api_v1.py
+The /api/v1/signals/latest or any other endpoint in api_v1.py
+The endpoint path or any query parameters in public_signals.py
+The cache decorator if one is applied
+The full_name field added previously
+Any strategy logic or database functions
