@@ -2737,12 +2737,21 @@ def _get_stocks_algo1_data() -> dict:
             pass
 
     # Attach current D1 close to each position for P&L
+    from trading_engine.strategies.stocks_algo1 import _fetch_stock_candles as _fetch_algo1_candles
+    from trading_engine import engine_registry as _algo1_registry
+
+    _algo1_engine = _algo1_registry.get_engine()
+
     for pos in positions:
         sym = pos.get("asset", "")
         try:
-            d1 = get_candles(sym, "D1", 5)
-            pos["current_price"] = d1[-1]["close"] if d1 else None
-        except Exception:
+            if _algo1_engine is not None:
+                d1 = _fetch_algo1_candles(_algo1_engine.cache, sym, limit=5)
+            else:
+                d1 = []
+            pos["current_price"] = float(d1[-1]["close"]) if d1 else None
+        except Exception as e:
+            logger.warning(f"[ADMIN] Could not fetch current price for {sym}: {e}")
             pos["current_price"] = None
 
     return {
@@ -2922,12 +2931,21 @@ def _get_stocks_algo2_data() -> dict:
             ndx_below_sma200 = ndx_close < ndx_sma200
 
     # Attach current D1 close to each position for P&L
+    from trading_engine.strategies.stocks_algo2 import _fetch_stock_candles as _fetch_algo2_candles
+    from trading_engine import engine_registry as _algo2_registry
+
+    _algo2_engine = _algo2_registry.get_engine()
+
     for pos in positions:
         sym = pos.get("symbol", "")
         try:
-            d1 = get_candles(sym, "D1", 5)
-            pos["current_price"] = d1[-1]["close"] if d1 else None
-        except Exception:
+            if _algo2_engine is not None:
+                d1 = _fetch_algo2_candles(_algo2_engine.cache, sym, limit=5)
+            else:
+                d1 = []
+            pos["current_price"] = float(d1[-1]["close"]) if d1 else None
+        except Exception as e:
+            logger.warning(f"[ADMIN] Could not fetch current price for {sym}: {e}")
             pos["current_price"] = None
 
     return {

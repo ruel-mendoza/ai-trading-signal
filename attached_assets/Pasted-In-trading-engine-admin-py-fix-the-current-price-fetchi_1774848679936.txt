@@ -1,0 +1,70 @@
+In trading_engine/admin.py, fix the current price fetching for both _get_stocks_algo2_data() and _get_stocks_algo1_data() — they currently call get_candles() which reads from the local SQLite candles table, but NASDAQ stock candles are never stored there. They need to call _fetch_stock_candles() from the strategy files instead.
+1. Fix _get_stocks_algo2_data()
+Find this block:
+pythonfor pos in positions:
+    sym = pos.get("symbol", "")
+    try:
+        d1 = get_candles(sym, "D1", 5)
+        pos["current_price"] = d1[-1]["close"] if d1 else None
+    except Exception:
+        pos["current_price"] = None
+Replace with:
+pythonfrom trading_engine.strategies.stocks_algo2 import _fetch_stock_candles as _fetch_algo2_candles
+from trading_engine import engine_registry as _algo2_registry
+
+_algo2_engine = _algo2_registry.get_engine()
+
+for pos in positions:
+    sym = pos.get("symbol", "")
+    try:
+        if _algo2_engine is not None:
+            d1 = _fetch_algo2_candles(_algo2_engine.cache, sym, limit=5)
+        else:
+            d1 = []
+        pos["current_price"] = float(d1[-1]["close"]) if d1 else None
+    except Exception:
+        pos["current_price"] = None
+2. Fix _get_stocks_algo1_data()
+Find this block:
+pythonfor pos in positions:
+    sym = pos.get("asset", "")
+    try:
+        d1 = get_candles(sym, "D1", 5)
+        pos["current_price"] = d1[-1]["close"] if d1 else None
+    except Exception:
+        pos["current_price"] = None
+Replace with:
+pythonfrom trading_engine.strategies.stocks_algo1 import _fetch_stock_candles as _fetch_algo1_candles
+from trading_engine import engine_registry as _algo1_registry
+
+_algo1_engine = _algo1_registry.get_engine()
+
+for pos in positions:
+    sym = pos.get("asset", "")
+    try:
+        if _algo1_engine is not None:
+            d1 = _fetch_algo1_candles(_algo1_engine.cache, sym, limit=5)
+        else:
+            d1 = []
+        pos["current_price"] = float(d1[-1]["close"]) if d1 else None
+    except Exception:
+        pos["current_price"] = None
+3. Also fix the NDX price fetch in both functions
+Both _get_stocks_algo1_data() and _get_stocks_algo2_data() fetch NDX candles via get_candles("NDX", "D1", 300) — this is correct because NDX IS stored in the local candles table via the cache layer. Do NOT change the NDX fetch.
+4. Important note on credit usage
+_fetch_stock_candles() makes a live FCSAPI call for each symbol. The admin panel loads these functions every time the Stocks Algo tab is opened. To avoid consuming credits on every admin page load, add a try/except that falls back gracefully and logs a warning if the fetch fails rather than making multiple retry attempts:
+pythontry:
+    if _algo2_engine is not None:
+        d1 = _fetch_algo2_candles(_algo2_engine.cache, sym, limit=5)
+    else:
+        d1 = []
+    pos["current_price"] = float(d1[-1]["close"]) if d1 else None
+except Exception as e:
+    logger.warning(f"[ADMIN] Could not fetch current price for {sym}: {e}")
+    pos["current_price"] = None
+5. Do NOT change:
+
+The P&L calculation logic in _build_stocks_algo1_html() and _build_stocks_algo2_html() — they already correctly compute P&L from current_price and entry_price, they just need a non-None current_price to show the value
+The NDX SMA200 fetch which correctly uses get_candles()
+Any strategy logic in stocks_algo1.py or stocks_algo2.py
+Any other admin panel functions
