@@ -5162,14 +5162,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 _updateRoutingDisplay();
             } else {
                 if (subCatWrapper) subCatWrapper.style.display = 'block';
-                if (assetClassSelect) { assetClassSelect.disabled = false; }
+                if (assetClassSelect) {
+                    assetClassSelect.disabled = false;
+                    assetClassSelect.value = 'forex';
+                    assetClassSelect.dispatchEvent(new Event('change'));
+                }
                 if (stockHint) stockHint.style.display = 'none';
                 if (nasdaqNote) nasdaqNote.style.display = 'none';
-                if (subClassSelect) {
-                    subClassSelect.disabled = false;
-                    _populateSubClass(assetClassSelect ? assetClassSelect.value : 'forex', subClassSelect);
-                }
-                _updateRoutingDisplay();
             }
         });
         strategySelect._subCatListenerAdded = true;
@@ -5181,7 +5180,10 @@ document.addEventListener('DOMContentLoaded', function() {
             var strategy = strategySelect ? strategySelect.value : '';
             if (strategy === 'mtf_ema' || strategy === 'stocks_algo1' || strategy === 'stocks_algo2') return;
             var subClassSelect = document.getElementById('new-asset-sub-class');
-            if (subClassSelect) _populateSubClass(this.value, subClassSelect);
+            if (subClassSelect) {
+                subClassSelect.disabled = false;
+                _populateSubClass(this.value, subClassSelect);
+            }
             _updateRoutingDisplay();
         });
         assetClassSelect._subClassListenerAdded = true;
@@ -8687,7 +8689,8 @@ def api_add_strategy_asset(
         )
     verified = False
     api_client = engine.cache.api_client
-    if strategy_name in ("stocks_algo1", "stocks_algo2"):
+    if strategy_name in ("stocks_algo1", "stocks_algo2") or sub_category == "nasdaq100":
+        # Stocks strategies and nasdaq100 sub_category both use NASDAQ equity verification
         test_result = _verify_stock_symbol(symbol, api_client)
     elif sub_category == "commodity_etf_no_type":
         # Verify using plain-ticker NO_TYPE call (no type/exchange params)
