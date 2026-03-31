@@ -794,8 +794,9 @@ class FCSAPIClient:
             if asset_class == "stock":
                 params["type"] = "index"
             elif asset_class == "etf":
-                params["type"] = "fund"
-                params["exchange"] = "AMEX"
+                if symbol not in _NO_TYPE_ETFS:
+                    params["type"] = "fund"
+                    params["exchange"] = "NASDAQ" if symbol in _NASDAQ_ETFS else "AMEX"
             elif asset_class == "commodity":
                 params["type"] = "commodity"
 

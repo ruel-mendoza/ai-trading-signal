@@ -1,0 +1,28 @@
+Using the existing backfill.py, admin.py, and database.py infrastructure, write a standalone script restore_trend_non_forex.py that restores the following symbols to the trend_non_forex strategy in strategy_assets, validating each one against FCSAPI before inserting.
+Symbols to restore:
+COTN, CORN, WOOD, SOYB, CANE, WEAT, USOIL, UNG, UGA, SGOL, CPER, PALL, PPLT, SIVR, NICK, ALUM, ZINC, SLX, TINM
+Requirements:
+
+Call init_db() at the start so the DB and schema are ready.
+For each symbol, call the existing _verify_stock_symbol() logic from admin.py — but these are ETF/commodity symbols, not NASDAQ equities, so use cache.api_client.test_symbol_coverage(symbol) instead (which handles ETFs, commodities, and no-type symbols via fcsapi_client.py's existing routing). Do not add a NASDAQ prefix.
+If test_symbol_coverage() returns supported=True, call add_strategy_asset() with:
+
+strategy_name="trend_non_forex"
+asset_class="forex" (matching the existing convention for commodity ETFs in this codebase — see _ASSET_CLASS_MAP and _STRATEGY_ASSET_SEEDS)
+sub_category=None
+added_by="restore_script"
+fcsapi_verified=True
+
+
+If test_symbol_coverage() returns supported=False, log the symbol as FAILED with the reason and skip insertion. Do not insert unverified symbols.
+Print a final summary table: symbol | API symbol used | status (ADDED / ALREADY_EXISTS / FAILED) | reason/close price.
+Add --dry-run flag: runs all FCSAPI verification calls but skips DB writes, printing what would be inserted.
+Add --force flag: skips the "X credits will be used, continue?" prompt.
+After all insertions, call invalidate_signal_caches() from api_v1.py (wrapped in try/except in case the engine is offline).
+
+Important notes from the codebase:
+
+add_strategy_asset() returns None if the symbol already exists and is active (idempotent — not an error).
+test_symbol_coverage() in fcsapi_client.py already handles the ETF no-type routing (_NO_TYPE_ETFS set) and commodity routing — use it as-is.
+pre_request_check() from credit_control.py must be called before each API call (already called inside test_symbol_coverage() via _get()).
+Consume 1 credit per symbol for the verification call. Warn if total > 20 credits.
