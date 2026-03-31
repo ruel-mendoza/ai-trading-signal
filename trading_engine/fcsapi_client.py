@@ -116,6 +116,7 @@ ETF_SYMBOLS = {
 }
 
 _NASDAQ_ETFS = {"WOOD"}
+_NO_TYPE_ETFS = {"CANE", "WOOD"}
 
 UNSUPPORTED_SYMBOLS: set[str] = {
     "WTI/USD",
@@ -232,6 +233,9 @@ def get_v4_history_symbol(symbol: str) -> str:
         return STOCK_SYMBOL_MAP[symbol]
     if symbol in COMMODITY_SYMBOL_MAP:
         return COMMODITY_SYMBOL_MAP[symbol]
+    # NO_TYPE ETFs use plain ticker without any exchange prefix
+    if symbol in _NO_TYPE_ETFS:
+        return symbol
     # Plain equity ticker not in any map — apply NASDAQ prefix
     if "/" not in symbol and ":" not in symbol:
         return get_nasdaq_api_symbol(symbol)
@@ -439,8 +443,9 @@ class FCSAPIClient:
         if asset_class == "stock":
             params["type"] = "index"
         elif asset_class == "etf":
-            params["type"] = "fund"
-            params["exchange"] = "NASDAQ" if symbol in _NASDAQ_ETFS else "AMEX"
+            if symbol not in _NO_TYPE_ETFS:
+                params["type"] = "fund"
+                params["exchange"] = "NASDAQ" if symbol in _NASDAQ_ETFS else "AMEX"
         elif asset_class == "commodity":
             params["type"] = "commodity"
 
@@ -513,9 +518,10 @@ class FCSAPIClient:
             if asset_class == "stock":
                 params["type"] = "index"
             elif asset_class == "etf":
-                params["type"] = "fund"
-                first_sym = sym_pairs[0][0]
-                params["exchange"] = "NASDAQ" if first_sym in _NASDAQ_ETFS else "AMEX"
+                if sym_pairs[0][0] not in _NO_TYPE_ETFS:
+                    params["type"] = "fund"
+                    first_sym = sym_pairs[0][0]
+                    params["exchange"] = "NASDAQ" if first_sym in _NASDAQ_ETFS else "AMEX"
             elif asset_class == "commodity":
                 params["type"] = "commodity"
 
@@ -668,28 +674,30 @@ class FCSAPIClient:
     def get_stock_latest_prices(self, symbols: list[str], batch_size: int = 9) -> dict[str, dict]:
         all_results: dict[str, dict] = {}
 
-        amex_syms = [s for s in symbols if s not in _NASDAQ_ETFS]
-        nasdaq_syms = [s for s in symbols if s in _NASDAQ_ETFS]
+        no_type_syms = [s for s in symbols if s in _NO_TYPE_ETFS]
+        amex_syms = [s for s in symbols if s not in _NASDAQ_ETFS and s not in _NO_TYPE_ETFS]
+        nasdaq_syms = [s for s in symbols if s in _NASDAQ_ETFS and s not in _NO_TYPE_ETFS]
 
         exchange_groups = []
         if amex_syms:
-            exchange_groups.append(("AMEX", amex_syms))
+            exchange_groups.append(("AMEX", amex_syms, True))
         if nasdaq_syms:
-            exchange_groups.append(("NASDAQ", nasdaq_syms))
+            exchange_groups.append(("NASDAQ", nasdaq_syms, True))
+        if no_type_syms:
+            exchange_groups.append(("", no_type_syms, False))
 
-        for exchange, syms in exchange_groups:
+        for exchange, syms, use_type in exchange_groups:
             batches = [syms[i:i + batch_size] for i in range(0, len(syms), batch_size)]
             for batch_idx, batch in enumerate(batches):
                 joined = ",".join(batch)
                 logger.info(
-                    f"[STOCK-LATEST] {exchange} batch {batch_idx + 1}/{len(batches)}: {joined} "
+                    f"[STOCK-LATEST] {exchange or 'NO_TYPE'} batch {batch_idx + 1}/{len(batches)}: {joined} "
                     f"({len(batch)} symbols)"
                 )
-                params = {
-                    "symbol": joined,
-                    "type": "fund",
-                    "exchange": exchange,
-                }
+                params = {"symbol": joined}
+                if use_type:
+                    params["type"] = "fund"
+                    params["exchange"] = exchange
 
                 try:
                     data = self._get("latest", params, base_url=BASE_URL_V4_STOCK)
