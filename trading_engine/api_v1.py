@@ -463,13 +463,12 @@ CATEGORY_MAP: dict[str, str] = {
     "NATGAS/USD": "forex",
     "CORN/USD": "forex", "SOYBEAN/USD": "forex",
     "WHEAT/USD": "forex","SUGAR/USD":   "forex",
-    # ── Forex (commodity ETFs) ─────────────────────────
-    "USO":  "forex", "UNG":  "forex", "UGA":  "forex",
+    # ── Forex (commodity ETFs — active/working symbols only) ───────────
+    "UNG":  "forex",
     "DBB":  "forex", "SLX":  "forex",
-    "SGOL": "forex", "SIVR": "forex", "CPER": "forex",
-    "PPLT": "forex", "PALL": "forex",
-    "CORN": "forex", "SOYB": "forex", "WEAT": "forex",
-    "CANE": "forex", "WOOD": "forex",
+    "CPER": "forex",
+    "CORN": "forex", "SOYB": "forex",
+    "CANE": "forex",
     # ── Forex (indices) ────────────────────────────────
     "SPX": "forex", "NDX": "forex", "RUT": "forex",
     "DJI": "forex",

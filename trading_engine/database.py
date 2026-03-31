@@ -92,22 +92,14 @@ _ASSET_CLASS_MAP: dict[str, str] = {
     "SOYBEAN/USD": "forex",
     "WHEAT/USD": "forex",
     "SUGAR/USD": "forex",
-    # ── Forex (commodity ETFs) ─────────────────────────
-    "USO": "forex",
+    # ── Forex (commodity ETFs — active/working symbols only) ───────────
     "UNG": "forex",
-    "UGA": "forex",
     "DBB": "forex",
     "SLX": "forex",
-    "SGOL": "forex",
-    "SIVR": "forex",
     "CPER": "forex",
-    "PPLT": "forex",
-    "PALL": "forex",
     "CORN": "forex",
     "SOYB": "forex",
-    "WEAT": "forex",
     "CANE": "forex",
-    "WOOD": "forex",
     # ── Forex (indices) ────────────────────────────────
     "SPX": "forex",
     "NDX": "forex",
@@ -199,20 +191,12 @@ _ASSET_NAME_MAP: dict[str, str] = {
     "NDX": "NASDAQ 100",
     "RUT": "Russell 2000",
     "DJI": "Dow Jones Industrial Average",
-    # Commodity ETFs
+    # Commodity ETFs (active/working symbols only)
     "CORN": "Teucrium Corn Fund",
     "SOYB": "Teucrium Soybean Fund",
-    "WEAT": "Teucrium Wheat Fund",
     "CANE": "Teucrium Sugar Fund",
-    "WOOD": "iShares Global Timber & Forestry ETF",
-    "USO": "United States Oil Fund",
     "UNG": "United States Natural Gas Fund",
-    "UGA": "United States Gasoline Fund",
-    "SGOL": "Aberdeen Standard Physical Gold Shares",
-    "SIVR": "Aberdeen Standard Physical Silver Shares",
     "CPER": "United States Copper Index Fund",
-    "PPLT": "Aberdeen Standard Physical Platinum Shares",
-    "PALL": "Aberdeen Standard Physical Palladium Shares",
     "DBB": "Invesco DB Base Metals Fund",
     "SLX": "VanEck Steel ETF",
 }
@@ -2815,20 +2799,12 @@ _STRATEGY_ASSET_SEEDS = {
         ("AUD/USD", "forex", "forex"),
     ],
     "trend_non_forex": [
-        # ── Commodity ETFs ──────────────────────────────
+        # ── Commodity ETFs (active/working symbols only) ────────────────
         ("CORN", "forex"),
         ("SOYB", "forex"),
-        ("WEAT", "forex"),
         ("CANE", "forex"),
-        ("WOOD", "forex"),
-        ("USO", "forex"),
         ("UNG", "forex"),
-        ("UGA", "forex"),
-        ("SGOL", "forex"),
-        ("SIVR", "forex"),
         ("CPER", "forex"),
-        ("PPLT", "forex"),
-        ("PALL", "forex"),
         ("DBB", "forex"),
         ("SLX", "forex"),
         # ── Crypto altcoins (LONG_ONLY) ─────────────────

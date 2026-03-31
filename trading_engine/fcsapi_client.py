@@ -109,17 +109,17 @@ COMMODITY_SYMBOL_MAP = {
 }
 
 ETF_SYMBOLS = {
-    "CORN", "SOYB", "WEAT", "CANE", "WOOD",
-    "USO", "UNG", "UGA",
-    "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+    "CORN", "SOYB", "CANE",
+    "UNG",
+    "CPER",
     "DBB", "SLX",
 }
 
-_NASDAQ_ETFS = {"WOOD"}
+_NASDAQ_ETFS: set[str] = set()
 _NO_TYPE_ETFS = {
-    "CANE", "WOOD", "CORN", "SOYB", "WEAT",
-    "USO", "UNG", "UGA",
-    "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+    "CANE", "CORN", "SOYB",
+    "UNG",
+    "CPER",
     "DBB", "SLX",
 }
 
@@ -127,6 +127,15 @@ UNSUPPORTED_SYMBOLS: set[str] = {
     "WTI/USD",
     "BRENT/USD",
     "MATIC/USD",
+    # ── ETFs returning wrong exchange/currency from FCSAPI ──────────────
+    "USO",   # FCSAPI returns BCBA:USO (Argentine peso, ~12820 vs correct ~$65-75)
+    "UGA",   # FCSAPI returns AMEX:UGA (wrong price ~$105 vs correct ~$55-65)
+    "WEAT",  # FCSAPI returns EURONEXT:WEAT (Euro/France, ~17.76 vs correct ~$4-8)
+    "WOOD",  # FCSAPI returns LSE:WOOD (UK pence, ~1802 vs correct ~$70-100)
+    "SGOL",  # FCSAPI returns BMV:SGOL (Mexican peso, ~876 vs correct ~$25-35)
+    "SIVR",  # FCSAPI returns BMV:SIVR (Mexican peso, ~1195 vs correct ~$25-35)
+    "PPLT",  # FCSAPI returns BIVA:PPLT (Mexican peso, ~3055 vs correct ~$85-110)
+    "PALL",  # FCSAPI returns BMV:PALL (Mexican peso, ~2320 vs correct ~$90-130)
 }
 
 ADVANCE_SYMBOL_MAP = {

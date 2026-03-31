@@ -59,9 +59,7 @@ _ETF_SYMBOLS = [s for s in TARGET_SYMBOLS if "/" not in s]
 _CRYPTO_ALTCOINS = [s for s in TARGET_SYMBOLS if "/" in s]
 
 SHORT_ELIGIBLE_SYMBOLS = [
-    "USO",  # Oil ETF — can trend down sharply
     "UNG",  # Natural gas ETF
-    "UGA",  # Gasoline ETF
     "DBB",  # Base metals — can trend down
     "SLX",  # Steel ETF
 ]

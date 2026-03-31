@@ -1,0 +1,58 @@
+I have a trading engine at trading_engine/fcsapi_client.py that fetches ETF candle data from FCSAPI. Several ETF symbols in the _NO_TYPE_ETFS set are being resolved to wrong exchanges and wrong currencies instead of their correct NYSE Arca US listings. I need you to fix this in one pass.
+
+CONFIRMED BROKEN SYMBOLS and what FCSAPI actually returns:
+- USO  → BCBA:USO (Argentine peso, ~12820 instead of ~$65-75)
+- UGA  → AMEX:UGA (wrong price ~$105 instead of ~$55-65)
+- WEAT → EURONEXT:WEAT (Euro/France, ~17.76 instead of ~$4-8)
+- WOOD → LSE:WOOD (UK pence sterling, ~1802 instead of ~$70-100)
+- SGOL → BMV:SGOL (Mexican peso, ~876 instead of ~$25-35)
+- SIVR → BMV:SIVR (Mexican peso, ~1195 instead of ~$25-35)
+- PPLT → BIVA:PPLT (Mexican peso, ~3055 instead of ~$85-110)
+- PALL → BMV:PALL (Mexican peso, ~2320 instead of ~$90-130)
+
+CONFIRMED WORKING (leave untouched):
+- UNG  → AMEX:UNG  (~$11.68 correct)
+- CORN → EURONEXT:CORN (~$16.76 correct)
+- SOYB → EURONEXT:SOYB (~$24.73 correct)
+- CANE → AMEX:CANE (~$10.48 correct)
+- CPER → EURONEXT:CPER (~$23.26 correct)
+- DBB  → AMEX:DBB  (~$23.34 correct)
+- SLX  → AMEX:SLX  (~$88.52 correct)
+
+Please make ALL of the following changes:
+
+1. In trading_engine/fcsapi_client.py:
+   - Add USO, UGA, WEAT, WOOD, SGOL, SIVR, PPLT, PALL to the UNSUPPORTED_SYMBOLS set with comments explaining why each one is wrong
+   - Remove USO, UGA, WEAT, WOOD, SGOL, SIVR, PPLT, PALL from the _NO_TYPE_ETFS set
+   - Remove USO, UGA, WEAT, WOOD, SGOL, SIVR, PPLT, PALL from the ETF_SYMBOLS set
+   - Remove USO, UGA, WEAT, WOOD, SGOL, SIVR, PPLT, PALL from the SHORT_ELIGIBLE_SYMBOLS list in trading_engine/strategies/trend_non_forex.py (USO, UNG, UGA, DBB, SLX are currently short-eligible — remove USO and UGA from that list)
+
+2. Run this SQLite command to clean up the database:
+   sqlite3 trading_engine/trading_data.db "
+   DELETE FROM candles WHERE asset IN ('USO','UGA','WEAT','WOOD','SGOL','SIVR','PPLT','PALL');
+   DELETE FROM cache_metadata WHERE asset IN ('USO','UGA','WEAT','WOOD','SGOL','SIVR','PPLT','PALL');
+   UPDATE strategy_assets SET is_active=0 WHERE symbol IN ('USO','UGA','WEAT','WOOD','SGOL','SIVR','PPLT','PALL');
+   UPDATE signals SET status='CLOSED', exit_reason='Symbol deactivated — FCSAPI returning wrong exchange/currency data' WHERE asset IN ('USO','UGA','WEAT','WOOD','SGOL','SIVR','PPLT','PALL') AND status='OPEN';
+   DELETE FROM open_positions WHERE asset IN ('USO','UGA','WEAT','WOOD','SGOL','SIVR','PPLT','PALL');
+   SELECT symbol, strategy_name, is_active FROM strategy_assets WHERE symbol IN ('USO','UGA','WEAT','WOOD','SGOL','SIVR','PPLT','PALL') ORDER BY symbol;
+   "
+
+3. Also update the _ASSET_CLASS_MAP and _ASSET_NAME_MAP dictionaries in trading_engine/database.py — remove USO, UGA, WEAT, WOOD, SGOL, SIVR, PPLT, PALL from both dictionaries since these symbols are no longer supported.
+
+4. Also remove USO, UGA, WEAT, WOOD, SGOL, SIVR, PPLT, PALL from the CATEGORY_MAP dictionary in trading_engine/api_v1.py and from the _ADMIN_CLASS_MAP dictionary in trading_engine/admin.py.
+
+5. Also remove USO, UGA, WEAT, WOOD, SGOL, SIVR, PPLT, PALL from the _STRATEGY_ASSET_SEEDS dict in trading_engine/database.py under the trend_non_forex key, so they are not re-seeded on next restart.
+
+6. After making all code changes, verify by running:
+   python3 -c "
+   import sys; sys.path.insert(0,'.')
+   from trading_engine.fcsapi_client import UNSUPPORTED_SYMBOLS, _NO_TYPE_ETFS, ETF_SYMBOLS
+   broken = {'USO','UGA','WEAT','WOOD','SGOL','SIVR','PPLT','PALL'}
+   print('In UNSUPPORTED_SYMBOLS:', broken.issubset(UNSUPPORTED_SYMBOLS))
+   print('Still in _NO_TYPE_ETFS:', broken & _NO_TYPE_ETFS)
+   print('Still in ETF_SYMBOLS:', broken & ETF_SYMBOLS)
+   working = {'UNG','CORN','SOYB','CANE','CPER','DBB','SLX'}
+   print('Working symbols intact in ETF_SYMBOLS:', working.issubset(ETF_SYMBOLS))
+   "
+
+The goal is that after this fix the engine will completely skip fetching data for these 8 broken symbols, their corrupted candle data is wiped from the DB, any open signals on them are closed, and the 7 working ETF symbols (UNG, CORN, SOYB, CANE, CPER, DBB, SLX) continue to work exactly as before.

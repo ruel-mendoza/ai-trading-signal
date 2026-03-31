@@ -180,22 +180,14 @@ _ADMIN_CLASS_MAP: dict[str, str] = {
     "SOYBEAN/USD": "forex",
     "WHEAT/USD": "forex",
     "SUGAR/USD": "forex",
-    # ── Forex (commodity ETFs) ─────────────────────────
-    "USO": "forex",
+    # ── Forex (commodity ETFs — active/working symbols only) ───────────
     "UNG": "forex",
-    "UGA": "forex",
     "DBB": "forex",
     "SLX": "forex",
-    "SGOL": "forex",
-    "SIVR": "forex",
     "CPER": "forex",
-    "PPLT": "forex",
-    "PALL": "forex",
     "CORN": "forex",
     "SOYB": "forex",
-    "WEAT": "forex",
     "CANE": "forex",
-    "WOOD": "forex",
     # ── Forex (indices) ────────────────────────────────
     "SPX": "forex",
     "NDX": "forex",
