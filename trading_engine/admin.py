@@ -5131,16 +5131,16 @@ document.addEventListener('DOMContentLoaded', function() {
         strategySelect.addEventListener('change', function() {
             var strategy = this.value;
             var subCatWrapper = document.getElementById('sub-category-wrapper');
-            var subCatSelect = document.getElementById('new-asset-sub-category');
+            var subClassSelect = document.getElementById('new-asset-sub-class');
             var assetClassSelect = document.getElementById('new-asset-class');
             var stockHint = document.getElementById('stock-symbol-hint');
             var nasdaqNote = document.getElementById('nasdaq-sync-note');
 
             if (strategy === 'mtf_ema') {
                 if (subCatWrapper) subCatWrapper.style.display = 'block';
-                if (subCatSelect) {
-                    subCatSelect.disabled = false;
-                    subCatSelect.innerHTML = '<option value="">— select sub-category —</option>'
+                if (subClassSelect) {
+                    subClassSelect.disabled = false;
+                    subClassSelect.innerHTML = '<option value="">— select sub-category —</option>'
                         + '<option value="indices">Indices</option>'
                         + '<option value="commodities">Commodities</option>'
                         + '<option value="crypto">Crypto</option>'
@@ -5149,25 +5149,87 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (assetClassSelect) { assetClassSelect.disabled = false; assetClassSelect.value = 'forex'; }
                 if (stockHint) stockHint.style.display = 'none';
                 if (nasdaqNote) nasdaqNote.style.display = 'none';
+                _updateRoutingDisplay();
             } else if (strategy === 'stocks_algo1' || strategy === 'stocks_algo2') {
                 if (subCatWrapper) subCatWrapper.style.display = 'block';
-                if (subCatSelect) {
-                    subCatSelect.disabled = true;
-                    subCatSelect.innerHTML = '<option value="nasdaq100" selected>NASDAQ 100</option>';
+                if (subClassSelect) {
+                    subClassSelect.disabled = true;
+                    subClassSelect.innerHTML = '<option value="nasdaq100" selected>NASDAQ 100</option>';
                 }
                 if (assetClassSelect) { assetClassSelect.value = 'stocks'; assetClassSelect.disabled = true; }
                 if (stockHint) stockHint.style.display = 'block';
                 if (nasdaqNote) nasdaqNote.style.display = 'block';
+                _updateRoutingDisplay();
             } else {
-                if (subCatWrapper) subCatWrapper.style.display = 'none';
-                if (assetClassSelect) { assetClassSelect.disabled = false; assetClassSelect.value = 'forex'; }
+                if (subCatWrapper) subCatWrapper.style.display = 'block';
+                if (assetClassSelect) { assetClassSelect.disabled = false; }
                 if (stockHint) stockHint.style.display = 'none';
                 if (nasdaqNote) nasdaqNote.style.display = 'none';
+                if (subClassSelect) {
+                    subClassSelect.disabled = false;
+                    _populateSubClass(assetClassSelect ? assetClassSelect.value : 'forex', subClassSelect);
+                }
+                _updateRoutingDisplay();
             }
         });
         strategySelect._subCatListenerAdded = true;
     }
+
+    var assetClassSelect = document.getElementById('new-asset-class');
+    if (assetClassSelect && !assetClassSelect._subClassListenerAdded) {
+        assetClassSelect.addEventListener('change', function() {
+            var strategy = strategySelect ? strategySelect.value : '';
+            if (strategy === 'mtf_ema' || strategy === 'stocks_algo1' || strategy === 'stocks_algo2') return;
+            var subClassSelect = document.getElementById('new-asset-sub-class');
+            if (subClassSelect) _populateSubClass(this.value, subClassSelect);
+            _updateRoutingDisplay();
+        });
+        assetClassSelect._subClassListenerAdded = true;
+    }
+
+    var subClassSelect = document.getElementById('new-asset-sub-class');
+    if (subClassSelect && !subClassSelect._routingListenerAdded) {
+        subClassSelect.addEventListener('change', function() { _updateRoutingDisplay(); });
+        subClassSelect._routingListenerAdded = true;
+    }
 });
+
+function _populateSubClass(assetClass, subClassSelect) {
+    if (assetClass === 'crypto') {
+        subClassSelect.innerHTML =
+            '<option value="major">Major</option>'
+            + '<option value="altcoin">Altcoin</option>';
+    } else if (assetClass === 'stocks') {
+        subClassSelect.innerHTML = '<option value="nasdaq100">NASDAQ 100</option>';
+    } else {
+        subClassSelect.innerHTML =
+            '<option value="fx_pair">FX Pair</option>'
+            + '<option value="commodity_etf_no_type">Commodity ETF \u2014 No Type</option>'
+            + '<option value="commodity_etf_amex">Commodity ETF \u2014 AMEX Fund</option>'
+            + '<option value="index">Index</option>';
+    }
+}
+
+function _updateRoutingDisplay() {
+    var routingMap = {
+        'fx_pair': 'forex advance endpoint',
+        'commodity_etf_no_type': 'stock/history \u2014 no type params',
+        'commodity_etf_amex': 'stock/history \u2014 type=fund&exchange=AMEX',
+        'index': 'stock/history \u2014 type=index',
+        'major': 'crypto/history via CRYPTO_SYMBOL_MAP',
+        'altcoin': 'crypto/history via CRYPTO_SYMBOL_MAP',
+        'nasdaq100': 'stock/history \u2014 NASDAQ: prefix',
+        'indices': 'mtf_ema group: indices',
+        'commodities': 'mtf_ema group: commodities',
+        'crypto': 'mtf_ema group: crypto',
+        'forex': 'mtf_ema group: forex'
+    };
+    var subClassSelect = document.getElementById('new-asset-sub-class');
+    var routingField = document.getElementById('new-asset-fcsapi-routing');
+    if (!routingField) return;
+    var val = subClassSelect ? subClassSelect.value : '';
+    routingField.value = routingMap[val] || '\u2014';
+}
 
 function copyApiUrl(path) {
     var fullUrl = window.location.origin + path;
@@ -5290,7 +5352,7 @@ async function addAsset() {
   var symbol = document.getElementById('new-asset-symbol').value.trim().toUpperCase();
   var strategy = document.getElementById('new-asset-strategy').value;
   var assetClass = document.getElementById('new-asset-class').value;
-  var subCategoryEl = document.getElementById('new-asset-sub-category');
+  var subCategoryEl = document.getElementById('new-asset-sub-class');
   var subCategory = subCategoryEl ? (subCategoryEl.value || null) : null;
   var resultEl = document.getElementById('asset-add-result');
   if (!symbol || !strategy || !assetClass) {
@@ -7138,15 +7200,20 @@ def admin_dashboard(
                             </select>
                         </div>
                         <div id="sub-category-wrapper">
-                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Sub-Category</label>
-                            <select id="new-asset-sub-category" data-testid="select-new-asset-sub-category"
+                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Sub-Class</label>
+                            <select id="new-asset-sub-class" data-testid="select-new-asset-sub-class"
                                     style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;color:#f1f5f9;font-size:14px;border-radius:6px;cursor:pointer;">
-                                <option value="">— select sub-category —</option>
-                                <option value="indices">Indices</option>
-                                <option value="commodities">Commodities</option>
-                                <option value="crypto">Crypto</option>
-                                <option value="forex">Forex</option>
+                                <option value="fx_pair">FX Pair</option>
+                                <option value="commodity_etf_no_type">Commodity ETF — No Type</option>
+                                <option value="commodity_etf_amex">Commodity ETF — AMEX Fund</option>
+                                <option value="index">Index</option>
                             </select>
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">FCSAPI Routing</label>
+                            <input type="text" id="new-asset-fcsapi-routing" readonly data-testid="text-fcsapi-routing"
+                                   value="forex advance endpoint"
+                                   style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #1e293b;border-radius:6px;color:#64748b;font-size:12px;cursor:default;">
                         </div>
                         <div style="display:flex;gap:8px;align-items:flex-end;">
                             <button class="btn btn-secondary" onclick="testAssetCoverage()" data-testid="button-test-asset" style="white-space:nowrap;">Test FCSAPI</button>
@@ -8528,7 +8595,19 @@ def api_add_strategy_asset(
         "stocks_algo2",
     }
     VALID_CLASSES = {"forex", "crypto", "stocks"}
-    VALID_SUB_CATEGORIES = {"indices", "commodities", "crypto", "forex"}
+    # mtf_ema grouping values (describe group, not FCSAPI routing)
+    MTF_EMA_SUB_CATEGORIES = {"indices", "commodities", "crypto", "forex"}
+    # routing-intent values used by all other strategies
+    ROUTING_SUB_CATEGORIES = {
+        "fx_pair",
+        "commodity_etf_no_type",
+        "commodity_etf_amex",
+        "index",
+        "major",
+        "altcoin",
+        "nasdaq100",
+    }
+    VALID_SUB_CATEGORIES = MTF_EMA_SUB_CATEGORIES | ROUTING_SUB_CATEGORIES
     STOCKS_STRATEGIES = {"stocks_algo1", "stocks_algo2"}
 
     if not symbol:
@@ -8571,10 +8650,19 @@ def api_add_strategy_asset(
             },
             status_code=400,
         )
+    if sub_category and sub_category not in VALID_SUB_CATEGORIES:
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": f"Invalid sub_category '{sub_category}'. "
+                "Must be one of: " + ", ".join(sorted(VALID_SUB_CATEGORIES)),
+            },
+            status_code=400,
+        )
     if (
         strategy_name == "mtf_ema"
         and sub_category
-        and sub_category not in VALID_SUB_CATEGORIES
+        and sub_category not in MTF_EMA_SUB_CATEGORIES
     ):
         return JSONResponse(
             content={
@@ -8586,6 +8674,7 @@ def api_add_strategy_asset(
         )
     # Auto-verify symbol against FCSAPI before saving
     from trading_engine import engine_registry
+    from trading_engine.fcsapi_client import BASE_URL_V4_STOCK
 
     engine = engine_registry.get_engine()
     if engine is None:
@@ -8597,10 +8686,77 @@ def api_add_strategy_asset(
             status_code=503,
         )
     verified = False
+    api_client = engine.cache.api_client
     if strategy_name in ("stocks_algo1", "stocks_algo2"):
-        test_result = _verify_stock_symbol(symbol, engine.cache.api_client)
+        test_result = _verify_stock_symbol(symbol, api_client)
+    elif sub_category == "commodity_etf_no_type":
+        # Verify using plain-ticker NO_TYPE call (no type/exchange params)
+        try:
+            data = api_client._get(
+                "history",
+                {"symbol": symbol, "period": "1d", "length": "2"},
+                base_url=BASE_URL_V4_STOCK,
+            )
+            if data.get("status") is not False and data.get("response"):
+                candles = data["response"]
+                sample = (
+                    list(candles.values())[0] if isinstance(candles, dict)
+                    else candles[0] if isinstance(candles, list)
+                    else {}
+                )
+                test_result = {
+                    "supported": True,
+                    "symbol": symbol,
+                    "api_symbol": symbol,
+                    "asset_class": "etf",
+                    "sample_close": sample.get("c"),
+                }
+            else:
+                test_result = {
+                    "supported": False,
+                    "symbol": symbol,
+                    "reason": data.get("msg", "No data returned for NO_TYPE routing"),
+                }
+        except Exception as e:
+            test_result = {"supported": False, "symbol": symbol, "reason": str(e)}
+    elif sub_category == "commodity_etf_amex":
+        # Verify using explicit type=fund&exchange=AMEX
+        try:
+            data = api_client._get(
+                "history",
+                {
+                    "symbol": symbol,
+                    "period": "1d",
+                    "length": "2",
+                    "type": "fund",
+                    "exchange": "AMEX",
+                },
+                base_url=BASE_URL_V4_STOCK,
+            )
+            if data.get("status") is not False and data.get("response"):
+                candles = data["response"]
+                sample = (
+                    list(candles.values())[0] if isinstance(candles, dict)
+                    else candles[0] if isinstance(candles, list)
+                    else {}
+                )
+                test_result = {
+                    "supported": True,
+                    "symbol": symbol,
+                    "api_symbol": symbol,
+                    "asset_class": "etf",
+                    "sample_close": sample.get("c"),
+                }
+            else:
+                test_result = {
+                    "supported": False,
+                    "symbol": symbol,
+                    "reason": data.get("msg", "No data returned for AMEX routing"),
+                }
+        except Exception as e:
+            test_result = {"supported": False, "symbol": symbol, "reason": str(e)}
     else:
-        test_result = engine.cache.api_client.test_symbol_coverage(symbol)
+        test_result = api_client.test_symbol_coverage(symbol)
     if not test_result.get("supported"):
         return JSONResponse(
             content={
