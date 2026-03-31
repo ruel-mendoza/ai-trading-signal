@@ -1,0 +1,105 @@
+Here's the analysis of the results, then the Replit prompt.
+Routing conclusions from the test output:
+The key issue is that several symbols return different close prices between NO_TYPE and AMEX_FUND — meaning they're hitting different instruments. NO_TYPE is correct for all of these since it consistently returns the right price:
+
+USOIL — completely unsupported, drop it
+NO_TYPE only (already in or should be added to _NO_TYPE_ETFS): COTN, WOOD, NICK, ALUM, ZINC, TINM
+NO_TYPE with matching AMEX_FUND (same price = same instrument, keep NO_TYPE): UNG, UGA, SLX
+NO_TYPE with mismatched AMEX_FUND (different price = wrong instrument via AMEX, must use NO_TYPE): CORN, SOYB, CANE, WEAT, SGOL, CPER, PALL, PPLT, SIVR
+
+All 18 supported symbols should use NO_TYPE routing.
+
+Replit Agent Prompt:
+Make the following changes across the codebase based on FCSAPI routing test results.
+1. fcsapi_client.py — update _NO_TYPE_ETFS and ETF_SYMBOLS
+Replace the existing _NO_TYPE_ETFS set with:
+python_NO_TYPE_ETFS = {
+    # Original
+    "CANE", "WOOD", "CORN", "SOYB", "WEAT",
+    "USO", "UNG", "UGA",
+    "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+    "DBB", "SLX",
+    # New additions — all verified NO_TYPE only on FCSAPI
+    "COTN",   # Cotton ETF
+    "NICK",   # Nickel ETF
+    "ALUM",   # Aluminium ETF
+    "ZINC",   # Zinc ETF
+    "TINM",   # Tin ETF
+}
+Add the new symbols to ETF_SYMBOLS:
+pythonETF_SYMBOLS = {
+    # existing...
+    "COTN", "NICK", "ALUM", "ZINC", "TINM",
+}
+Remove USOIL from any sets or maps if present — it is not supported on the current FCSAPI plan.
+2. database.py — update _STRATEGY_ASSET_SEEDS for trend_non_forex
+Add the new verified symbols to the trend_non_forex seed list (they won't be inserted on startup since the table is already seeded, but this keeps the seeds accurate):
+python("COTN", "forex"),
+("NICK", "forex"),
+("ALUM", "forex"),
+("ZINC", "forex"),
+("TINM", "forex"),
+Do NOT add USOIL.
+3. admin.py — update _ADMIN_CLASS_MAP
+Add the new ETF symbols to the forex class map:
+python"COTN": "forex",
+"NICK": "forex",
+"ALUM": "forex",
+"ZINC": "forex",
+"TINM": "forex",
+4. api_v1.py — update CATEGORY_MAP
+Add the same symbols:
+python"COTN": "forex",
+"NICK": "forex",
+"ALUM": "forex",
+"ZINC": "forex",
+"TINM": "forex",
+5. database.py — update _ASSET_NAME_MAP
+Add display names:
+python"COTN": "iPath Bloomberg Cotton Subindex ETN",
+"NICK": "iPath Bloomberg Nickel Subindex ETN",
+"ALUM": "iPath Bloomberg Aluminium Subindex ETN",
+"ZINC": "iPath Bloomberg Zinc Subindex ETN",
+"TINM": "iPath Bloomberg Tin Subindex ETN",
+6. admin.py — overhaul the Add New Asset form in _build_assets_html / the assets tab HTML and the api_add_strategy_asset endpoint
+The current form has a flat asset class dropdown (forex/crypto/stocks) and a sub-category field that only appears for mtf_ema and stocks strategies. Replace this with a two-level class system that works for all strategies and maps directly to the FCSAPI routing params used in fcsapi_client.py.
+New asset class structure:
+Asset Class (DB asset_class)Sub-Class (DB sub_category)FCSAPI routingforexfx_pairADVANCE_SYMBOL_MAP, forex base URLforexcommodity_etf_no_typeNO_TYPE (in _NO_TYPE_ETFS)forexcommodity_etf_amextype=fund, exchange=AMEXforexindextype=index, stock base URLcryptomajorCRYPTO_SYMBOL_MAP, crypto base URLcryptoaltcoinCRYPTO_SYMBOL_MAP, crypto base URLstocksnasdaq100NASDAQ: prefix, stock base URL
+Form changes in the assets tab HTML (inside admin.py):
+Replace the current asset class select and sub-category wrapper with a cascading two-field select:
+
+Asset Class dropdown: forex | crypto | stocks (unchanged values, used for DB asset_class column)
+Sub-Class dropdown: dynamically populated based on Asset Class selection via JavaScript, values map to sub_category column:
+
+forex → options: fx_pair, commodity_etf_no_type, commodity_etf_amex, index
+crypto → options: major, altcoin
+stocks → options: nasdaq100 (disabled/locked as before)
+
+
+Add a FCSAPI Routing read-only display field that updates automatically when sub-class changes, showing the human-readable routing that will be used (e.g. "No type/exchange params", "type=fund&exchange=AMEX", "NASDAQ: prefix"):
+
+fx_pair → "forex advance endpoint"
+commodity_etf_no_type → "stock/history — no type params"
+commodity_etf_amex → "stock/history — type=fund&exchange=AMEX"
+index → "stock/history — type=index"
+major / altcoin → "crypto/history via CRYPTO_SYMBOL_MAP"
+nasdaq100 → "stock/history — NASDAQ: prefix"
+
+
+
+Update api_add_strategy_asset endpoint in admin.py:
+When sub_category is provided, use it to determine FCSAPI verification routing instead of falling back purely to test_symbol_coverage(). Specifically:
+
+commodity_etf_no_type → add symbol to a temporary local _NO_TYPE_ETFS-aware call: use test_symbol_coverage() which already routes correctly if the symbol is in _NO_TYPE_ETFS, OR pass the symbol through a raw NO_TYPE call if it isn't yet
+commodity_etf_amex → verify with type=fund&exchange=AMEX explicitly
+nasdaq100 → use existing _verify_stock_symbol() path
+fx_pair / major / altcoin / index → use existing test_symbol_coverage() path
+
+Update the add_strategy_asset() DB call to pass sub_category from the new form field.
+Update ADMIN_JS in admin.py:
+Update the document.addEventListener('DOMContentLoaded'...) strategy change listener and add a new asset class change listener so that:
+
+When Asset Class changes, Sub-Class options repopulate
+When Sub-Class changes, the FCSAPI Routing display field updates
+The existing stocks strategy locking behaviour (force asset_class=stocks, sub_category=nasdaq100) is preserved
+The existing mtf_ema sub-category options (indices, commodities, crypto, forex) are preserved as-is since they describe the MTF grouping, not FCSAPI routing
