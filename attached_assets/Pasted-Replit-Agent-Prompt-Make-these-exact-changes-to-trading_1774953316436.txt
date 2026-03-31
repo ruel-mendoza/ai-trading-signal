@@ -1,0 +1,66 @@
+Replit Agent Prompt:
+Make these exact changes to trading_engine/fcsapi_client.py:
+1. Remove "WOOD" from UNSUPPORTED_SYMBOLS (line ~138).
+2. Remove "WOOD" from _NO_TYPE_ETFS.
+3. Add this new set directly below _NO_TYPE_ETFS:
+python_NASDAQ_FUND_ETFS: set[str] = {
+    "WOOD",  # iShares Global Timber & Forestry ETF — NASDAQ listed (~$69), NO_TYPE returns LSE:WOOD (~1800 pence)
+}
+4. In get_candles(), find the elif asset_class == "etf": block and replace it with:
+pythonelif asset_class == "etf":
+    if symbol in _NO_TYPE_ETFS:
+        pass  # no type/exchange params
+    elif symbol in _NASDAQ_FUND_ETFS:
+        params["type"] = "fund"
+        params["exchange"] = "NASDAQ"
+    else:
+        params["type"] = "fund"
+        params["exchange"] = "NASDAQ" if symbol in _NASDAQ_ETFS else "AMEX"
+5. In test_symbol_coverage(), find the elif asset_class == "etf": block and replace it with:
+pythonelif asset_class == "etf":
+    if symbol in _NO_TYPE_ETFS:
+        pass  # no type/exchange params
+    elif symbol in _NASDAQ_FUND_ETFS:
+        params["type"] = "fund"
+        params["exchange"] = "NASDAQ"
+    else:
+        params["type"] = "fund"
+        params["exchange"] = "AMEX"
+No other files need changing for this fix.
+
+Step 2 — After agent applies the fix, verify it:
+bashpython3 -c "
+import sys; sys.path.insert(0, '.')
+from trading_engine.fcsapi_client import _NASDAQ_FUND_ETFS, UNSUPPORTED_SYMBOLS, _NO_TYPE_ETFS
+print('WOOD in UNSUPPORTED_SYMBOLS:', 'WOOD' in UNSUPPORTED_SYMBOLS)
+print('WOOD in _NO_TYPE_ETFS:', 'WOOD' in _NO_TYPE_ETFS)
+print('WOOD in _NASDAQ_FUND_ETFS:', 'WOOD' in _NASDAQ_FUND_ETFS)
+"
+Step 3 — Then add WOOD to the strategy and test candles:
+bashpython3 -c "
+import sys; sys.path.insert(0, '.')
+from trading_engine.database import init_db, add_strategy_asset
+from trading_engine.fcsapi_client import FCSAPIClient
+from trading_engine.cache_layer import CacheLayer
+init_db()
+# Add to DB
+result = add_strategy_asset(
+    strategy_name='trend_non_forex',
+    symbol='WOOD',
+    asset_class='forex',
+    sub_category='nasdaq_fund',
+    added_by='manual',
+    fcsapi_verified=True,
+    full_name='iShares Global Timber & Forestry ETF',
+)
+print('DB insert result:', result)
+# Test candle fetch
+client = FCSAPIClient()
+cache = CacheLayer(client)
+candles = cache.get_candles('WOOD', 'D1', 5)
+if candles:
+    print('Candles OK — count:', len(candles), '| last close:', candles[-1]['close'])
+else:
+    print('FAILED — no candles returned')
+"
+Expected output after the fix: last close should be ~69, not ~1800.

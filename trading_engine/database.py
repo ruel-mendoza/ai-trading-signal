@@ -105,6 +105,7 @@ _ASSET_CLASS_MAP: dict[str, str] = {
     "ALUM": "forex",
     "ZINC": "forex",
     "TINM": "forex",
+    "WOOD": "forex",
     # ── Forex (indices) ────────────────────────────────
     "SPX": "forex",
     "NDX": "forex",
@@ -209,6 +210,7 @@ _ASSET_NAME_MAP: dict[str, str] = {
     "ALUM": "iPath Bloomberg Aluminium Subindex ETN",
     "ZINC": "iPath Bloomberg Zinc Subindex ETN",
     "TINM": "iPath Bloomberg Tin Subindex ETN",
+    "WOOD": "iShares Global Timber & Forestry ETF",
 }
 
 
@@ -2822,6 +2824,7 @@ _STRATEGY_ASSET_SEEDS = {
         ("ALUM", "forex"),
         ("ZINC", "forex"),
         ("TINM", "forex"),
+        ("WOOD", "forex"),
         # ── Crypto altcoins (LONG_ONLY) ─────────────────
         ("BNB/USD", "crypto"),
         ("XRP/USD", "crypto"),

@@ -189,6 +189,7 @@ _ADMIN_CLASS_MAP: dict[str, str] = {
     "SOYB": "forex",
     "CANE": "forex",
     "COTN": "forex",
+    "WOOD": "forex",
     "NICK": "forex",
     "ALUM": "forex",
     "ZINC": "forex",

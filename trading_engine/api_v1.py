@@ -471,6 +471,7 @@ CATEGORY_MAP: dict[str, str] = {
     "CANE": "forex",
     "COTN": "forex", "NICK": "forex",
     "ALUM": "forex", "ZINC": "forex", "TINM": "forex",
+    "WOOD": "forex",
     # ── Forex (indices) ────────────────────────────────
     "SPX": "forex", "NDX": "forex", "RUT": "forex",
     "DJI": "forex",

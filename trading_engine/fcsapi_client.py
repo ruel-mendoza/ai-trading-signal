@@ -115,6 +115,8 @@ ETF_SYMBOLS = {
     "DBB", "SLX",
     # New commodity ETNs — verified NO_TYPE routing on FCSAPI
     "COTN", "NICK", "ALUM", "ZINC", "TINM",
+    # NASDAQ-listed ETFs requiring type=fund&exchange=NASDAQ
+    "WOOD",
 }
 
 _NASDAQ_ETFS: set[str] = set()
@@ -126,6 +128,9 @@ _NO_TYPE_ETFS = {
     # New commodity ETNs — plain ticker, no type/exchange params
     "COTN", "NICK", "ALUM", "ZINC", "TINM",
 }
+_NASDAQ_FUND_ETFS: set[str] = {
+    "WOOD",  # iShares Global Timber & Forestry ETF — NASDAQ listed (~$69), NO_TYPE returns LSE:WOOD (~1800 pence)
+}
 
 UNSUPPORTED_SYMBOLS: set[str] = {
     "WTI/USD",
@@ -135,7 +140,7 @@ UNSUPPORTED_SYMBOLS: set[str] = {
     "USO",   # FCSAPI returns BCBA:USO (Argentine peso, ~12820 vs correct ~$65-75)
     "UGA",   # FCSAPI returns AMEX:UGA (wrong price ~$105 vs correct ~$55-65)
     "WEAT",  # FCSAPI returns EURONEXT:WEAT (Euro/France, ~17.76 vs correct ~$4-8)
-    "WOOD",  # FCSAPI returns LSE:WOOD (UK pence, ~1802 vs correct ~$70-100)
+    # WOOD removed — now routed via _NASDAQ_FUND_ETFS with type=fund&exchange=NASDAQ
     "SGOL",  # FCSAPI returns BMV:SGOL (Mexican peso, ~876 vs correct ~$25-35)
     "SIVR",  # FCSAPI returns BMV:SIVR (Mexican peso, ~1195 vs correct ~$25-35)
     "PPLT",  # FCSAPI returns BIVA:PPLT (Mexican peso, ~3055 vs correct ~$85-110)
@@ -251,8 +256,9 @@ def get_v4_history_symbol(symbol: str) -> str:
         return STOCK_SYMBOL_MAP[symbol]
     if symbol in COMMODITY_SYMBOL_MAP:
         return COMMODITY_SYMBOL_MAP[symbol]
-    # NO_TYPE ETFs use plain ticker without any exchange prefix
-    if symbol in _NO_TYPE_ETFS:
+    # NO_TYPE ETFs and NASDAQ_FUND ETFs use plain ticker without any exchange prefix
+    # (NASDAQ_FUND ETFs pass exchange=NASDAQ as a param, so the symbol must stay bare)
+    if symbol in _NO_TYPE_ETFS or symbol in _NASDAQ_FUND_ETFS:
         return symbol
     # Plain equity ticker not in any map — apply NASDAQ prefix
     if "/" not in symbol and ":" not in symbol:
@@ -461,7 +467,12 @@ class FCSAPIClient:
         if asset_class == "stock":
             params["type"] = "index"
         elif asset_class == "etf":
-            if symbol not in _NO_TYPE_ETFS:
+            if symbol in _NO_TYPE_ETFS:
+                pass  # no type/exchange params
+            elif symbol in _NASDAQ_FUND_ETFS:
+                params["type"] = "fund"
+                params["exchange"] = "NASDAQ"
+            else:
                 params["type"] = "fund"
                 params["exchange"] = "NASDAQ" if symbol in _NASDAQ_ETFS else "AMEX"
         elif asset_class == "commodity":
@@ -798,9 +809,14 @@ class FCSAPIClient:
             if asset_class == "stock":
                 params["type"] = "index"
             elif asset_class == "etf":
-                if symbol not in _NO_TYPE_ETFS:
+                if symbol in _NO_TYPE_ETFS:
+                    pass  # no type/exchange params
+                elif symbol in _NASDAQ_FUND_ETFS:
                     params["type"] = "fund"
-                    params["exchange"] = "NASDAQ" if symbol in _NASDAQ_ETFS else "AMEX"
+                    params["exchange"] = "NASDAQ"
+                else:
+                    params["type"] = "fund"
+                    params["exchange"] = "AMEX"
             elif asset_class == "commodity":
                 params["type"] = "commodity"
 
