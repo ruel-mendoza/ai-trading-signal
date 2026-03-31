@@ -109,42 +109,40 @@ COMMODITY_SYMBOL_MAP = {
 }
 
 ETF_SYMBOLS = {
-    "CORN", "SOYB", "CANE",
-    "UNG",
-    "CPER",
+    "CORN", "SOYB", "WEAT", "CANE", "WOOD",
+    "USO", "UNG", "UGA",
+    "SGOL", "SIVR", "CPER", "PPLT", "PALL",
     "DBB", "SLX",
-    # New commodity ETNs — verified NO_TYPE routing on FCSAPI
     "COTN", "NICK", "ALUM", "ZINC", "TINM",
-    # NASDAQ-listed ETFs requiring type=fund&exchange=NASDAQ
-    "WOOD",
 }
 
 _NASDAQ_ETFS: set[str] = set()
 _NO_TYPE_ETFS = {
-    "CANE", "CORN", "SOYB",
-    "UNG",
-    "CPER",
-    "DBB", "SLX",
-    # New commodity ETNs — plain ticker, no type/exchange params
-    "COTN", "NICK", "ALUM", "ZINC", "TINM",
+    "CANE", "CORN", "SOYB",          # NO_TYPE verified correct
+    "UNG",                             # NO_TYPE verified correct (same price as AMEX)
+    "SGOL", "CPER", "PALL",           # NO_TYPE verified correct
+    "DBB", "SLX",                      # NO_TYPE verified correct
+    "COTN", "NICK", "ALUM", "ZINC", "TINM",  # new additions verified NO_TYPE
+    # Removed: WEAT (EURONEXT), USO (BCBA), UGA (wrong price), PPLT (BIVA), SIVR (BMV)
+    # Removed: WOOD (LSE) — now in _NASDAQ_FUND_ETFS
 }
 _NASDAQ_FUND_ETFS: set[str] = {
     "WOOD",  # iShares Global Timber & Forestry ETF — NASDAQ listed (~$69), NO_TYPE returns LSE:WOOD (~1800 pence)
+}
+_AMEX_FUND_ETFS: set[str] = {
+    "WEAT",  # Teucrium Wheat Fund — AMEX, ~$23 (NO_TYPE returns EURONEXT:WEAT ~€17)
+    "USO",   # United States Oil Fund — AMEX, ~$129 (NO_TYPE returns BCBA:USO in ARS ~12820)
+    "UGA",   # United States Gasoline Fund — AMEX, ~$105 (NO_TYPE returns wrong price)
+    "PPLT",  # Aberdeen Physical Platinum — AMEX, ~$172 (NO_TYPE returns BIVA:PPLT in MXN ~3055)
+    "SIVR",  # Aberdeen Physical Silver — AMEX, ~$66 (NO_TYPE returns BMV:SIVR in MXN ~1195)
 }
 
 UNSUPPORTED_SYMBOLS: set[str] = {
     "WTI/USD",
     "BRENT/USD",
     "MATIC/USD",
-    # ── ETFs returning wrong exchange/currency from FCSAPI ──────────────
-    "USO",   # FCSAPI returns BCBA:USO (Argentine peso, ~12820 vs correct ~$65-75)
-    "UGA",   # FCSAPI returns AMEX:UGA (wrong price ~$105 vs correct ~$55-65)
-    "WEAT",  # FCSAPI returns EURONEXT:WEAT (Euro/France, ~17.76 vs correct ~$4-8)
-    # WOOD removed — now routed via _NASDAQ_FUND_ETFS with type=fund&exchange=NASDAQ
-    "SGOL",  # FCSAPI returns BMV:SGOL (Mexican peso, ~876 vs correct ~$25-35)
-    "SIVR",  # FCSAPI returns BMV:SIVR (Mexican peso, ~1195 vs correct ~$25-35)
-    "PPLT",  # FCSAPI returns BIVA:PPLT (Mexican peso, ~3055 vs correct ~$85-110)
-    "PALL",  # FCSAPI returns BMV:PALL (Mexican peso, ~2320 vs correct ~$90-130)
+    # WEAT, USO, UGA, PPLT, SIVR removed — correct routing is type=fund&exchange=AMEX
+    # WOOD removed — correct routing is type=fund&exchange=NASDAQ (see _NASDAQ_FUND_ETFS)
 }
 
 ADVANCE_SYMBOL_MAP = {
@@ -256,9 +254,9 @@ def get_v4_history_symbol(symbol: str) -> str:
         return STOCK_SYMBOL_MAP[symbol]
     if symbol in COMMODITY_SYMBOL_MAP:
         return COMMODITY_SYMBOL_MAP[symbol]
-    # NO_TYPE ETFs and NASDAQ_FUND ETFs use plain ticker without any exchange prefix
-    # (NASDAQ_FUND ETFs pass exchange=NASDAQ as a param, so the symbol must stay bare)
-    if symbol in _NO_TYPE_ETFS or symbol in _NASDAQ_FUND_ETFS:
+    # NO_TYPE, NASDAQ_FUND, and AMEX_FUND ETFs all use the plain ticker without any
+    # exchange prefix — the exchange is conveyed via the type/exchange API params
+    if symbol in _NO_TYPE_ETFS or symbol in _NASDAQ_FUND_ETFS or symbol in _AMEX_FUND_ETFS:
         return symbol
     # Plain equity ticker not in any map — apply NASDAQ prefix
     if "/" not in symbol and ":" not in symbol:
@@ -468,10 +466,13 @@ class FCSAPIClient:
             params["type"] = "index"
         elif asset_class == "etf":
             if symbol in _NO_TYPE_ETFS:
-                pass  # no type/exchange params
+                pass  # no type/exchange params — verified correct on FCSAPI
             elif symbol in _NASDAQ_FUND_ETFS:
                 params["type"] = "fund"
                 params["exchange"] = "NASDAQ"
+            elif symbol in _AMEX_FUND_ETFS:
+                params["type"] = "fund"
+                params["exchange"] = "AMEX"
             else:
                 params["type"] = "fund"
                 params["exchange"] = "NASDAQ" if symbol in _NASDAQ_ETFS else "AMEX"
@@ -547,9 +548,17 @@ class FCSAPIClient:
             if asset_class == "stock":
                 params["type"] = "index"
             elif asset_class == "etf":
-                if sym_pairs[0][0] not in _NO_TYPE_ETFS:
+                first_sym = sym_pairs[0][0]
+                if first_sym in _NO_TYPE_ETFS:
+                    pass  # no type/exchange params
+                elif first_sym in _NASDAQ_FUND_ETFS:
                     params["type"] = "fund"
-                    first_sym = sym_pairs[0][0]
+                    params["exchange"] = "NASDAQ"
+                elif first_sym in _AMEX_FUND_ETFS:
+                    params["type"] = "fund"
+                    params["exchange"] = "AMEX"
+                else:
+                    params["type"] = "fund"
                     params["exchange"] = "NASDAQ" if first_sym in _NASDAQ_ETFS else "AMEX"
             elif asset_class == "commodity":
                 params["type"] = "commodity"
@@ -814,6 +823,9 @@ class FCSAPIClient:
                 elif symbol in _NASDAQ_FUND_ETFS:
                     params["type"] = "fund"
                     params["exchange"] = "NASDAQ"
+                elif symbol in _AMEX_FUND_ETFS:
+                    params["type"] = "fund"
+                    params["exchange"] = "AMEX"
                 else:
                     params["type"] = "fund"
                     params["exchange"] = "AMEX"

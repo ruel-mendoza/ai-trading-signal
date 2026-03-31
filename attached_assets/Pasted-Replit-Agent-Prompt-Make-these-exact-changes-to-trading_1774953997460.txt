@@ -1,0 +1,62 @@
+Replit Agent Prompt:
+Make these exact changes to trading_engine/fcsapi_client.py:
+1. Remove these 5 symbols from UNSUPPORTED_SYMBOLS:
+pythonUNSUPPORTED_SYMBOLS: set[str] = {
+    "WTI/USD",
+    "BRENT/USD",
+    "MATIC/USD",
+    # WEAT, USO, UGA, PPLT, SIVR removed — correct routing is type=fund&exchange=AMEX
+    # WOOD removed — correct routing is type=fund&exchange=NASDAQ (see _NASDAQ_FUND_ETFS)
+}
+2. Remove all 5 from _NO_TYPE_ETFS — they were incorrectly there, NO_TYPE returns wrong exchanges:
+python_NO_TYPE_ETFS = {
+    "CANE", "CORN", "SOYB",          # NO_TYPE verified correct
+    "UNG",                             # NO_TYPE verified correct (same price as AMEX)
+    "SGOL", "CPER", "PALL",           # NO_TYPE verified correct
+    "DBB", "SLX",                      # NO_TYPE verified correct
+    "COTN", "NICK", "ALUM", "ZINC", "TINM",  # new additions verified NO_TYPE
+    # Removed: WEAT (EURONEXT), USO (BCBA), UGA (wrong price), PPLT (BIVA), SIVR (BMV)
+    # Removed: WOOD (LSE) — now in _NASDAQ_FUND_ETFS
+}
+3. Add a new _AMEX_FUND_ETFS set directly below _NASDAQ_FUND_ETFS:
+python_AMEX_FUND_ETFS: set[str] = {
+    "WEAT",  # Teucrium Wheat Fund — AMEX, ~$23 (NO_TYPE returns EURONEXT:WEAT ~€17)
+    "USO",   # United States Oil Fund — AMEX, ~$129 (NO_TYPE returns BCBA:USO in ARS ~12820)
+    "UGA",   # United States Gasoline Fund — AMEX, ~$105 (NO_TYPE returns wrong price)
+    "PPLT",  # Aberdeen Physical Platinum — AMEX, ~$172 (NO_TYPE returns BIVA:PPLT in MXN ~3055)
+    "SIVR",  # Aberdeen Physical Silver — AMEX, ~$66 (NO_TYPE returns BMV:SIVR in MXN ~1195)
+}
+4. Update get_candles() — replace the elif asset_class == "etf": block:
+pythonelif asset_class == "etf":
+    if symbol in _NO_TYPE_ETFS:
+        pass  # no type/exchange params — verified correct on FCSAPI
+    elif symbol in _NASDAQ_FUND_ETFS:
+        params["type"] = "fund"
+        params["exchange"] = "NASDAQ"
+    elif symbol in _AMEX_FUND_ETFS:
+        params["type"] = "fund"
+        params["exchange"] = "AMEX"
+    else:
+        params["type"] = "fund"
+        params["exchange"] = "NASDAQ" if symbol in _NASDAQ_ETFS else "AMEX"
+5. Update test_symbol_coverage() — replace the elif asset_class == "etf": block:
+pythonelif asset_class == "etf":
+    if symbol in _NO_TYPE_ETFS:
+        pass  # no type/exchange params
+    elif symbol in _NASDAQ_FUND_ETFS:
+        params["type"] = "fund"
+        params["exchange"] = "NASDAQ"
+    elif symbol in _AMEX_FUND_ETFS:
+        params["type"] = "fund"
+        params["exchange"] = "AMEX"
+    else:
+        params["type"] = "fund"
+        params["exchange"] = "AMEX"
+6. Add all 5 to ETF_SYMBOLS if not already present:
+pythonETF_SYMBOLS = {
+    "CORN", "SOYB", "WEAT", "CANE", "WOOD",
+    "USO", "UNG", "UGA",
+    "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+    "DBB", "SLX",
+    "COTN", "NICK", "ALUM", "ZINC", "TINM",
+}

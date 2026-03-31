@@ -470,6 +470,8 @@ CATEGORY_MAP: dict[str, str] = {
     "CORN": "forex", "SOYB": "forex",
     "CANE": "forex",
     "COTN": "forex", "NICK": "forex",
+    "WEAT": "forex", "USO": "forex", "UGA": "forex",
+    "SGOL": "forex", "SIVR": "forex", "PPLT": "forex", "PALL": "forex",
     "ALUM": "forex", "ZINC": "forex", "TINM": "forex",
     "WOOD": "forex",
     # ── Forex (indices) ────────────────────────────────
