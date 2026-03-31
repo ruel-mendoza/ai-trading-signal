@@ -5194,6 +5194,9 @@ document.addEventListener('DOMContentLoaded', function() {
         subClassSelect.addEventListener('change', function() { _updateRoutingDisplay(); });
         subClassSelect._routingListenerAdded = true;
     }
+
+    // Initialize sub-class and routing display to match the default strategy selection
+    if (strategySelect) strategySelect.dispatchEvent(new Event('change'));
 });
 
 function _populateSubClass(assetClass, subClassSelect) {
@@ -7203,7 +7206,7 @@ def admin_dashboard(
                         </div>
                         <div id="sub-category-wrapper">
                             <label style="display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;">Sub-Class</label>
-                            <select id="new-asset-sub-class" data-testid="select-new-asset-sub-class"
+                            <select id="new-asset-sub-class" data-testid="select-new-asset-sub-category"
                                     style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;color:#f1f5f9;font-size:14px;border-radius:6px;cursor:pointer;">
                                 <option value="fx_pair">FX Pair</option>
                                 <option value="commodity_etf_no_type">Commodity ETF — No Type</option>
