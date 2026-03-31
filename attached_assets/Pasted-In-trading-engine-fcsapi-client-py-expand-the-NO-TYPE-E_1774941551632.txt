@@ -1,0 +1,59 @@
+In trading_engine/fcsapi_client.py, expand the _NO_TYPE_ETFS set to include all ETFs that fail with type=fund&exchange=AMEX. These symbols must be fetched using plain symbol=TICKER with no type, exchange, or NASDAQ: prefix.
+1. Replace the current _NO_TYPE_ETFS set with:
+python_NO_TYPE_ETFS = {
+    "CANE", "WOOD", "CORN", "SOYB", "WEAT",
+    "USO", "UNG", "UGA",
+    "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+    "DBB", "SLX",
+}
+2. Also update get_v4_history_symbol() so symbols in _NO_TYPE_ETFS are returned as-is without the NASDAQ: prefix:
+pythondef get_v4_history_symbol(symbol: str) -> str:
+    if symbol in CRYPTO_SYMBOL_MAP:
+        return CRYPTO_SYMBOL_MAP[symbol]
+    if symbol in STOCK_SYMBOL_MAP:
+        return STOCK_SYMBOL_MAP[symbol]
+    if symbol in COMMODITY_SYMBOL_MAP:
+        return COMMODITY_SYMBOL_MAP[symbol]
+    if symbol in _NO_TYPE_ETFS:
+        return symbol  # no prefix, no exchange
+    if "/" not in symbol and ":" not in symbol:
+        return get_nasdaq_api_symbol(symbol)
+    return symbol.replace("/", "")
+3. In get_candles(), update the ETF block:
+pythonelif asset_class == "etf":
+    if symbol not in _NO_TYPE_ETFS:
+        params["type"] = "fund"
+        params["exchange"] = "NASDAQ" if symbol in _NASDAQ_ETFS else "AMEX"
+4. In get_advance_data(), update the ETF block:
+pythonelif asset_class == "etf":
+    if sym_pairs[0][0] not in _NO_TYPE_ETFS:
+        params["type"] = "fund"
+        first_sym = sym_pairs[0][0]
+        params["exchange"] = "NASDAQ" if first_sym in _NASDAQ_ETFS else "AMEX"
+5. In get_stock_latest_prices(), replace the two-group split with three groups:
+pythonno_type_syms = [s for s in symbols if s in _NO_TYPE_ETFS]
+amex_syms = [s for s in symbols if s not in _NASDAQ_ETFS and s not in _NO_TYPE_ETFS]
+nasdaq_syms = [s for s in symbols if s in _NASDAQ_ETFS and s not in _NO_TYPE_ETFS]
+
+exchange_groups = []
+if amex_syms:
+    exchange_groups.append(("AMEX", amex_syms, True))
+if nasdaq_syms:
+    exchange_groups.append(("NASDAQ", nasdaq_syms, True))
+if no_type_syms:
+    exchange_groups.append(("", no_type_syms, False))
+Update the batch loop to conditionally apply type/exchange:
+pythonfor exchange, syms, use_type in exchange_groups:
+    ...
+    params = {
+        "symbol": joined,
+        "period": tf_api,
+        "length": str(limit),
+        "access_key": api_key,
+    }
+    if use_type:
+        params["type"] = "fund"
+        params["exchange"] = exchange
+Do not change any other logic. After applying, verify with:
+bashpython3 backfill.py --strategy trend_non_forex --timeframe D1 --force
+All 15 ETFs should return 200 with 0 failed symbols.

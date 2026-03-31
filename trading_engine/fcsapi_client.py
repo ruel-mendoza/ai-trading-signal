@@ -116,7 +116,12 @@ ETF_SYMBOLS = {
 }
 
 _NASDAQ_ETFS = {"WOOD"}
-_NO_TYPE_ETFS = {"CANE", "WOOD"}
+_NO_TYPE_ETFS = {
+    "CANE", "WOOD", "CORN", "SOYB", "WEAT",
+    "USO", "UNG", "UGA",
+    "SGOL", "SIVR", "CPER", "PPLT", "PALL",
+    "DBB", "SLX",
+}
 
 UNSUPPORTED_SYMBOLS: set[str] = {
     "WTI/USD",
