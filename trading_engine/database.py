@@ -100,6 +100,11 @@ _ASSET_CLASS_MAP: dict[str, str] = {
     "CORN": "forex",
     "SOYB": "forex",
     "CANE": "forex",
+    "COTN": "forex",
+    "NICK": "forex",
+    "ALUM": "forex",
+    "ZINC": "forex",
+    "TINM": "forex",
     # ── Forex (indices) ────────────────────────────────
     "SPX": "forex",
     "NDX": "forex",
@@ -199,6 +204,11 @@ _ASSET_NAME_MAP: dict[str, str] = {
     "CPER": "United States Copper Index Fund",
     "DBB": "Invesco DB Base Metals Fund",
     "SLX": "VanEck Steel ETF",
+    "COTN": "iPath Bloomberg Cotton Subindex ETN",
+    "NICK": "iPath Bloomberg Nickel Subindex ETN",
+    "ALUM": "iPath Bloomberg Aluminium Subindex ETN",
+    "ZINC": "iPath Bloomberg Zinc Subindex ETN",
+    "TINM": "iPath Bloomberg Tin Subindex ETN",
 }
 
 
@@ -2807,6 +2817,11 @@ _STRATEGY_ASSET_SEEDS = {
         ("CPER", "forex"),
         ("DBB", "forex"),
         ("SLX", "forex"),
+        ("COTN", "forex"),
+        ("NICK", "forex"),
+        ("ALUM", "forex"),
+        ("ZINC", "forex"),
+        ("TINM", "forex"),
         # ── Crypto altcoins (LONG_ONLY) ─────────────────
         ("BNB/USD", "crypto"),
         ("XRP/USD", "crypto"),

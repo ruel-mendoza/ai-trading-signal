@@ -113,6 +113,8 @@ ETF_SYMBOLS = {
     "UNG",
     "CPER",
     "DBB", "SLX",
+    # New commodity ETNs — verified NO_TYPE routing on FCSAPI
+    "COTN", "NICK", "ALUM", "ZINC", "TINM",
 }
 
 _NASDAQ_ETFS: set[str] = set()
@@ -121,6 +123,8 @@ _NO_TYPE_ETFS = {
     "UNG",
     "CPER",
     "DBB", "SLX",
+    # New commodity ETNs — plain ticker, no type/exchange params
+    "COTN", "NICK", "ALUM", "ZINC", "TINM",
 }
 
 UNSUPPORTED_SYMBOLS: set[str] = {
