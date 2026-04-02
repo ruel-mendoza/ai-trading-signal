@@ -4034,6 +4034,32 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 .btn-verify.verifying { background: rgba(59,130,246,0.12); color: #3b82f6; border-color: rgba(59,130,246,0.3); }
 .btn-verify.verified { background: rgba(34,197,94,0.12); color: #22c55e; border-color: rgba(34,197,94,0.3); }
 .btn-verify.failed { background: rgba(239,68,68,0.12); color: #ef4444; border-color: rgba(239,68,68,0.3); }
+.btn-backfill {
+    background: rgba(59,130,246,0.12);
+    color: #3b82f6;
+    border: 1px solid rgba(59,130,246,0.3);
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+.btn-backfill:hover { background: rgba(59,130,246,0.25); border-color: #3b82f6; }
+.btn-backfill:disabled { opacity: 0.5; cursor: not-allowed; }
+.backfill-spinner {
+    display: none;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(59,130,246,0.3);
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+    margin-left: 6px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .verify-toast {
     position: fixed;
     bottom: 24px;
@@ -4142,7 +4168,7 @@ function showTab(tabName) {
     if (tabName === 'notifications') loadNotifConfig();
     if (tabName === 'apikeys') loadPartnerKeys();
     if (tabName === 'scheduler') loadSchedulerData();
-    if (tabName === 'system') { loadSystemStatus(); loadWatchdogStatus(); }
+    if (tabName === 'system') { loadSystemStatus(); loadWatchdogStatus(); loadBackfillStatus(); }
     if (tabName === 'recovery') loadRecoveryLogs();
     if (tabName === 'users') loadRegistrationToggle();
     if (tabName === 'wordpress') { loadUserCmsConfigs(); }
@@ -5129,7 +5155,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (tabName === 'settings') loadCreditMeter();
     if (tabName === 'notifications') loadNotifConfig();
     if (tabName === 'scheduler') loadSchedulerData();
-    if (tabName === 'system') { loadSystemStatus(); loadWatchdogStatus(); }
+    if (tabName === 'system') { loadSystemStatus(); loadWatchdogStatus(); loadBackfillStatus(); }
     if (tabName === 'users') loadRegistrationToggle();
     if (tabName === 'wordpress') { loadUserCmsConfigs(); }
     if (tabName === 'assets') { loadAssets(); }
@@ -5600,6 +5626,69 @@ async function loadSignalIntegrity() {
     }
     btn.disabled = false;
     btn.textContent = 'Run Diagnostic';
+}
+
+async function loadBackfillStatus() {
+    try {
+        var res = await fetch(BASE + '/admin/api/backfill/status');
+        var data = await res.json();
+        var strategies = data.strategies || {};
+        Object.keys(strategies).forEach(function(name) {
+            var info = strategies[name];
+            var tsEl = document.getElementById('backfill-ts-' + name);
+            var badgeEl = document.getElementById('backfill-badge-' + name);
+            if (!tsEl) return;
+            if (!info) {
+                tsEl.textContent = 'Never';
+                if (badgeEl) badgeEl.innerHTML = '';
+                return;
+            }
+            var d = new Date(info.ran_at);
+            var opts = { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC', timeZoneName: 'short' };
+            tsEl.textContent = d.toLocaleString('en-US', opts);
+            var badges = '';
+            if ((info.succeeded || 0) > 0) {
+                badges += '<span class="badge status-active">' + info.succeeded + ' ok</span> ';
+            }
+            if ((info.failed || 0) > 0) {
+                badges += '<span class="badge status-closed">' + info.failed + ' failed</span>';
+            }
+            if (badgeEl) badgeEl.innerHTML = badges;
+        });
+    } catch(e) {
+        // silently ignore
+    }
+}
+
+async function runBackfill(strategyName, btnEl) {
+    btnEl.disabled = true;
+    var spinner = document.getElementById('backfill-spinner-' + strategyName);
+    if (spinner) spinner.style.display = 'inline-block';
+    try {
+        var res = await fetch(BASE + '/admin/api/backfill/strategy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ strategy_name: strategyName })
+        });
+        var data = await res.json();
+        if (res.ok && data.success) {
+            showVerifyToast(
+                '\u2713 ' + strategyName + ' backfill complete \u2014 ' +
+                data.succeeded + ' ok' + (data.failed > 0 ? ', ' + data.failed + ' failed' : ''),
+                'success', 4000
+            );
+        } else {
+            showVerifyToast(
+                '\u2717 Backfill failed: ' + (data.error || data.message || 'Unknown error'),
+                'error', 6000
+            );
+        }
+    } catch(e) {
+        showVerifyToast('\u2717 Network error during backfill: ' + e.message, 'error', 5000);
+    }
+    if (spinner) spinner.style.display = 'none';
+    btnEl.disabled = false;
+    loadBackfillStatus();
 }
 
 // ── Signal Close / Delete / Bulk Delete ──────────────────────────────────────
@@ -6827,6 +6916,65 @@ def admin_dashboard(
                     <div id="signal-integrity-result"
                          style="margin-top:12px;"
                          data-testid="text-signal-integrity-result"></div>
+                </div>
+
+                <div class="settings-section" style="margin-top:20px;" data-testid="widget-data-backfill">
+                    <h3>Data Backfill</h3>
+                    <p style="color:#94a3b8;font-size:13px;margin-bottom:12px;">
+                        Force-refresh the OHLC candle cache for each strategy&rsquo;s active assets.
+                        Use after adding new symbols or recovering from a data gap.
+                    </p>
+                    <div id="backfill-rows" style="display:flex;flex-direction:column;gap:6px;">
+                        <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:8px;" data-testid="row-backfill-mtf_ema">
+                            <div style="flex:1;font-size:13px;font-weight:500;color:#f1f5f9;">MTF EMA</div>
+                            <div style="font-size:12px;color:#64748b;" id="backfill-ts-mtf_ema">--</div>
+                            <div id="backfill-badge-mtf_ema"></div>
+                            <button class="btn-backfill" onclick="runBackfill('mtf_ema', this)" data-testid="button-backfill-mtf_ema">Backfill</button>
+                            <span class="backfill-spinner" id="backfill-spinner-mtf_ema"></span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:8px;" data-testid="row-backfill-trend_forex">
+                            <div style="flex:1;font-size:13px;font-weight:500;color:#f1f5f9;">Trend Forex</div>
+                            <div style="font-size:12px;color:#64748b;" id="backfill-ts-trend_forex">--</div>
+                            <div id="backfill-badge-trend_forex"></div>
+                            <button class="btn-backfill" onclick="runBackfill('trend_forex', this)" data-testid="button-backfill-trend_forex">Backfill</button>
+                            <span class="backfill-spinner" id="backfill-spinner-trend_forex"></span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:8px;" data-testid="row-backfill-trend_non_forex">
+                            <div style="flex:1;font-size:13px;font-weight:500;color:#f1f5f9;">Trend Non-Forex</div>
+                            <div style="font-size:12px;color:#64748b;" id="backfill-ts-trend_non_forex">--</div>
+                            <div id="backfill-badge-trend_non_forex"></div>
+                            <button class="btn-backfill" onclick="runBackfill('trend_non_forex', this)" data-testid="button-backfill-trend_non_forex">Backfill</button>
+                            <span class="backfill-spinner" id="backfill-spinner-trend_non_forex"></span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:8px;" data-testid="row-backfill-sp500_momentum">
+                            <div style="flex:1;font-size:13px;font-weight:500;color:#f1f5f9;">SP500 Momentum</div>
+                            <div style="font-size:12px;color:#64748b;" id="backfill-ts-sp500_momentum">--</div>
+                            <div id="backfill-badge-sp500_momentum"></div>
+                            <button class="btn-backfill" onclick="runBackfill('sp500_momentum', this)" data-testid="button-backfill-sp500_momentum">Backfill</button>
+                            <span class="backfill-spinner" id="backfill-spinner-sp500_momentum"></span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:8px;" data-testid="row-backfill-highest_lowest_fx">
+                            <div style="flex:1;font-size:13px;font-weight:500;color:#f1f5f9;">Highest/Lowest FX</div>
+                            <div style="font-size:12px;color:#64748b;" id="backfill-ts-highest_lowest_fx">--</div>
+                            <div id="backfill-badge-highest_lowest_fx"></div>
+                            <button class="btn-backfill" onclick="runBackfill('highest_lowest_fx', this)" data-testid="button-backfill-highest_lowest_fx">Backfill</button>
+                            <span class="backfill-spinner" id="backfill-spinner-highest_lowest_fx"></span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:8px;" data-testid="row-backfill-stocks_algo1">
+                            <div style="flex:1;font-size:13px;font-weight:500;color:#f1f5f9;">Stocks Algo 1 &mdash; Monthly Momentum</div>
+                            <div style="font-size:12px;color:#64748b;" id="backfill-ts-stocks_algo1">--</div>
+                            <div id="backfill-badge-stocks_algo1"></div>
+                            <button class="btn-backfill" onclick="runBackfill('stocks_algo1', this)" data-testid="button-backfill-stocks_algo1">Backfill</button>
+                            <span class="backfill-spinner" id="backfill-spinner-stocks_algo1"></span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:8px;" data-testid="row-backfill-stocks_algo2">
+                            <div style="flex:1;font-size:13px;font-weight:500;color:#f1f5f9;">Stocks Algo 2 &mdash; Mean Reversion</div>
+                            <div style="font-size:12px;color:#64748b;" id="backfill-ts-stocks_algo2">--</div>
+                            <div id="backfill-badge-stocks_algo2"></div>
+                            <button class="btn-backfill" onclick="runBackfill('stocks_algo2', this)" data-testid="button-backfill-stocks_algo2">Backfill</button>
+                            <span class="backfill-spinner" id="backfill-spinner-stocks_algo2"></span>
+                        </div>
+                    </div>
                 </div>
 
                 <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:12px;">Live Status</div>
@@ -9464,3 +9612,121 @@ async def admin_delete_signal_by_id(signal_id: int, request: Request):
 async def admin_delete_signal_by_id_post(signal_id: int, request: Request):
     """POST alias for DELETE /admin/api/signals/{signal_id} (for clients that cannot send DELETE)."""
     return await admin_delete_signal_by_id(signal_id, request)
+
+
+# ── Data Backfill endpoints ───────────────────────────────────────────────────
+
+_BACKFILL_ASSET_TIMEFRAMES = {
+    "mtf_ema": ["D1", "4H", "1H"],
+    "trend_forex": ["D1"],
+    "trend_non_forex": ["D1"],
+    "sp500_momentum": ["30m", "D1"],
+    "highest_lowest_fx": ["1H", "D1"],
+    "stocks_algo1": ["D1"],
+    "stocks_algo2": ["D1"],
+}
+
+
+@router.post("/api/backfill/strategy")
+def api_backfill_strategy(
+    request: Request,
+    body: dict = Body(...),
+):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+
+    from trading_engine import engine_registry
+    from trading_engine.database import get_strategy_assets
+
+    engine = engine_registry.get_engine()
+    if engine is None:
+        return JSONResponse(
+            content={"error": "Engine not ready — start the application first"},
+            status_code=503,
+        )
+
+    strategy_name = (body.get("strategy_name") or "").strip()
+    if not strategy_name:
+        return JSONResponse(
+            content={"error": "strategy_name is required"},
+            status_code=400,
+        )
+    if strategy_name not in _BACKFILL_ASSET_TIMEFRAMES:
+        return JSONResponse(
+            content={"error": f"Unknown strategy: {strategy_name}"},
+            status_code=400,
+        )
+
+    symbols = get_strategy_assets(strategy_name, active_only=True)
+    if len(symbols) > 150:
+        return JSONResponse(
+            content={
+                "error": f"Too many assets ({len(symbols)}); cap is 150 to prevent credit drain"
+            },
+            status_code=400,
+        )
+
+    timeframes = _BACKFILL_ASSET_TIMEFRAMES[strategy_name]
+    succeeded = 0
+    failed = 0
+    failed_symbols = []
+    cache = engine.cache
+
+    for sym in symbols:
+        sym_ok = True
+        for tf in timeframes:
+            try:
+                candles = cache.force_refresh(sym, tf)
+                if not candles:
+                    sym_ok = False
+            except Exception:
+                sym_ok = False
+        if sym_ok:
+            succeeded += 1
+        else:
+            failed += 1
+            failed_symbols.append(sym)
+
+    ran_at = datetime.utcnow().isoformat() + "Z"
+    result_payload = {
+        "ran_at": ran_at,
+        "succeeded": succeeded,
+        "failed": failed,
+        "failed_symbols": failed_symbols,
+    }
+    set_setting(f"backfill_last_run_{strategy_name}", json.dumps(result_payload))
+    logger.info(
+        f"[ADMIN-BACKFILL] strategy={strategy_name} | succeeded={succeeded} failed={failed} | ran_at={ran_at}"
+    )
+
+    return JSONResponse(
+        content={
+            "success": True,
+            "strategy": strategy_name,
+            "succeeded": succeeded,
+            "failed": failed,
+            "failed_symbols": failed_symbols,
+            "ran_at": ran_at,
+        }
+    )
+
+
+@router.get("/api/backfill/status")
+def api_backfill_status(request: Request):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+
+    strategies = {}
+    for name in _BACKFILL_ASSET_TIMEFRAMES:
+        raw = get_setting(f"backfill_last_run_{name}")
+        if raw:
+            try:
+                strategies[name] = json.loads(raw)
+            except Exception:
+                strategies[name] = None
+        else:
+            strategies[name] = None
+
+    return JSONResponse(content={"strategies": strategies})
