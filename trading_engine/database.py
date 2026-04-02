@@ -283,21 +283,8 @@ def _get_asset_class(symbol: str) -> str:
     return "other"
 
 
-_ENV = os.environ.get("ENVIRONMENT", "production")
-_STAGING_DB_PATH = os.environ.get("STAGING_DB_PATH", "")
-_DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "trading_data.db")
-
-if _ENV == "staging" and _STAGING_DB_PATH:
-    DB_PATH = _STAGING_DB_PATH
-else:
-    DB_PATH = _DEFAULT_DB_PATH
-
+DB_PATH = os.path.join(os.path.dirname(__file__), "trading_data.db")
 DATABASE_URL = os.environ.get("TRADING_ENGINE_DB_URL", f"sqlite:///{DB_PATH}")
-
-import logging as _logging
-_logging.getLogger("trading_engine.database").info(
-    f"[DB] Environment: {_ENV} | DB: {DB_PATH}"
-)
 
 engine = create_engine(
     DATABASE_URL,

@@ -2919,27 +2919,8 @@ def _build_stocks_algo1_html(
 
 
 def _get_stocks_algo2_data() -> dict:
-    from datetime import datetime as _dt, timedelta as _td
-    import pytz as _pytz
-
     last_exec = get_last_successful_execution("stocks_algo2")
     positions = get_all_stock_algo2_positions()
-
-    # Overwrite trading_days_held with live computation from entry_date
-    _et = _pytz.timezone("America/New_York")
-    _today = _dt.now(_et).date()
-    for pos in positions:
-        try:
-            entry = _dt.strptime(str(pos.get("entry_date", ""))[:10], "%Y-%m-%d").date()
-            count = 0
-            d = entry
-            while d < _today:
-                d += _td(days=1)
-                if d.weekday() < 5:
-                    count += 1
-            pos["trading_days_held"] = count
-        except Exception:
-            pass  # keep existing DB value on parse failure
 
     # NDX yesterday close vs SMA(200)
     ndx_candles = get_candles("NDX", "D1", 300)
@@ -3026,8 +3007,7 @@ def _build_stocks_algo2_html(
             entry_str = f"{entry:.2f}" if entry is not None else "—"
             sl = pos.get("stop_loss")
             sl_str = f"{sl:.2f}" if sl is not None else "—"
-            from trading_engine.strategies.stocks_algo2 import _count_trading_days
-            calendar_days = _count_trading_days(pos.get("entry_date", ""))
+            days_held = pos.get("trading_days_held", 0)
             cur = pos.get("current_price")
             cur_str = f"{cur:.2f}" if cur is not None else "N/A"
             pnl_str = "—"
@@ -3036,12 +3016,12 @@ def _build_stocks_algo2_html(
                 pct = (diff / entry) * 100
                 col = "#6ee7b7" if diff >= 0 else "#fca5a5"
                 pnl_str = f'<span style="color:{col};font-weight:600;">{diff:+.2f} ({pct:+.2f}%)</span>'
-            days_color = "#fca5a5" if calendar_days >= 5 else "#f1f5f9"
+            days_color = "#fca5a5" if days_held >= 5 else "#f1f5f9"
             pos_rows += f"""<tr>
                 <td>{sym_cell}</td>
                 <td>{entry_str}</td>
                 <td>{sl_str}</td>
-                <td style="color:{days_color};font-weight:600;">{calendar_days} / 5<span style="font-size:10px;color:#64748b;font-weight:400;"> (calendar)</span></td>
+                <td style="color:{days_color};font-weight:600;">{days_held} / 5</td>
                 <td>{cur_str}</td>
                 <td>{pnl_str}</td>
             </tr>"""
@@ -4076,11 +4056,6 @@ h3 { font-size: 1rem; margin-bottom: 12px; color: #cbd5e1; }
 @keyframes slideInRight { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; transform: translateY(10px); } }
 .nasdaq-prefix { color: #3b82f6; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; margin-right: 2px; }
-.btn-backfill { display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid rgba(59,130,246,0.35);background:rgba(59,130,246,0.12);color:#3b82f6;transition:background 0.15s; }
-.btn-backfill:hover { background:rgba(59,130,246,0.22); }
-.btn-backfill:disabled { opacity:0.5;cursor:not-allowed; }
-.backfill-spinner { display:inline-block;width:12px;height:12px;border:2px solid rgba(59,130,246,0.3);border-top:2px solid #3b82f6;border-radius:50%;animation:spin 1s linear infinite;flex-shrink:0; }
-@keyframes spin { to { transform: rotate(360deg); } }
 """
 
 ADMIN_JS = """
@@ -4167,7 +4142,7 @@ function showTab(tabName) {
     if (tabName === 'notifications') loadNotifConfig();
     if (tabName === 'apikeys') loadPartnerKeys();
     if (tabName === 'scheduler') loadSchedulerData();
-    if (tabName === 'system') { loadSystemStatus(); loadWatchdogStatus(); loadBackfillStatus(); }
+    if (tabName === 'system') { loadSystemStatus(); loadWatchdogStatus(); }
     if (tabName === 'recovery') loadRecoveryLogs();
     if (tabName === 'users') loadRegistrationToggle();
     if (tabName === 'wordpress') { loadUserCmsConfigs(); }
@@ -5154,7 +5129,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (tabName === 'settings') loadCreditMeter();
     if (tabName === 'notifications') loadNotifConfig();
     if (tabName === 'scheduler') loadSchedulerData();
-    if (tabName === 'system') { loadSystemStatus(); loadWatchdogStatus(); loadBackfillStatus(); }
+    if (tabName === 'system') { loadSystemStatus(); loadWatchdogStatus(); }
     if (tabName === 'users') loadRegistrationToggle();
     if (tabName === 'wordpress') { loadUserCmsConfigs(); }
     if (tabName === 'assets') { loadAssets(); }
@@ -5846,67 +5821,6 @@ async function verifyAllUnverified() {
     }
     showVerifyToast('Batch verify complete: ' + success + ' passed, ' + failed + ' failed', failed > 0 ? 'error' : 'success', 5000);
     loadAssets();
-}
-
-async function loadBackfillStatus() {
-    try {
-        var res = await fetch(BASE + '/admin/api/backfill/status');
-        if (!res.ok) return;
-        var data = await res.json();
-        var strategies = data.strategies || {};
-        Object.keys(strategies).forEach(function(sName) {
-            var info = strategies[sName];
-            var tsEl = document.getElementById('backfill-ts-' + sName);
-            var resultEl = document.getElementById('backfill-result-' + sName);
-            if (!tsEl || !resultEl) return;
-            if (!info) {
-                tsEl.textContent = 'Never';
-                resultEl.innerHTML = '';
-                return;
-            }
-            var d = new Date(info.ran_at);
-            var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-            tsEl.textContent = months[d.getUTCMonth()] + ' ' + d.getUTCDate() + ', ' + d.getUTCFullYear()
-                + ' ' + String(d.getUTCHours()).padStart(2,'0') + ':' + String(d.getUTCMinutes()).padStart(2,'0') + ' UTC';
-            var okBadge = info.succeeded > 0
-                ? '<span class="badge status-active" style="margin-right:4px;">' + info.succeeded + ' ok</span>' : '';
-            var failBadge = info.failed > 0
-                ? '<span class="badge status-closed">' + info.failed + ' failed</span>' : '';
-            resultEl.innerHTML = okBadge + failBadge;
-        });
-    } catch(e) {}
-}
-
-async function runBackfill(strategyName, btnEl) {
-    btnEl.disabled = true;
-    var originalHtml = btnEl.innerHTML;
-    btnEl.innerHTML = '<span class="backfill-spinner"></span> Running...';
-    var errEl = document.getElementById('backfill-err-' + strategyName);
-    if (errEl) errEl.textContent = '';
-    try {
-        var res = await fetch(BASE + '/admin/api/backfill/strategy', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({strategy_name: strategyName})
-        });
-        var data = await res.json();
-        if (res.ok && data.success) {
-            var msg = strategyName + ': ' + data.succeeded + ' ok';
-            if (data.failed > 0) msg += ', ' + data.failed + ' failed';
-            showVerifyToast(msg, data.failed > 0 ? 'error' : 'success', 4000);
-            await loadBackfillStatus();
-        } else {
-            var errMsg = (data && data.detail) || (data && data.error) || 'Backfill failed';
-            if (errEl) errEl.textContent = errMsg;
-            showVerifyToast(strategyName + ': ' + errMsg, 'error', 5000);
-        }
-    } catch(e) {
-        if (errEl) errEl.textContent = 'Network error: ' + e.message;
-        showVerifyToast('Backfill error: ' + e.message, 'error', 5000);
-    } finally {
-        btnEl.disabled = false;
-        btnEl.innerHTML = originalHtml;
-    }
 }
 """
 
@@ -6913,37 +6827,6 @@ def admin_dashboard(
                     <div id="signal-integrity-result"
                          style="margin-top:12px;"
                          data-testid="text-signal-integrity-result"></div>
-                </div>
-
-                <div class="settings-section" style="margin-top:20px;" data-testid="widget-data-backfill">
-                    <h3>Data Backfill</h3>
-                    <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;">
-                        Force-refresh OHLC candle data for each strategy from FCSAPI. Use after a data gap or engine restart.
-                    </p>
-                    <div style="display:flex;flex-direction:column;gap:8px;" id="backfill-rows">
-                        {"".join([
-                            f'''<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:8px;" data-testid="row-backfill-{sn}">
-                              <div style="flex:1;min-width:160px;">
-                                <div style="font-size:13px;font-weight:600;color:#f1f5f9;">{sl}</div>
-                                <div style="font-size:11px;color:#64748b;margin-top:2px;">
-                                  Last run: <span id="backfill-ts-{sn}" style="color:#94a3b8;">—</span>
-                                  &nbsp;<span id="backfill-result-{sn}"></span>
-                                </div>
-                                <div id="backfill-err-{sn}" style="font-size:11px;color:#ef4444;margin-top:2px;"></div>
-                              </div>
-                              <button class="btn-backfill" onclick="runBackfill('{sn}', this)" data-testid="button-backfill-{sn}">Backfill</button>
-                            </div>'''
-                            for sn, sl in [
-                                ("mtf_ema",           "MTF EMA"),
-                                ("trend_non_forex",   "Trend Non-Forex"),
-                                ("trend_forex",       "Trend Forex"),
-                                ("sp500_momentum",    "SP500 Momentum"),
-                                ("highest_lowest_fx", "Highest/Lowest FX"),
-                                ("stocks_algo1",      "Stocks Algo 1"),
-                                ("stocks_algo2",      "Stocks Algo 2"),
-                            ]
-                        ])}
-                    </div>
                 </div>
 
                 <div style="font-weight:600;color:#f1f5f9;font-size:15px;margin-bottom:12px;">Live Status</div>
@@ -9581,112 +9464,3 @@ async def admin_delete_signal_by_id(signal_id: int, request: Request):
 async def admin_delete_signal_by_id_post(signal_id: int, request: Request):
     """POST alias for DELETE /admin/api/signals/{signal_id} (for clients that cannot send DELETE)."""
     return await admin_delete_signal_by_id(signal_id, request)
-
-
-# ── Backfill endpoints ────────────────────────────────────────────────────────
-
-_BACKFILL_TIMEFRAMES: dict[str, list[str]] = {
-    "mtf_ema":           ["D1", "4H", "1H"],
-    "trend_forex":       ["D1"],
-    "trend_non_forex":   ["D1"],
-    "sp500_momentum":    ["30m", "D1"],
-    "highest_lowest_fx": ["1H", "D1"],
-    "stocks_algo1":      ["D1"],
-    "stocks_algo2":      ["D1"],
-}
-
-_BACKFILL_STRATEGIES = list(_BACKFILL_TIMEFRAMES.keys())
-
-
-@router.get("/api/backfill/status")
-def api_backfill_status(request: Request):
-    guard = _admin_role_guard(request)
-    if guard:
-        return guard
-    from trading_engine.database import get_setting
-    import json as _json
-    result: dict = {}
-    for sn in _BACKFILL_STRATEGIES:
-        raw = get_setting(f"backfill_last_run_{sn}")
-        if raw:
-            try:
-                result[sn] = _json.loads(raw)
-            except Exception:
-                result[sn] = None
-        else:
-            result[sn] = None
-    return JSONResponse(content={"strategies": result})
-
-
-@router.post("/api/backfill/strategy")
-def api_backfill_strategy(request: Request, body: dict = Body(...)):
-    guard = _admin_role_guard(request)
-    if guard:
-        return guard
-
-    strategy_name = (body.get("strategy_name") or "").strip()
-    if strategy_name not in _BACKFILL_TIMEFRAMES:
-        return JSONResponse(
-            content={"error": f"Unknown strategy: {strategy_name}. Valid: {_BACKFILL_STRATEGIES}"},
-            status_code=400,
-        )
-
-    from trading_engine import engine_registry
-    engine = engine_registry.get_engine()
-    if engine is None:
-        return JSONResponse(
-            content={"error": "Engine not ready — start the application first"},
-            status_code=503,
-        )
-
-    from trading_engine.database import get_strategy_assets_full, get_setting, set_setting
-    import json as _json
-    from datetime import datetime, timezone
-
-    assets = get_strategy_assets_full(strategy_name=strategy_name)
-    symbols = [a["symbol"] for a in assets]
-    if len(symbols) > 150:
-        return JSONResponse(
-            content={"error": f"Strategy has {len(symbols)} assets — cap is 150 to prevent credit drain"},
-            status_code=400,
-        )
-
-    timeframes = _BACKFILL_TIMEFRAMES[strategy_name]
-    succeeded = 0
-    failed = 0
-    failed_symbols: list[str] = []
-
-    for sym in symbols:
-        sym_ok = True
-        for tf in timeframes:
-            try:
-                engine.cache.force_refresh(sym, tf)
-            except Exception:
-                sym_ok = False
-        if sym_ok:
-            succeeded += 1
-        else:
-            failed += 1
-            failed_symbols.append(sym)
-
-    ran_at = datetime.now(timezone.utc).isoformat()
-    record = {
-        "ran_at": ran_at,
-        "succeeded": succeeded,
-        "failed": failed,
-        "failed_symbols": failed_symbols,
-    }
-    set_setting(f"backfill_last_run_{strategy_name}", _json.dumps(record))
-
-    logger.info(
-        f"[ADMIN-BACKFILL] strategy={strategy_name} | succeeded={succeeded} failed={failed} | ran_at={ran_at}"
-    )
-
-    return JSONResponse(content={
-        "success": True,
-        "strategy": strategy_name,
-        "succeeded": succeeded,
-        "failed": failed,
-        "failed_symbols": failed_symbols,
-        "ran_at": ran_at,
-    })
