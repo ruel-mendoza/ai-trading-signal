@@ -422,7 +422,8 @@ class StocksAlgo2Strategy(BaseStrategy):
                     {**pos, "exit_price": current, "exit_reason": "hold_period_expired"}
                 )
                 logger.info(
-                    f"[ALGO2-EXIT] {sym} | EXIT hold period expired ({days_held}d)"
+                    f"[ALGO2-EXIT] {sym} | hold_period_expired | "
+                    f"calculated_days={days_held} | entry={pos.get('entry_date', '')}"
                 )
                 continue
 

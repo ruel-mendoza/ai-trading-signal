@@ -1,0 +1,16 @@
+Fix stocks_algo2: calculate days held from signal timestamp AND enforce time-based exit at NY market close regardless of NDX filter
+In trading_engine/strategies/stocks_algo2.py, two bugs need fixing:
+Bug 1 — Days held calculated from counter not timestamp:
+Replace the increment_stock_algo2_hold_days approach with a helper function _count_trading_days(entry_date_str: str) -> int that counts weekdays (Mon–Fri) elapsed from the entry date to today in ET timezone. Parse the entry date string using format %Y-%m-%dT%H:%M:%S. Use this calculated value everywhere trading_days_held is currently used for the exit decision. Do not remove the DB column or the increment function — just stop calling increment in check_exits.
+Bug 2 — check_exits is only called from run_daily which is blocked by NDX filter:
+In run_daily, the method currently returns early with self.check_exits() called inline when NDX filter fails. This means if the scheduler job fires but the NDX filter blocks new entries, exits still run. However the scheduler job stocks_algo2_daily at 4:15 PM ET calls run_daily — so exits should always fire.
+The real problem is that check_exits must close positions where trading_days_held >= 5 regardless of whether it is called from run_daily or the standalone stocks_algo2_exit_check scheduler job. Make check_exits a fully standalone method that:
+
+Calculates days held using _count_trading_days(pos["entry_date"]) instead of pos["trading_days_held"]
+Checks hold_expired = calculated_days >= MAX_HOLD_TRADING_DAYS
+If hold_expired is true, fetches the current price and closes the position immediately — do not skip due to any market filter
+Logs clearly: f"[ALGO2-EXIT] {sym} | hold_period_expired | calculated_days={calculated_days} | entry={pos['entry_date']}"
+
+Bug 3 — Add a dedicated daily exit check scheduler job:
+In trading_engine/main.py, add a new scheduler job that calls stocks_algo2_strategy.check_exits() directly at 16:20 ET daily (5 minutes after the main stocks_algo2_daily job). This ensures exits fire even if run_daily was skipped or errored. Name the job stocks_algo2_exit_check_standalone. Use the existing MISFIRE_GRACE_SECONDS and ET_ZONE constants.
+Do not change run_daily entry logic, _close, open_stock_algo2_position, or any database models.

@@ -1028,6 +1028,34 @@ def _scheduled_stocks_algo2_daily():
     logger.info(f"[SCHEDULER] ====== stocks_algo2 complete | {status} | signals={signals_gen} errors={error_count} ======")
 
 
+def _scheduled_stocks_algo2_exit_check_standalone():
+    et = _get_et_context()
+    logger.info(
+        f"[SCHEDULER] ====== stocks_algo2 standalone exit check | {et['time_str']} {et['label']} ======"
+    )
+    log_id = create_job_log("stocks_algo2_exit_check_standalone", "stocks_algo2")
+    closed_count = error_count = 0
+    error_details = []
+    try:
+        closed = stocks_algo2_strategy.check_exits()
+        closed_count = len(closed)
+    except Exception as e:
+        error_count = 1
+        error_details.append(str(e))
+        logger.error(
+            f"[SCHEDULER] stocks_algo2_exit_check_standalone | Exception: {e}",
+            exc_info=True,
+        )
+    status = "FAILED" if error_count > 0 else "SUCCESS"
+    finish_job_log(
+        log_id, status, 1, closed_count, error_count,
+        "; ".join(error_details) if error_details else None,
+    )
+    logger.info(
+        f"[SCHEDULER] ====== stocks_algo2 exit check complete | {status} | closed={closed_count} ======"
+    )
+
+
 def _scheduled_nasdaq_sync():
     et = _get_et_context()
     logger.info(f"[SCHEDULER] NASDAQ 100 symbol sync | {et['time_str']} {et['label']}")
@@ -1176,6 +1204,14 @@ async def lifespan(app: FastAPI):
         trigger=CronTrigger(hour=16, minute=15, timezone=ET_ZONE),
         id="stocks_algo2_daily",
         name="Stocks Algo2 Mean Reversion Daily (4:15 PM ET)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
+    scheduler.add_job(
+        _scheduled_stocks_algo2_exit_check_standalone,
+        trigger=CronTrigger(hour=16, minute=20, timezone=ET_ZONE),
+        id="stocks_algo2_exit_check_standalone",
+        name="Stocks Algo2 Standalone Exit Check (4:20 PM ET)",
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
