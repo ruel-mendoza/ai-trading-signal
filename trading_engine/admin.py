@@ -3026,7 +3026,8 @@ def _build_stocks_algo2_html(
             entry_str = f"{entry:.2f}" if entry is not None else "—"
             sl = pos.get("stop_loss")
             sl_str = f"{sl:.2f}" if sl is not None else "—"
-            days_held = pos.get("trading_days_held", 0)
+            from trading_engine.strategies.stocks_algo2 import _count_trading_days
+            calendar_days = _count_trading_days(pos.get("entry_date", ""))
             cur = pos.get("current_price")
             cur_str = f"{cur:.2f}" if cur is not None else "N/A"
             pnl_str = "—"
@@ -3035,12 +3036,12 @@ def _build_stocks_algo2_html(
                 pct = (diff / entry) * 100
                 col = "#6ee7b7" if diff >= 0 else "#fca5a5"
                 pnl_str = f'<span style="color:{col};font-weight:600;">{diff:+.2f} ({pct:+.2f}%)</span>'
-            days_color = "#fca5a5" if days_held >= 5 else "#f1f5f9"
+            days_color = "#fca5a5" if calendar_days >= 5 else "#f1f5f9"
             pos_rows += f"""<tr>
                 <td>{sym_cell}</td>
                 <td>{entry_str}</td>
                 <td>{sl_str}</td>
-                <td style="color:{days_color};font-weight:600;">{days_held} / 5</td>
+                <td style="color:{days_color};font-weight:600;">{calendar_days} / 5<span style="font-size:10px;color:#64748b;font-weight:400;"> (calendar)</span></td>
                 <td>{cur_str}</td>
                 <td>{pnl_str}</td>
             </tr>"""

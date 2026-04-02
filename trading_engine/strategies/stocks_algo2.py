@@ -64,6 +64,21 @@ def _trading_days_since(entry_date_str: str) -> int:
         return 0
 
 
+def _count_trading_days(entry_date_str: str) -> int:
+    """Count business days elapsed since entry using numpy busday_count (excludes weekends)."""
+    import numpy as np
+    try:
+        entry_dt = datetime.strptime(str(entry_date_str)[:19], "%Y-%m-%dT%H:%M:%S")
+        entry_date = entry_dt.date()
+    except (ValueError, TypeError):
+        try:
+            entry_date = datetime.strptime(str(entry_date_str)[:10], "%Y-%m-%d").date()
+        except Exception:
+            return 0
+    today = datetime.now(ET_ZONE).date()
+    return max(0, int(np.busday_count(entry_date, today)))
+
+
 def _fetch_stock_candles(
     cache: CacheLayer, symbol: str, limit: int = 300
 ) -> list[dict]:
@@ -384,8 +399,10 @@ class StocksAlgo2Strategy(BaseStrategy):
             sym = pos["symbol"]
             entry = pos["entry_price"]
             stop = pos["stop_loss"]
-            # Compute live from entry_date — matches QC algo intent exactly
-            days_held = _trading_days_since(pos["entry_date"])
+            # Compute live trading days from entry_date via numpy busday_count
+            calendar_days = _count_trading_days(pos["entry_date"])
+            # Counter value from DB (may be stale — used only for debug comparison)
+            counter_days = pos.get("trading_days_held", 0)
 
             # Get current price — fallback to entry so hold expiry still fires
             current = entry
@@ -400,11 +417,13 @@ class StocksAlgo2Strategy(BaseStrategy):
                 # DO NOT continue — hold expiry check must still run below
 
             stop_hit = current <= stop
-            hold_expired = days_held >= MAX_HOLD_TRADING_DAYS
+            hold_expired = calendar_days >= MAX_HOLD_TRADING_DAYS
 
             logger.debug(
-                f"[ALGO2-EXIT] {sym} | current={current:.4f} stop={stop:.4f} "
-                f"stop_hit={stop_hit} | days={days_held}/{MAX_HOLD_TRADING_DAYS} expired={hold_expired}"
+                f"[ALGO2-EXIT] {sym} | "
+                f"calendar_days={calendar_days} | "
+                f"counter_days={counter_days} | "
+                f"expired={hold_expired}"
             )
 
             if stop_hit:
@@ -417,17 +436,17 @@ class StocksAlgo2Strategy(BaseStrategy):
                 continue
 
             if hold_expired:
-                reason = f"5-trading-day hold expired | days={days_held} | close={current:.4f}"
+                reason = f"5-trading-day hold expired | days={calendar_days} | close={current:.4f}"
                 self._close(sym, pos["signal_id"], current, reason)
                 closed.append(
                     {**pos, "exit_price": current, "exit_reason": "hold_period_expired"}
                 )
                 logger.info(
-                    f"[ALGO2-EXIT] {sym} | EXIT hold period expired ({days_held}d)"
+                    f"[ALGO2-EXIT] {sym} | EXIT hold period expired ({calendar_days}d)"
                 )
                 continue
 
-            logger.debug(f"[ALGO2-EXIT] {sym} | Holding | days_held={days_held}/{MAX_HOLD_TRADING_DAYS}")
+            logger.debug(f"[ALGO2-EXIT] {sym} | Holding | calendar_days={calendar_days}/{MAX_HOLD_TRADING_DAYS}")
 
         return closed
 

@@ -1,0 +1,54 @@
+Replace the counter-based approach with a calendar-based date comparison in check_exits(). In stocks_algo2.py:
+Current logic:
+pythonhold_expired = days_held >= MAX_HOLD_TRADING_DAYS
+Replace with:
+pythondef _count_trading_days(entry_date_str: str) -> int:
+    """Count actual trading days elapsed since entry."""
+    import pytz
+    from datetime import datetime, date
+    import numpy as np
+
+    et = pytz.timezone("America/New_York")
+    try:
+        entry_dt = datetime.strptime(str(entry_date_str)[:19], "%Y-%m-%dT%H:%M:%S")
+        entry_date = entry_dt.date()
+    except (ValueError, TypeError):
+        return 0
+
+    today = datetime.now(pytz.utc).astimezone(et).date()
+
+    # Count business days between entry and today
+    # numpy busday_count excludes weekends automatically
+    trading_days = int(np.busday_count(entry_date, today))
+    return max(0, trading_days)
+Then in check_exits() replace:
+python# OLD
+hold_expired = days_held >= MAX_HOLD_TRADING_DAYS
+python# NEW
+calendar_days = _count_trading_days(pos["entry_date"])
+hold_expired = calendar_days >= MAX_HOLD_TRADING_DAYS
+
+logger.debug(
+    f"[ALGO2-EXIT] {sym} | "
+    f"calendar_days={calendar_days} | "
+    f"counter_days={days_held} | "
+    f"expired={hold_expired}"
+)
+
+Why This is Better
+Counter approach (current)Calendar approach (fix)Missed scheduler runPosition stays open extra dayCorrectly expiresServer restartCounter may resetEntry date preserved in DBHolidayCounts if scheduler ranCan exclude with np.busdaycalendarAccuracyDepends on uptimeDepends only on entry_date
+
+Also Update the Admin Panel Display
+In _build_stocks_algo2_html() in admin.py, the days held column currently shows trading_days_held from the counter. After the fix you'd want to show the calendar days instead so the admin panel reflects reality:
+python# In the positions table row builder
+calendar_days = _count_trading_days(pos.get("entry_date", ""))
+days_color = "#fca5a5" if calendar_days >= 5 else "#f1f5f9"
+pos_rows += f"""<tr>
+    ...
+    <td style="color:{days_color};font-weight:600;">
+        {calendar_days} / 5
+        <span style="font-size:10px;color:#64748b;"> (calendar)</span>
+    </td>
+    ...
+</tr>"""
+This way even if the counter is out of sync, the admin panel always shows the true number of trading days elapsed since entry.
