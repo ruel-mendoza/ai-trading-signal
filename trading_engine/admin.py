@@ -2919,8 +2919,27 @@ def _build_stocks_algo1_html(
 
 
 def _get_stocks_algo2_data() -> dict:
+    from datetime import datetime as _dt, timedelta as _td
+    import pytz as _pytz
+
     last_exec = get_last_successful_execution("stocks_algo2")
     positions = get_all_stock_algo2_positions()
+
+    # Overwrite trading_days_held with live computation from entry_date
+    _et = _pytz.timezone("America/New_York")
+    _today = _dt.now(_et).date()
+    for pos in positions:
+        try:
+            entry = _dt.strptime(str(pos.get("entry_date", ""))[:10], "%Y-%m-%d").date()
+            count = 0
+            d = entry
+            while d < _today:
+                d += _td(days=1)
+                if d.weekday() < 5:
+                    count += 1
+            pos["trading_days_held"] = count
+        except Exception:
+            pass  # keep existing DB value on parse failure
 
     # NDX yesterday close vs SMA(200)
     ndx_candles = get_candles("NDX", "D1", 300)
