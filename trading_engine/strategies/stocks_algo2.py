@@ -387,13 +387,17 @@ class StocksAlgo2Strategy(BaseStrategy):
             # Compute live from entry_date — matches QC algo intent exactly
             days_held = _trading_days_since(pos["entry_date"])
 
-            # Get current price
+            # Get current price — fallback to entry so hold expiry still fires
+            current = entry
             try:
                 candles = _fetch_stock_candles(self.cache, sym, limit=5)
-                current = float(candles[-1]["close"]) if candles else entry
+                if candles:
+                    current = float(candles[-1]["close"])
             except Exception as e:
-                logger.warning(f"[ALGO2-EXIT] {sym} | price fetch failed: {e}")
-                continue
+                logger.warning(
+                    f"[ALGO2-EXIT] {sym} | price fetch failed: {e} — using entry as fallback"
+                )
+                # DO NOT continue — hold expiry check must still run below
 
             stop_hit = current <= stop
             hold_expired = days_held >= MAX_HOLD_TRADING_DAYS
