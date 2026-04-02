@@ -10,7 +10,7 @@ Mirrors the QC algorithm "SwimmingYellowGreenDinosaur":
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 import pytz
@@ -47,6 +47,25 @@ STOP_LOSS_PCT = 0.04  # 4% below entry
 MAX_HOLD_TRADING_DAYS = 5
 
 ET_ZONE = pytz.timezone("America/New_York")
+
+
+def _count_trading_days(entry_date_str: str) -> int:
+    """Count Monday–Friday trading days from entry date to today (ET), inclusive."""
+    try:
+        entry_dt = datetime.strptime(str(entry_date_str)[:19], "%Y-%m-%dT%H:%M:%S")
+        entry_date = ET_ZONE.localize(entry_dt).date()
+    except Exception:
+        return 0
+    today = datetime.now(ET_ZONE).date()
+    if today < entry_date:
+        return 0
+    count = 0
+    current = entry_date
+    while current <= today:
+        if current.weekday() < 5:  # Monday=0 through Friday=4
+            count += 1
+        current += timedelta(days=1)
+    return count
 
 
 def _fetch_stock_candles(
@@ -369,7 +388,7 @@ class StocksAlgo2Strategy(BaseStrategy):
             sym = pos["symbol"]
             entry = pos["entry_price"]
             stop = pos["stop_loss"]
-            days_held = pos["trading_days_held"]
+            days_held = _count_trading_days(pos.get("entry_date") or "")
 
             # Get current price
             try:
@@ -407,9 +426,8 @@ class StocksAlgo2Strategy(BaseStrategy):
                 )
                 continue
 
-            # No exit — increment hold counter
-            new_days = increment_stock_algo2_hold_days(pos["id"])
-            logger.debug(f"[ALGO2-EXIT] {sym} | Holding | days_held now {new_days}")
+            # No exit — still holding
+            logger.debug(f"[ALGO2-EXIT] {sym} | Holding | days_held={days_held}")
 
         return closed
 
