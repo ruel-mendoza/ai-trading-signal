@@ -1,0 +1,59 @@
+Fix four bugs in trading_engine/strategies/stocks_algo2.py:
+Bug 1 — Add weekend and holiday guard to run_daily:
+At the very top of run_daily() after the logger.info line, add:
+pythonfrom trading_engine.utils.holiday_manager import is_trading_holiday
+import pytz as _pytz
+_now_et = datetime.now(_pytz.timezone("America/New_York"))
+if _now_et.weekday() >= 5:
+    logger.info(f"[ALGO2] Weekend ({_now_et.strftime('%A')}) — skipping run_daily")
+    return {"signals_opened": 0, "signals_closed": 0, "ndx_filter_pass": False, "error": "weekend"}
+if is_trading_holiday(_now_et):
+    logger.info("[ALGO2] Trading holiday — skipping run_daily")
+    return {"signals_opened": 0, "signals_closed": 0, "ndx_filter_pass": False, "error": "holiday"}
+Bug 2 — Replace counter with timestamp-based trading days calculation:
+Add this helper function near the top of the file after the imports:
+pythondef _count_trading_days(entry_date_str: str) -> int:
+    """Count actual trading weekdays from entry date to today ET.
+    Starts counting from the first weekday on or after entry date.
+    """
+    import pytz as _pytz
+    from datetime import date as _date
+    et = _pytz.timezone("America/New_York")
+    now_et = datetime.now(et).date()
+    try:
+        entry_dt = datetime.strptime(str(entry_date_str)[:19], "%Y-%m-%dT%H:%M:%S").date()
+    except (ValueError, TypeError):
+        return 0
+    # If entry was on weekend, start counting from next Monday
+    while entry_dt.weekday() >= 5:
+        entry_dt += timedelta(days=1)
+    # Count weekdays from entry to today inclusive
+    count = 0
+    current = entry_dt
+    while current <= now_et:
+        if current.weekday() < 5:
+            count += 1
+        current += timedelta(days=1)
+    return count
+Add from datetime import timedelta to the imports at the top of the file if not already present.
+Bug 3 — Use _count_trading_days in check_exits instead of pos["trading_days_held"]:
+In check_exits, replace:
+pythondays_held = pos["trading_days_held"]
+with:
+pythondays_held = _count_trading_days(pos["entry_date"])
+Update the log line to:
+pythonlogger.debug(
+    f"[ALGO2-EXIT] {sym} | current={current:.4f} stop={stop:.4f} "
+    f"stop_hit={stop_hit} | days={days_held}/{MAX_HOLD_TRADING_DAYS} "
+    f"expired={hold_expired} | entry_date={pos['entry_date']}"
+)
+Keep the increment_stock_algo2_hold_days call removed — do not increment anymore.
+Bug 4 — Add weekend guard to check_exits as well:
+At the top of check_exits() after the orphan detection block but before the positions loop, add:
+pythonfrom trading_engine.utils.holiday_manager import is_trading_holiday as _is_holiday
+import pytz as _pytz2
+_now_et2 = datetime.now(_pytz2.timezone("America/New_York"))
+if _now_et2.weekday() >= 5 or _is_holiday(_now_et2):
+    logger.info("[ALGO2-EXIT] Weekend or holiday — skipping trailing stop/hold checks")
+    return closed
+Do not change _close, run_daily entry logic, open_stock_algo2_position, or any database models. Do not remove the trading_days_held column or increment_stock_algo2_hold_days function from database.py.

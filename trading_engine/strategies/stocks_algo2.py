@@ -50,19 +50,23 @@ ET_ZONE = pytz.timezone("America/New_York")
 
 
 def _count_trading_days(entry_date_str: str) -> int:
-    """Count Monday–Friday trading days from entry date to today (ET), inclusive."""
+    """Count actual trading weekdays from entry date to today ET.
+    Starts counting from the first weekday on or after entry date.
+    """
+    from datetime import date as _date
+    et = ET_ZONE
+    now_et = datetime.now(et).date()
     try:
-        entry_dt = datetime.strptime(str(entry_date_str)[:19], "%Y-%m-%dT%H:%M:%S")
-        entry_date = ET_ZONE.localize(entry_dt).date()
-    except Exception:
+        entry_dt = datetime.strptime(str(entry_date_str)[:19], "%Y-%m-%dT%H:%M:%S").date()
+    except (ValueError, TypeError):
         return 0
-    today = datetime.now(ET_ZONE).date()
-    if today < entry_date:
-        return 0
+    # If entry was on weekend, advance to next Monday
+    while entry_dt.weekday() >= 5:
+        entry_dt += timedelta(days=1)
     count = 0
-    current = entry_date
-    while current <= today:
-        if current.weekday() < 5:  # Monday=0 through Friday=4
+    current = entry_dt
+    while current <= now_et:
+        if current.weekday() < 5:
             count += 1
         current += timedelta(days=1)
     return count
@@ -169,6 +173,14 @@ class StocksAlgo2Strategy(BaseStrategy):
         logger.info(
             f"[ALGO2] ====== Daily cycle start | {now_et.strftime('%Y-%m-%d %H:%M')} ET ======"
         )
+
+        from trading_engine.utils.holiday_manager import is_trading_holiday
+        if now_et.weekday() >= 5:
+            logger.info(f"[ALGO2] Weekend ({now_et.strftime('%A')}) — skipping run_daily")
+            return {"signals_opened": 0, "signals_closed": 0, "ndx_filter_pass": False, "error": "weekend"}
+        if is_trading_holiday(now_et):
+            logger.info("[ALGO2] Trading holiday — skipping run_daily")
+            return {"signals_opened": 0, "signals_closed": 0, "ndx_filter_pass": False, "error": "holiday"}
 
         result = {
             "signals_opened": 0,
@@ -382,6 +394,13 @@ class StocksAlgo2Strategy(BaseStrategy):
         if not positions:
             return closed
 
+        # Weekend / holiday guard — skip trailing stop and hold checks
+        from trading_engine.utils.holiday_manager import is_trading_holiday as _is_holiday
+        _now_et = datetime.now(ET_ZONE)
+        if _now_et.weekday() >= 5 or _is_holiday(_now_et):
+            logger.info("[ALGO2-EXIT] Weekend or holiday — skipping trailing stop/hold checks")
+            return closed
+
         logger.info(f"[ALGO2-EXIT] Checking {len(positions)} position(s)")
 
         for pos in positions:
@@ -403,7 +422,8 @@ class StocksAlgo2Strategy(BaseStrategy):
 
             logger.debug(
                 f"[ALGO2-EXIT] {sym} | current={current:.4f} stop={stop:.4f} "
-                f"stop_hit={stop_hit} | days={days_held}/{MAX_HOLD_TRADING_DAYS} expired={hold_expired}"
+                f"stop_hit={stop_hit} | days={days_held}/{MAX_HOLD_TRADING_DAYS} "
+                f"expired={hold_expired} | entry_date={pos.get('entry_date', '')}"
             )
 
             if stop_hit:
