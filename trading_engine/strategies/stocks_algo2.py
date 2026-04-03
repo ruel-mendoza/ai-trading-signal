@@ -394,11 +394,23 @@ class StocksAlgo2Strategy(BaseStrategy):
         if not positions:
             return closed
 
-        # Weekend / holiday guard — skip trailing stop and hold checks
+        # Weekend / holiday / session guard
         from trading_engine.utils.holiday_manager import is_trading_holiday as _is_holiday
-        _now_et = datetime.now(ET_ZONE)
+        from datetime import datetime as _dt
+        _now_et = _dt.now(ET_ZONE)
         if _now_et.weekday() >= 5 or _is_holiday(_now_et):
-            logger.info("[ALGO2-EXIT] Weekend or holiday — skipping trailing stop/hold checks")
+            logger.info("[ALGO2-EXIT] Weekend or holiday — skipping exit checks")
+            return closed
+        # NYSE session gate: only evaluate exits after market close (16:05 - 16:30 ET)
+        _et_minutes = _now_et.hour * 60 + _now_et.minute
+        _gate_start = 16 * 60 + 5    # 4:05 PM ET
+        _gate_end   = 16 * 60 + 30   # 4:30 PM ET
+        _in_gate    = _gate_start <= _et_minutes <= _gate_end
+        if not _in_gate:
+            logger.info(
+                f"[ALGO2-EXIT] Outside exit window (16:05-16:30 ET) — "
+                f"current={_now_et.strftime('%H:%M')} ET — skipping"
+            )
             return closed
 
         logger.info(f"[ALGO2-EXIT] Checking {len(positions)} position(s)")
