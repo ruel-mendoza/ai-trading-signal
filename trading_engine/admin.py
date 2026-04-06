@@ -9304,9 +9304,10 @@ def debug_all_open_signals(request: Request):
     if guard:
         return guard
     from trading_engine.models import Signal, OpenPosition
+    from trading_engine.database import SessionFactory
     from collections import defaultdict
 
-    with _get_session() as session:
+    with SessionFactory() as session:
         all_sigs = (
             session.query(Signal)
             .filter(Signal.status == "OPEN")
