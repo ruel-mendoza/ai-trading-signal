@@ -1,5 +1,4 @@
 import logging
-import json
 from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger("trading_engine.utils.quota_manager")
@@ -16,7 +15,7 @@ _ALERT_SUPPRESSION_MINUTES = 60
 _last_warning_time: datetime | None = None
 _last_critical_time: datetime | None = None
 
-# Re-entrance guard: prevents update_quota → sync_quota_from_api → update_quota loops
+# Re-entrance guard (kept as a safeguard for future changes)
 _sync_in_progress: bool = False
 
 
@@ -38,32 +37,24 @@ def _is_new_billing_month() -> bool:
     return stored != current_month
 
 
-def _delete_stale_usage_logs() -> int:
-    """Delete api_usage_log rows from previous billing months. Returns row count deleted."""
-    try:
-        from trading_engine.database import SessionFactory
-        from sqlalchemy import text
-        with SessionFactory() as session:
-            result = session.execute(
-                text("DELETE FROM api_usage_log WHERE timestamp < date('now', 'start of month')")
-            )
-            session.commit()
-            deleted = result.rowcount
-            logger.info(f"[QUOTA] Deleted {deleted} stale api_usage_log rows from previous billing months")
-            return deleted
-    except Exception as e:
-        logger.warning(f"[QUOTA] Could not delete stale usage logs: {e}")
-        return 0
-
-
 # ---------------------------------------------------------------------------
 # Public sync function
 # ---------------------------------------------------------------------------
 
 def sync_quota_from_api() -> dict:
     """
-    Force-sync the local credit counter by making a lightweight FCSAPI
-    test call and reading the credit_count from the response info block.
+    Sync the local credit counter by recalculating from the api_usage_log table.
+
+    The FCSAPI info.credit_count field only reflects credits consumed by the
+    *current* request (always 1-2), not the account balance.  The api_usage_log
+    table is the authoritative source for cumulative monthly usage.
+
+    Steps:
+      1. Delete stale api_usage_log rows from previous billing months.
+      2. Sum credits_used for the current billing month from api_usage_log.
+      3. Compute real_remaining = credit_limit - monthly_used.
+      4. Persist to app_settings (fcsapi_remaining_credits, fcsapi_credit_limit).
+      5. Clear kill switch + watchdog flag if usage_pct < 95 %.
 
     Called:
       - On app startup (in main.py lifespan)
@@ -86,100 +77,96 @@ def sync_quota_from_api() -> dict:
 
 
 def _do_sync() -> dict:
-    """Inner implementation of the quota sync (called with _sync_in_progress=True)."""
-    import requests as _requests
-    from trading_engine.fcsapi_client import FCSAPIClient, BASE_URL_V4_FOREX
-    from trading_engine.database import set_setting, get_setting
-    from trading_engine.credit_control import _clear_kill_switch_in_db
+    """Inner sync implementation (executes with _sync_in_progress=True)."""
+    from trading_engine.database import get_setting, set_setting, SessionFactory
+    from sqlalchemy import text
 
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.now(timezone.utc)
+    synced_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    # --- Lightweight API call: /forex/list with per_page=1 (1 credit) ---
-    client = FCSAPIClient()
-    api_key = client.api_key
-    if not api_key:
-        logger.warning("[QUOTA] Cannot sync — no FCSAPI key configured")
-        return {"success": False, "error": "no api key", "synced_at": now_str}
-
-    url = f"{BASE_URL_V4_FOREX}/list"
-    params = {"access_key": api_key, "per_page": 1}
-
-    try:
-        logger.info("[QUOTA] Syncing quota from FCSAPI /forex/list...")
-        resp = _requests.get(url, params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:
-        logger.warning(f"[QUOTA] API call for quota sync failed: {exc}")
-        return {"success": False, "error": str(exc), "synced_at": now_str}
-
-    # --- Extract credit_count from response ---
-    info = data.get("info", {}) if isinstance(data, dict) else {}
-    credit_count = info.get("credit_count")
-    if credit_count is None:
-        logger.warning("[QUOTA] credit_count missing from sync response")
-        return {"success": False, "error": "credit_count missing from response", "synced_at": now_str}
-
-    try:
-        real_remaining = int(credit_count)
-    except (ValueError, TypeError):
-        logger.warning(f"[QUOTA] Could not parse credit_count: {credit_count!r}")
-        return {"success": False, "error": f"invalid credit_count: {credit_count}", "synced_at": now_str}
-
-    # Resolve credit limit
+    # Resolve credit limit from settings (default 500,000)
     limit_str = get_setting(QUOTA_CREDIT_LIMIT_KEY)
     try:
-        real_limit = int(limit_str) if limit_str else 500_000
+        credit_limit = int(limit_str) if limit_str else 500_000
     except (ValueError, TypeError):
-        real_limit = 500_000
+        credit_limit = 500_000
 
-    used = max(real_limit - real_remaining, 0)
-    usage_pct = round(used / real_limit * 100, 2) if real_limit > 0 else 0.0
-    critical_threshold_remaining = real_limit * (1 - CRITICAL_THRESHOLD_PCT / 100)
+    # Billing-month boundary (ISO string, e.g. "2026-04-01T00:00:00")
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
 
-    # --- Update local settings ---
-    set_setting(QUOTA_REMAINING_KEY, str(real_remaining))
-    set_setting(QUOTA_LAST_UPDATED_KEY, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"))
+    # Step 1: Delete stale api_usage_log rows from previous billing months
+    stale_deleted = 0
+    try:
+        with SessionFactory() as session:
+            result = session.execute(
+                text("DELETE FROM api_usage_log WHERE timestamp < :start"),
+                {"start": month_start},
+            )
+            session.commit()
+            stale_deleted = result.rowcount
+        if stale_deleted:
+            logger.info(f"[QUOTA] Cleared {stale_deleted} stale api_usage_log rows from previous billing period")
+    except Exception as e:
+        logger.warning(f"[QUOTA] Could not delete stale usage logs: {e}")
+
+    # Step 2: Sum credits used this billing month
+    monthly_used = 0
+    try:
+        with SessionFactory() as session:
+            monthly_used = (
+                session.execute(
+                    text(
+                        "SELECT COALESCE(SUM(credits_used), 0) FROM api_usage_log "
+                        "WHERE timestamp >= :start"
+                    ),
+                    {"start": month_start},
+                ).scalar()
+                or 0
+            )
+    except Exception as e:
+        logger.warning(f"[QUOTA] Could not query monthly usage: {e}")
+
+    # Step 3: Compute remaining and usage %
+    real_remaining = max(0, credit_limit - int(monthly_used))
+    usage_pct = round((int(monthly_used) / credit_limit) * 100, 2) if credit_limit > 0 else 0.0
 
     logger.info(
-        f"[QUOTA] Synced from FCSAPI: remaining={real_remaining:,} / {real_limit:,} "
-        f"({usage_pct:.1f}% used)"
+        f"[QUOTA] Sync result: monthly_used={int(monthly_used):,}, "
+        f"remaining={real_remaining:,} / {credit_limit:,} ({usage_pct:.2f}% used)"
     )
 
-    # --- Log credit usage for this sync call (1 credit) ---
-    try:
-        from trading_engine.database import log_api_usage
-        log_api_usage(endpoint="/forex/list (quota-sync)", credits_used=1)
-    except Exception:
-        pass
+    # Step 4: Persist to app_settings
+    set_setting(QUOTA_REMAINING_KEY, str(real_remaining))
+    set_setting(QUOTA_CREDIT_LIMIT_KEY, str(credit_limit))
+    set_setting(QUOTA_LAST_UPDATED_KEY, now_str)
 
-    # --- Auto-clear kill switch if credits are above critical threshold ---
+    # Step 5: Clear kill switch if usage is below critical threshold
     kill_switch_cleared = False
-    if real_remaining > critical_threshold_remaining:
-        _clear_kill_switch_in_db()
+    if usage_pct < float(CRITICAL_THRESHOLD_PCT):
+        set_setting("credit_kill_switch", "false")
         set_setting(QUOTA_WATCHDOG_DISABLED_KEY, "false")
+        set_setting("credit_kill_switch_month", "")
         kill_switch_cleared = True
         logger.info(
-            f"[QUOTA] Kill switch cleared and watchdog re-enabled — "
-            f"real_remaining={real_remaining:,} is above critical threshold ({critical_threshold_remaining:,.0f})"
+            f"[QUOTA] Kill switch cleared and watchdog re-enabled "
+            f"(usage {usage_pct:.2f}% < critical threshold {CRITICAL_THRESHOLD_PCT}%)"
         )
     else:
         logger.warning(
-            f"[QUOTA] Kill switch NOT cleared — remaining={real_remaining:,} is still "
-            f"below critical threshold ({critical_threshold_remaining:,.0f})"
+            f"[QUOTA] Kill switch NOT cleared — usage {usage_pct:.2f}% "
+            f">= critical threshold {CRITICAL_THRESHOLD_PCT}%"
         )
-
-    # --- Delete stale api_usage_log rows from previous billing months ---
-    stale_deleted = _delete_stale_usage_logs()
 
     return {
         "success": True,
         "real_remaining": real_remaining,
-        "real_limit": real_limit,
+        "real_limit": credit_limit,
+        "monthly_used": int(monthly_used),
         "usage_pct": usage_pct,
         "kill_switch_cleared": kill_switch_cleared,
         "stale_logs_deleted": stale_deleted,
-        "synced_at": now_str,
+        "synced_at": synced_at,
     }
 
 
@@ -218,10 +205,11 @@ def update_quota(response_data: dict) -> dict | None:
     else:
         credit_limit = 500_000
 
-    # --- Billing-month detection: auto-sync if the billing cycle has reset ---
+    # Billing-month detection: auto-sync if the billing cycle has reset
     if _is_new_billing_month() and not _sync_in_progress:
         logger.info(
-            "[QUOTA] New billing month detected — auto-syncing quota from FCSAPI to clear kill switch"
+            "[QUOTA] New billing month detected — auto-syncing quota from usage logs "
+            "to clear kill switch"
         )
         try:
             sync_quota_from_api()
@@ -229,19 +217,19 @@ def update_quota(response_data: dict) -> dict | None:
             logger.warning(f"[QUOTA] Auto-sync on new billing month failed: {e}")
 
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    set_setting(QUOTA_REMAINING_KEY, str(remaining))
-    set_setting(QUOTA_LAST_UPDATED_KEY, now_str)
-
+    # NOTE: remaining here is the credits consumed by *this single request* (info.credit_count),
+    # not the account balance.  We do NOT persist it to fcsapi_remaining_credits; the authoritative
+    # balance is managed by sync_quota_from_api() via api_usage_log.
     if not existing_limit:
         set_setting(QUOTA_CREDIT_LIMIT_KEY, str(credit_limit))
 
     result = {
         "credit_limit": credit_limit,
-        "remaining_credits": remaining,
+        "credits_this_request": remaining,
         "updated_at": now_str,
     }
 
-    logger.debug(f"[QUOTA] Updated: remaining={remaining}, limit={credit_limit}")
+    logger.debug(f"[QUOTA] Request consumed {remaining} credit(s); limit={credit_limit}")
     return result
 
 
@@ -290,13 +278,15 @@ def check_budget_health() -> dict:
 
     if usage_pct >= CRITICAL_THRESHOLD_PCT:
         status = "critical"
-        message = f"CRITICAL: {usage_pct:.1f}% of API credits used ({used:,}/{credit_limit:,}). Only {remaining:,} credits remaining."
+        message = (
+            f"CRITICAL: {usage_pct:.1f}% of API credits used "
+            f"({used:,}/{credit_limit:,}). Only {remaining:,} credits remaining."
+        )
 
         should_alert = (
             _last_critical_time is None
             or (now - _last_critical_time) >= timedelta(minutes=_ALERT_SUPPRESSION_MINUTES)
         )
-
         if should_alert:
             _last_critical_time = now
             logger.critical(f"[QUOTA] {message}")
@@ -306,13 +296,15 @@ def check_budget_health() -> dict:
 
     elif usage_pct >= WARNING_THRESHOLD_PCT:
         status = "warning"
-        message = f"WARNING: {usage_pct:.1f}% of API credits used ({used:,}/{credit_limit:,}). {remaining:,} credits remaining."
+        message = (
+            f"WARNING: {usage_pct:.1f}% of API credits used "
+            f"({used:,}/{credit_limit:,}). {remaining:,} credits remaining."
+        )
 
         should_alert = (
             _last_warning_time is None
             or (now - _last_warning_time) >= timedelta(minutes=_ALERT_SUPPRESSION_MINUTES)
         )
-
         if should_alert:
             _last_warning_time = now
             logger.warning(f"[QUOTA] {message}")
@@ -333,34 +325,29 @@ def check_budget_health() -> dict:
 
 def _disable_watchdog():
     from trading_engine.database import set_setting
-
     set_setting(QUOTA_WATCHDOG_DISABLED_KEY, "true")
     logger.warning("[QUOTA] Watchdog DISABLED to preserve remaining API credits for signal generation")
 
 
 def _enable_watchdog():
     from trading_engine.database import set_setting
-
     set_setting(QUOTA_WATCHDOG_DISABLED_KEY, "false")
     logger.info("[QUOTA] Watchdog re-enabled — quota usage back below critical threshold")
 
 
 def is_watchdog_disabled_by_quota() -> bool:
     from trading_engine.database import get_setting
-
     return get_setting(QUOTA_WATCHDOG_DISABLED_KEY) == "true"
 
 
 def set_credit_limit(limit: int):
     from trading_engine.database import set_setting
-
     set_setting(QUOTA_CREDIT_LIMIT_KEY, str(limit))
     logger.info(f"[QUOTA] Credit limit updated to {limit:,}")
 
 
 def get_quota_status() -> dict:
     from trading_engine.database import get_setting
-
     return {
         "credit_limit": get_setting(QUOTA_CREDIT_LIMIT_KEY),
         "remaining_credits": get_setting(QUOTA_REMAINING_KEY),

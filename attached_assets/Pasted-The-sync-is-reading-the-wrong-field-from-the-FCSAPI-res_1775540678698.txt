@@ -1,0 +1,136 @@
+The sync is reading the wrong field from the FCSAPI response. The credit_count field in the FCSAPI info block returns credits used in this request (always a small number like 1-2), not the remaining balance. So sync_quota_from_api() is storing 2 as the remaining credits instead of the real balance.
+The Credit Meter showing 499,050 remaining is actually correct — it's calculated from the api_usage_log table which tracks real usage.
+
+Here's the Replit prompt to fix it:
+
+Replit Agent Prompt:
+Fix the sync_quota_from_api() function in trading_engine/utils/quota_manager.py and the "Sync Credits" button result display in trading_engine/admin.py. The current implementation is reading credit_count from the FCSAPI response info block which is the credits consumed by that single request (always 1-2), not the remaining account balance.
+
+Fix 1 — Correct sync_quota_from_api() in quota_manager.py
+Replace the current logic with this approach:
+
+Do NOT try to read remaining credits from the FCSAPI response info.credit_count field — that field only contains how many credits the current request consumed (always 1-2), not the account balance.
+Instead, calculate the correct remaining credits from the local api_usage_log table which already accurately tracks real usage:
+
+pythondef sync_quota_from_api() -> dict:
+    from trading_engine.database import get_setting, set_setting, SessionFactory
+    from sqlalchemy import text
+    from datetime import datetime, timezone
+    
+    # Get credit limit
+    limit_str = get_setting("fcsapi_credit_limit")
+    credit_limit = int(limit_str) if limit_str else 500_000
+    
+    # Calculate real usage from api_usage_log for current billing month
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    
+    with SessionFactory() as session:
+        monthly_used = session.execute(
+            text("SELECT COALESCE(SUM(credits_used), 0) FROM api_usage_log WHERE timestamp >= :start"),
+            {"start": month_start}
+        ).scalar() or 0
+    
+    real_remaining = max(0, credit_limit - monthly_used)
+    usage_pct = round((monthly_used / credit_limit) * 100, 2) if credit_limit > 0 else 0
+    
+    # Update app_settings to match
+    set_setting("fcsapi_remaining_credits", str(real_remaining))
+    set_setting("fcsapi_credit_limit", str(credit_limit))
+    
+    # Clear kill switch if usage is below critical threshold (95%)
+    kill_switch_cleared = False
+    if usage_pct < 95.0:
+        set_setting("credit_kill_switch", "false")
+        set_setting("quota_watchdog_disabled", "false")
+        set_setting("credit_kill_switch_month", "")
+        kill_switch_cleared = True
+    
+    synced_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    set_setting("fcsapi_quota_last_updated", now.strftime("%Y-%m-%d %H:%M:%S UTC"))
+    
+    return {
+        "success": True,
+        "real_remaining": real_remaining,
+        "real_limit": credit_limit,
+        "monthly_used": monthly_used,
+        "usage_pct": usage_pct,
+        "kill_switch_cleared": kill_switch_cleared,
+        "synced_at": synced_at,
+    }
+
+Also delete stale api_usage_log rows from previous billing months so they don't inflate the usage count across month boundaries:
+
+python# Delete previous month logs before calculating
+with SessionFactory() as session:
+    deleted = session.execute(
+        text("DELETE FROM api_usage_log WHERE timestamp < :start"),
+        {"start": month_start}
+    ).rowcount
+    session.commit()
+Store the deleted count in the return dict as stale_logs_deleted.
+
+Fix 2 — Update the syncCredits() JavaScript in admin.py
+Update the success display in syncCredits() inside ADMIN_JS to correctly show the synced values and make it clear which source is authoritative:
+javascriptif (data.success) {
+    var pct = data.usage_pct;
+    var barColor = pct >= 90 ? '#ef4444' : pct >= 75 ? '#f97316' : pct >= 60 ? '#eab308' : '#22c55e';
+    
+    resultEl.innerHTML = 
+        '<div class="result-success">' +
+        '<strong>✓ Credits Synced Successfully</strong>' +
+        '<div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div><span class="stat-label">Remaining Credits</span><br>' +
+        '<strong style="font-size:1.2rem;">' + Number(data.real_remaining).toLocaleString() + '</strong></div>' +
+        '<div><span class="stat-label">Used This Month</span><br>' +
+        '<strong style="font-size:1.2rem;">' + Number(data.monthly_used).toLocaleString() + '</strong></div>' +
+        '<div><span class="stat-label">Usage</span><br>' +
+        '<strong style="font-size:1.2rem;color:' + barColor + ';">' + pct + '%</strong></div>' +
+        '<div><span class="stat-label">Kill Switch</span><br>' +
+        '<strong>' + (data.kill_switch_cleared ? '<span style="color:#22c55e;">Cleared ✓</span>' : '<span style="color:#ef4444;">Still Active</span>') + '</strong></div>' +
+        '</div>' +
+        (data.stale_logs_deleted > 0 ? '<div style="margin-top:8px;font-size:12px;color:#94a3b8;">Cleared ' + data.stale_logs_deleted + ' stale log entries from previous billing period</div>' : '') +
+        '</div>';
+    
+    // Reload the credit meter widget to reflect new values
+    setTimeout(function() { loadCreditMeter(); }, 500);
+    
+    statusEl.textContent = '';
+} else {
+    resultEl.innerHTML = '<div class="result-error">Sync failed: ' + (data.error || 'Unknown error') + '</div>';
+    statusEl.textContent = '';
+}
+
+Fix 3 — Update the admin API endpoint api_sync_quota() in admin.py
+Make sure the endpoint also resets the credit_control.py kill switch in memory (not just the DB flag), by calling reset_kill_switch() when usage is below threshold:
+python@router.post("/api/quota/sync")
+def api_sync_quota(request: Request):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    
+    from trading_engine.utils.quota_manager import sync_quota_from_api
+    from trading_engine.credit_control import reset_kill_switch, is_api_blocked
+    
+    result = sync_quota_from_api()
+    
+    # Also reset the in-memory kill switch if usage is below critical
+    if result.get("kill_switch_cleared"):
+        reset_kill_switch()
+    
+    # Invalidate caches
+    try:
+        from trading_engine.api_v1 import invalidate_signal_caches
+        invalidate_signal_caches()
+    except Exception:
+        pass
+    
+    result["api_blocked_after_sync"] = is_api_blocked()
+    return JSONResponse(content=result)
+
+References — follow patterns from:
+
+trading_engine/utils/quota_manager.py — existing check_budget_health() which correctly calculates usage from api_usage_log — use the exact same query pattern
+trading_engine/database.py — get_api_usage_stats() which has the correct monthly usage query
+trading_engine/credit_control.py — reset_kill_switch() for the in-memory reset
+trading_engine/admin.py — existing loadCreditMeter() JavaScript and _build_credit_html() for the display pattern

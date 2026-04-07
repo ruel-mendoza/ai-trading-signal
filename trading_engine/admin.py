@@ -4341,15 +4341,32 @@ async function syncCredits() {
         const res = await fetch(BASE + '/admin/api/quota/sync', { method: 'POST' });
         const data = await res.json();
         if (data.success) {
-            const r = data.result || {};
-            const usagePct = (r.usage_pct || 0).toFixed(1);
-            const remaining = Number(r.real_remaining || 0).toLocaleString();
-            const limit = Number(r.real_limit || 0).toLocaleString();
-            const cleared = r.kill_switch_cleared ? '<span style="color:#22c55e;"> Kill switch cleared.</span>' : '';
-            const stale = r.stale_logs_deleted > 0 ? `<span style="color:#94a3b8;"> Removed ${r.stale_logs_deleted} stale log rows.</span>` : '';
-            resultEl.innerHTML = `<div class="result-success">Synced successfully. Remaining: <strong>${remaining}</strong> / ${limit} (${usagePct}% used).${cleared}${stale}</div>`;
+            var pct = data.usage_pct || 0;
+            var barColor = pct >= 90 ? '#ef4444' : pct >= 75 ? '#f97316' : pct >= 60 ? '#eab308' : '#22c55e';
+            resultEl.innerHTML =
+                '<div class="result-success">' +
+                '<strong>&#10003; Credits Synced Successfully</strong>' +
+                '<div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+                '<div><span class="stat-label">Remaining Credits</span><br>' +
+                '<strong style="font-size:1.2rem;">' + Number(data.real_remaining || 0).toLocaleString() + '</strong></div>' +
+                '<div><span class="stat-label">Used This Month</span><br>' +
+                '<strong style="font-size:1.2rem;">' + Number(data.monthly_used || 0).toLocaleString() + '</strong></div>' +
+                '<div><span class="stat-label">Usage</span><br>' +
+                '<strong style="font-size:1.2rem;color:' + barColor + ';">' + pct.toFixed(2) + '%</strong></div>' +
+                '<div><span class="stat-label">Kill Switch</span><br>' +
+                '<strong>' + (data.kill_switch_cleared
+                    ? '<span style="color:#22c55e;">Cleared &#10003;</span>'
+                    : '<span style="color:#ef4444;">Still Active</span>') + '</strong></div>' +
+                '</div>' +
+                (data.stale_logs_deleted > 0
+                    ? '<div style="margin-top:8px;font-size:12px;color:#94a3b8;">Cleared ' + data.stale_logs_deleted + ' stale log entries from previous billing period</div>'
+                    : '') +
+                (data.api_blocked_after_sync === false
+                    ? '<div style="margin-top:6px;font-size:12px;color:#22c55e;">API requests are now unblocked.</div>'
+                    : '') +
+                '</div>';
             if (statusEl) statusEl.textContent = '';
-            loadCreditMeter();
+            setTimeout(function() { loadCreditMeter(); }, 500);
         } else {
             resultEl.innerHTML = '<div class="result-error">Sync failed: ' + (data.error || 'Unknown error') + '</div>';
             if (statusEl) statusEl.textContent = '';
@@ -8284,14 +8301,29 @@ def api_quota_sync(request: Request):
     if guard:
         return guard
     from trading_engine.utils.quota_manager import sync_quota_from_api
+    from trading_engine.credit_control import reset_kill_switch, is_api_blocked
 
     result = sync_quota_from_api()
-    if result.get("success"):
-        return JSONResponse(content={"success": True, "result": result})
-    return JSONResponse(
-        status_code=502,
-        content={"success": False, "error": result.get("error", "sync failed")},
-    )
+
+    if not result.get("success"):
+        return JSONResponse(
+            status_code=502,
+            content={"success": False, "error": result.get("error", "sync failed")},
+        )
+
+    # Also reset the in-memory kill switch flag when usage is below critical threshold
+    if result.get("kill_switch_cleared"):
+        reset_kill_switch()
+
+    # Invalidate public signal caches so they reflect the refreshed state
+    try:
+        from trading_engine.api_v1 import invalidate_signal_caches
+        invalidate_signal_caches()
+    except Exception:
+        pass
+
+    result["api_blocked_after_sync"] = is_api_blocked()
+    return JSONResponse(content=result)
 
 
 @router.get("/api/market-pulse")
