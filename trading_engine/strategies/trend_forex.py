@@ -368,6 +368,17 @@ class ForexTrendFollowingStrategy(BaseStrategy):
                 "suggested_quantity": suggested_qty,
                 "risk_pct": RISK_PCT_PER_TRADE if suggested_qty else None,
             }
+            # Validate entry price against live FCSAPI before inserting signal
+            price_check = self.cache._validate_entry_price(asset, current_close, timeframe=TIMEFRAME)
+            if not price_check["valid"]:
+                logger.warning(
+                    f"[TREND-FOREX] {asset} | LONG entry price validation FAILED | "
+                    f"cached={price_check['cached_price']:.5f} | "
+                    f"live={price_check['live_price']:.5f} | "
+                    f"diff={price_check['diff_pct']:.2f}% | "
+                    f"Cache refreshed — re-evaluating on next tick"
+                )
+                return SignalResult()
             # Close opposite direction signal if this strategy has one open
             # (e.g. was SHORT, now going LONG — close the SHORT first)
             close_opposite_signal_if_exists(STRATEGY_NAME, asset, "BUY")
@@ -464,6 +475,17 @@ class ForexTrendFollowingStrategy(BaseStrategy):
                 "suggested_quantity": suggested_qty,
                 "risk_pct": RISK_PCT_PER_TRADE if suggested_qty else None,
             }
+            # Validate entry price against live FCSAPI before inserting signal
+            price_check = self.cache._validate_entry_price(asset, current_close, timeframe=TIMEFRAME)
+            if not price_check["valid"]:
+                logger.warning(
+                    f"[TREND-FOREX] {asset} | SHORT entry price validation FAILED | "
+                    f"cached={price_check['cached_price']:.5f} | "
+                    f"live={price_check['live_price']:.5f} | "
+                    f"diff={price_check['diff_pct']:.2f}% | "
+                    f"Cache refreshed — re-evaluating on next tick"
+                )
+                return SignalResult()
             # Close opposite direction signal if this strategy has one open
             # (e.g. was LONG, now going SHORT — close the LONG first)
             close_opposite_signal_if_exists(STRATEGY_NAME, asset, "SELL")

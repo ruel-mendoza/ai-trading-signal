@@ -5666,6 +5666,38 @@ async function runBackfill(strategyName, btnEl) {
     loadBackfillStatus();
 }
 
+async function runSyncCandles(strategyName, btnEl) {
+    btnEl.disabled = true;
+    var spinnerId = 'sync-spinner-' + strategyName;
+    var spinner = document.getElementById(spinnerId);
+    if (spinner) spinner.style.display = 'inline-block';
+    try {
+        var res = await fetch(BASE + '/admin/api/sync/candles', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ strategy: strategyName })
+        });
+        var data = await res.json();
+        if (res.ok && data.success) {
+            showVerifyToast(
+                '\u2713 ' + strategyName + ' candle sync complete \u2014 ' +
+                data.refreshed + ' refreshed, ' + data.already_fresh + ' fresh' +
+                (data.failed > 0 ? ', ' + data.failed + ' failed' : ''),
+                'success', 4000
+            );
+        } else {
+            showVerifyToast(
+                '\u2717 Candle sync failed: ' + (data.error || data.message || 'Unknown error'),
+                'error', 6000
+            );
+        }
+    } catch(e) {
+        showVerifyToast('\u2717 Network error during candle sync: ' + e.message, 'error', 5000);
+    }
+    if (spinner) spinner.style.display = 'none';
+    btnEl.disabled = false;
+}
+
 // ── Signal Close / Delete / Bulk Delete ──────────────────────────────────────
 
 function toggleAllSignalCheckboxes(masterCb) {
@@ -6902,6 +6934,8 @@ def admin_dashboard(
                             <div id="backfill-badge-mtf_ema"></div>
                             <button class="btn-backfill" onclick="runBackfill('mtf_ema', this)" data-testid="button-backfill-mtf_ema">Backfill</button>
                             <span class="backfill-spinner" id="backfill-spinner-mtf_ema"></span>
+                            <button class="btn-backfill" style="background:rgba(14,165,233,0.15);border-color:rgba(14,165,233,0.3);color:#38bdf8;" onclick="runSyncCandles('mtf_ema', this)" data-testid="button-sync-candles-mtf_ema">Sync Candles</button>
+                            <span class="backfill-spinner" id="sync-spinner-mtf_ema"></span>
                         </div>
                         <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:8px;" data-testid="row-backfill-trend_forex">
                             <div style="flex:1;font-size:13px;font-weight:500;color:#f1f5f9;">Trend Forex</div>
@@ -6909,6 +6943,8 @@ def admin_dashboard(
                             <div id="backfill-badge-trend_forex"></div>
                             <button class="btn-backfill" onclick="runBackfill('trend_forex', this)" data-testid="button-backfill-trend_forex">Backfill</button>
                             <span class="backfill-spinner" id="backfill-spinner-trend_forex"></span>
+                            <button class="btn-backfill" style="background:rgba(14,165,233,0.15);border-color:rgba(14,165,233,0.3);color:#38bdf8;" onclick="runSyncCandles('trend_forex', this)" data-testid="button-sync-candles-trend_forex">Sync Candles</button>
+                            <span class="backfill-spinner" id="sync-spinner-trend_forex"></span>
                         </div>
                         <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:8px;" data-testid="row-backfill-trend_non_forex">
                             <div style="flex:1;font-size:13px;font-weight:500;color:#f1f5f9;">Trend Non-Forex</div>
@@ -6916,6 +6952,8 @@ def admin_dashboard(
                             <div id="backfill-badge-trend_non_forex"></div>
                             <button class="btn-backfill" onclick="runBackfill('trend_non_forex', this)" data-testid="button-backfill-trend_non_forex">Backfill</button>
                             <span class="backfill-spinner" id="backfill-spinner-trend_non_forex"></span>
+                            <button class="btn-backfill" style="background:rgba(14,165,233,0.15);border-color:rgba(14,165,233,0.3);color:#38bdf8;" onclick="runSyncCandles('trend_non_forex', this)" data-testid="button-sync-candles-trend_non_forex">Sync Candles</button>
+                            <span class="backfill-spinner" id="sync-spinner-trend_non_forex"></span>
                         </div>
                         <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:8px;" data-testid="row-backfill-sp500_momentum">
                             <div style="flex:1;font-size:13px;font-weight:500;color:#f1f5f9;">SP500 Momentum</div>
@@ -6923,6 +6961,8 @@ def admin_dashboard(
                             <div id="backfill-badge-sp500_momentum"></div>
                             <button class="btn-backfill" onclick="runBackfill('sp500_momentum', this)" data-testid="button-backfill-sp500_momentum">Backfill</button>
                             <span class="backfill-spinner" id="backfill-spinner-sp500_momentum"></span>
+                            <button class="btn-backfill" style="background:rgba(14,165,233,0.15);border-color:rgba(14,165,233,0.3);color:#38bdf8;" onclick="runSyncCandles('sp500_momentum', this)" data-testid="button-sync-candles-sp500_momentum">Sync Candles</button>
+                            <span class="backfill-spinner" id="sync-spinner-sp500_momentum"></span>
                         </div>
                         <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:8px;" data-testid="row-backfill-highest_lowest_fx">
                             <div style="flex:1;font-size:13px;font-weight:500;color:#f1f5f9;">Highest/Lowest FX</div>
@@ -6930,6 +6970,8 @@ def admin_dashboard(
                             <div id="backfill-badge-highest_lowest_fx"></div>
                             <button class="btn-backfill" onclick="runBackfill('highest_lowest_fx', this)" data-testid="button-backfill-highest_lowest_fx">Backfill</button>
                             <span class="backfill-spinner" id="backfill-spinner-highest_lowest_fx"></span>
+                            <button class="btn-backfill" style="background:rgba(14,165,233,0.15);border-color:rgba(14,165,233,0.3);color:#38bdf8;" onclick="runSyncCandles('highest_lowest_fx', this)" data-testid="button-sync-candles-highest_lowest_fx">Sync Candles</button>
+                            <span class="backfill-spinner" id="sync-spinner-highest_lowest_fx"></span>
                         </div>
                         <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:8px;" data-testid="row-backfill-stocks_algo1">
                             <div style="flex:1;font-size:13px;font-weight:500;color:#f1f5f9;">Stocks Algo 1 &mdash; Monthly Momentum</div>
@@ -6937,6 +6979,8 @@ def admin_dashboard(
                             <div id="backfill-badge-stocks_algo1"></div>
                             <button class="btn-backfill" onclick="runBackfill('stocks_algo1', this)" data-testid="button-backfill-stocks_algo1">Backfill</button>
                             <span class="backfill-spinner" id="backfill-spinner-stocks_algo1"></span>
+                            <button class="btn-backfill" style="background:rgba(14,165,233,0.15);border-color:rgba(14,165,233,0.3);color:#38bdf8;" onclick="runSyncCandles('stocks_algo1', this)" data-testid="button-sync-candles-stocks_algo1">Sync Candles</button>
+                            <span class="backfill-spinner" id="sync-spinner-stocks_algo1"></span>
                         </div>
                         <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.1);border-radius:8px;" data-testid="row-backfill-stocks_algo2">
                             <div style="flex:1;font-size:13px;font-weight:500;color:#f1f5f9;">Stocks Algo 2 &mdash; Mean Reversion</div>
@@ -6944,6 +6988,8 @@ def admin_dashboard(
                             <div id="backfill-badge-stocks_algo2"></div>
                             <button class="btn-backfill" onclick="runBackfill('stocks_algo2', this)" data-testid="button-backfill-stocks_algo2">Backfill</button>
                             <span class="backfill-spinner" id="backfill-spinner-stocks_algo2"></span>
+                            <button class="btn-backfill" style="background:rgba(14,165,233,0.15);border-color:rgba(14,165,233,0.3);color:#38bdf8;" onclick="runSyncCandles('stocks_algo2', this)" data-testid="button-sync-candles-stocks_algo2">Sync Candles</button>
+                            <span class="backfill-spinner" id="sync-spinner-stocks_algo2"></span>
                         </div>
                     </div>
                 </div>
@@ -9652,3 +9698,85 @@ def api_backfill_status(request: Request):
             strategies[name] = None
 
     return JSONResponse(content={"strategies": strategies})
+
+
+# ── Candle Sync endpoint ──────────────────────────────────────────────────────
+
+_SYNC_STRATEGY_TIMEFRAMES = {
+    "mtf_ema": ["D1", "4H", "1H"],
+    "trend_forex": ["D1"],
+    "trend_non_forex": ["D1"],
+    "sp500_momentum": ["30m", "D1"],
+    "highest_lowest_fx": ["1H", "D1"],
+    "stocks_algo1": ["D1"],
+    "stocks_algo2": ["D1"],
+    "all": [],
+}
+
+
+@router.post("/api/sync/candles")
+def api_sync_candles(request: Request, body: dict = Body(...)):
+    """
+    Manually trigger a candle freshness sync for a specific strategy or all strategies.
+    Body: { "strategy": "mtf_ema" }  or  { "strategy": "all" }
+    """
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+
+    from trading_engine import engine_registry
+    from trading_engine.database import get_strategy_assets
+
+    engine = engine_registry.get_engine()
+    if engine is None:
+        return JSONResponse(
+            content={"error": "Engine not ready — start the application first"},
+            status_code=503,
+        )
+
+    strategy = (body.get("strategy") or "").strip()
+    if not strategy or strategy not in _SYNC_STRATEGY_TIMEFRAMES:
+        return JSONResponse(
+            content={"error": f"Unknown strategy: {strategy}. Valid: {list(_SYNC_STRATEGY_TIMEFRAMES.keys())}"},
+            status_code=400,
+        )
+
+    cache_layer = engine.cache
+    pairs: list[tuple[str, str]] = []
+
+    if strategy == "all":
+        for strat_name, timeframes in _SYNC_STRATEGY_TIMEFRAMES.items():
+            if strat_name == "all":
+                continue
+            symbols = get_strategy_assets(strat_name, active_only=True)
+            for sym in symbols:
+                for tf in timeframes:
+                    pair = (sym, tf)
+                    if pair not in pairs:
+                        pairs.append(pair)
+    else:
+        timeframes = _SYNC_STRATEGY_TIMEFRAMES[strategy]
+        symbols = get_strategy_assets(strategy, active_only=True)
+        if not symbols:
+            # SPX is not in strategy_assets table — add it directly
+            if strategy == "sp500_momentum":
+                symbols = ["SPX"]
+        for sym in symbols:
+            for tf in timeframes:
+                pairs.append((sym, tf))
+
+    if not pairs:
+        return JSONResponse(content={"error": "No assets found for strategy"}, status_code=400)
+
+    result = cache_layer.ensure_fresh_candles_batch(pairs)
+
+    return JSONResponse(
+        content={
+            "success": True,
+            "strategy": strategy,
+            "total": result["total"],
+            "refreshed": result["refreshed"],
+            "already_fresh": result["already_fresh"],
+            "failed": result["failed"],
+        }
+    )

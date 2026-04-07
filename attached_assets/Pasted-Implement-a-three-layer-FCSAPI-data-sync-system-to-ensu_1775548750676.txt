@@ -1,0 +1,322 @@
+Implement a three-layer FCSAPI data sync system to ensure candle data is always fresh and entry prices are validated before signals are generated. This fixes the root cause of inaccurate signals caused by stale candles, missed scheduler runs, and unvalidated entry prices.
+
+Layer 1 — Pre-evaluation candle freshness check
+Add a new function _ensure_fresh_candles() to trading_engine/cache_layer.py:
+pythondef _ensure_fresh_candles(
+    self,
+    asset: str,
+    timeframe: str,
+    max_staleness_minutes: Optional[int] = None,
+) -> dict:
+    """
+    Verify the latest cached candle is within the acceptable staleness
+    window for the given timeframe. Force-refreshes if stale.
+
+    Staleness thresholds (if max_staleness_minutes not specified):
+      D1  → 1440 minutes (24 hours)
+      4H  → 300  minutes (5 hours)
+      1H  → 120  minutes (2 hours)
+      30m → 60   minutes (1 hour)
+
+    Returns:
+      {
+          "asset": "EUR/USD",
+          "timeframe": "D1",
+          "was_stale": True,
+          "refreshed": True,
+          "candle_count": 300,
+          "latest_candle_ts": "2026-04-07T16:00:00",
+          "staleness_minutes": 480,
+      }
+    """
+The function should:
+
+Read last_candle_close from cache_metadata table
+Calculate staleness in minutes from now UTC
+Compare against timeframe-specific threshold:
+
+D1 → 1440 minutes
+4H → 300 minutes
+1H → 120 minutes
+30m → 60 minutes
+
+
+If stale or missing, call self.force_refresh(asset, timeframe) automatically
+Log clearly whether a refresh was needed:
+
+   [CACHE-FRESH] EUR/USD/D1 | stale=True | staleness=480min | threshold=1440min | refreshing...
+   [CACHE-FRESH] EUR/USD/D1 | fresh | staleness=30min | threshold=1440min | no refresh needed
+
+Return the result dict shown above
+
+Also add a batch version ensure_fresh_candles_batch() that accepts a list of (asset, timeframe) tuples and runs them sequentially, returning a summary:
+pythondef ensure_fresh_candles_batch(
+    self,
+    assets_timeframes: list[tuple[str, str]],
+    max_staleness_minutes: Optional[int] = None,
+) -> dict:
+    """
+    Returns:
+      {
+          "total": 15,
+          "refreshed": 3,
+          "already_fresh": 12,
+          "failed": 0,
+          "details": [...per-asset results...]
+      }
+    """
+
+Layer 2 — Pre-signal entry price validation
+Add a new function _validate_entry_price() to trading_engine/cache_layer.py:
+pythondef _validate_entry_price(
+    self,
+    asset: str,
+    cached_price: float,
+    timeframe: str = "D1",
+    tolerance_pct: float = 0.5,
+) -> dict:
+    """
+    Cross-check the cached candle close price against a fresh FCSAPI
+    advance endpoint call before allowing a signal to be inserted.
+
+    If the live price differs from the cached price by more than
+    tolerance_pct, the entry is flagged as invalid and a candle
+    refresh is triggered automatically.
+
+    tolerance_pct defaults:
+      forex pairs  → 0.5%
+      crypto       → 2.0%  (higher volatility)
+      ETFs/stocks  → 1.0%
+
+    Returns:
+      {
+          "valid": True,
+          "cached_price": 139.16,
+          "live_price": 138.94,
+          "diff_pct": 0.16,
+          "tolerance_pct": 0.5,
+          "refreshed": False,
+          "reason": "within_tolerance"
+      }
+    """
+The function should:
+
+Call self.api_client.get_advance_data([asset], period="1d", merge="latest") to get the live price
+Calculate diff_pct = abs(live_price - cached_price) / cached_price * 100
+Use asset-class-aware tolerance:
+
+Crypto (/USD pairs): 2.0%
+ETFs (no / in symbol): 1.0%
+Forex pairs: 0.5%
+
+
+If diff_pct > tolerance_pct:
+
+Log a warning with both prices and the difference
+Call self.force_refresh(asset, timeframe) to update the cache
+Return valid=False with reason="price_discrepancy"
+
+
+If advance API is unavailable, return valid=True with reason="advance_unavailable_skipped" — do not block the signal on API failure
+Log result clearly:
+
+   [PRICE-VALID] USO/D1 | cached=139.16 live=138.94 diff=0.16% <= 1.0% | VALID
+   [PRICE-VALID] USO/D1 | cached=139.16 live=135.00 diff=3.0% > 1.0% | INVALID — refreshing cache
+
+Layer 2b — Integrate price validation into strategy entry paths
+In each strategy file, call _validate_entry_price() from the cache layer just before insert_signal() is called. Add this pattern to:
+
+trading_engine/strategies/trend_non_forex.py — in the LONG and SHORT entry blocks
+trading_engine/strategies/trend_forex.py — in the LONG and SHORT entry blocks
+trading_engine/strategies/multi_timeframe.py — in _persist_entry()
+trading_engine/strategies/stocks_algo1.py — in run_monthly() before inserting
+trading_engine/strategies/stocks_algo2.py — in run_daily() before inserting
+
+Pattern to add before insert_signal() in each strategy:
+python# Validate entry price against live FCSAPI before inserting signal
+price_check = self.cache._validate_entry_price(
+    asset, current_price, timeframe=TIMEFRAME
+)
+if not price_check["valid"]:
+    logger.warning(
+        f"[STRATEGY] {asset} | Entry price validation FAILED | "
+        f"cached={price_check['cached_price']:.5f} | "
+        f"live={price_check['live_price']:.5f} | "
+        f"diff={price_check['diff_pct']:.2f}% | "
+        f"Cache refreshed — re-evaluating on next tick"
+    )
+    return SignalResult()  # skip this tick, re-evaluate next run with fresh data
+
+Layer 3 — Scheduled pre-evaluation backfill jobs
+Add four new scheduler jobs to main.py inside the lifespan() function that pre-warm candle data before each strategy's evaluation window:
+python# ── Pre-evaluation candle sync jobs ─────────────────────────────────────────
+
+scheduler.add_job(
+    _pre_sync_trend_non_forex,
+    trigger=CronTrigger(hour=15, minute=30, timezone=ET_ZONE),
+    id="pre_sync_trend_non_forex",
+    name="Pre-sync Trend Non-Forex candles (3:30 PM ET, 30min before eval)",
+    replace_existing=True,
+    misfire_grace_time=MISFIRE_GRACE_SECONDS,
+)
+
+scheduler.add_job(
+    _pre_sync_trend_forex,
+    trigger=CronTrigger(hour=16, minute=30, timezone=ET_ZONE),
+    id="pre_sync_trend_forex",
+    name="Pre-sync Trend Forex candles (4:30 PM ET, 30min before eval)",
+    replace_existing=True,
+    misfire_grace_time=MISFIRE_GRACE_SECONDS,
+)
+
+scheduler.add_job(
+    _pre_sync_mtf_ema,
+    trigger=CronTrigger(minute=45, timezone=ET_ZONE),
+    id="pre_sync_mtf_ema",
+    name="Pre-sync MTF EMA candles (every hour :45, 15min before eval)",
+    replace_existing=True,
+    misfire_grace_time=MISFIRE_GRACE_SECONDS,
+)
+
+scheduler.add_job(
+    _pre_sync_sp500,
+    trigger=CronTrigger(minute=15, minute="15,45", timezone=ET_ZONE),
+    id="pre_sync_sp500",
+    name="Pre-sync SP500 30m candles (:15 and :45, before each 30m eval)",
+    replace_existing=True,
+    misfire_grace_time=MISFIRE_GRACE_SECONDS,
+)
+Add the four pre-sync functions to main.py:
+pythondef _pre_sync_trend_non_forex():
+    """Pre-warm D1 candles for all trend_non_forex assets 30min before eval."""
+    from trading_engine.strategies.trend_non_forex import get_active_symbols
+    et = _get_et_context()
+    symbols = get_active_symbols()
+    logger.info(
+        f"[PRE-SYNC] trend_non_forex | {len(symbols)} assets | "
+        f"{et['time_str']} {et['label']}"
+    )
+    pairs = [(sym, "D1") for sym in symbols]
+    result = cache.ensure_fresh_candles_batch(pairs)
+    logger.info(
+        f"[PRE-SYNC] trend_non_forex complete | "
+        f"refreshed={result['refreshed']} fresh={result['already_fresh']} "
+        f"failed={result['failed']}"
+    )
+
+
+def _pre_sync_trend_forex():
+    """Pre-warm D1 candles for all trend_forex assets 30min before eval."""
+    from trading_engine.strategies.trend_forex import get_active_symbols
+    et = _get_et_context()
+    symbols = get_active_symbols()
+    logger.info(
+        f"[PRE-SYNC] trend_forex | {len(symbols)} assets | "
+        f"{et['time_str']} {et['label']}"
+    )
+    pairs = [(sym, "D1") for sym in symbols]
+    result = cache.ensure_fresh_candles_batch(pairs)
+    logger.info(
+        f"[PRE-SYNC] trend_forex complete | "
+        f"refreshed={result['refreshed']} fresh={result['already_fresh']} "
+        f"failed={result['failed']}"
+    )
+
+
+def _pre_sync_mtf_ema():
+    """Pre-warm D1, 4H, 1H candles for all MTF EMA assets 15min before eval."""
+    from trading_engine.strategies.multi_timeframe import get_all_mtf_assets
+    et = _get_et_context()
+    symbols = get_all_mtf_assets()
+    logger.info(
+        f"[PRE-SYNC] mtf_ema | {len(symbols)} assets × 3 timeframes | "
+        f"{et['time_str']} {et['label']}"
+    )
+    pairs = []
+    for sym in symbols:
+        pairs.extend([(sym, "D1"), (sym, "4H"), (sym, "1H")])
+    result = cache.ensure_fresh_candles_batch(pairs)
+    logger.info(
+        f"[PRE-SYNC] mtf_ema complete | "
+        f"refreshed={result['refreshed']} fresh={result['already_fresh']} "
+        f"failed={result['failed']}"
+    )
+
+
+def _pre_sync_sp500():
+    """Pre-warm 30m and D1 candles for SPX before each SP500 momentum eval."""
+    et = _get_et_context()
+    et_minutes = et["now"].hour * 60 + et["now"].minute
+    # Only run during ARCA session hours
+    if not (9 * 60 + 15 <= et_minutes <= 15 * 60 + 45):
+        return
+    logger.info(f"[PRE-SYNC] sp500 | {et['time_str']} {et['label']}")
+    pairs = [("SPX", "30m"), ("SPX", "D1")]
+    result = cache.ensure_fresh_candles_batch(pairs)
+    logger.info(
+        f"[PRE-SYNC] sp500 complete | "
+        f"refreshed={result['refreshed']} fresh={result['already_fresh']} "
+        f"failed={result['failed']}"
+    )
+
+Layer 3b — Startup candle sync
+In main.py inside the lifespan() function, after init_db() and before recovery_check(), add a startup candle sync that refreshes all strategy assets:
+python# ── Startup candle sync — ensure all assets have fresh data ─────────────────
+async def _startup_candle_sync():
+    try:
+        from trading_engine.strategies.multi_timeframe import get_all_mtf_assets
+        from trading_engine.strategies.trend_non_forex import get_active_symbols as _tnf
+        from trading_engine.strategies.trend_forex import get_active_symbols as _tf
+
+        pairs = []
+        for sym in get_all_mtf_assets():
+            pairs.extend([(sym, "D1"), (sym, "4H"), (sym, "1H")])
+        for sym in _tnf():
+            pairs.append((sym, "D1"))
+        for sym in _tf():
+            pairs.append((sym, "D1"))
+        pairs.append(("SPX", "30m"))
+        pairs.append(("SPX", "D1"))
+
+        # Deduplicate
+        pairs = list(dict.fromkeys(pairs))
+
+        logger.info(f"[STARTUP-SYNC] Syncing {len(pairs)} asset/timeframe pairs...")
+        result = cache.ensure_fresh_candles_batch(pairs)
+        logger.info(
+            f"[STARTUP-SYNC] Complete | "
+            f"refreshed={result['refreshed']} | "
+            f"fresh={result['already_fresh']} | "
+            f"failed={result['failed']}"
+        )
+    except Exception as e:
+        logger.warning(f"[STARTUP-SYNC] Failed (non-fatal): {e}")
+
+import asyncio as _asyncio
+_asyncio.create_task(_startup_candle_sync())
+
+Add admin endpoint to manually trigger a full sync
+Add a new POST endpoint in trading_engine/admin.py:
+python@router.post("/api/sync/candles")
+def api_sync_candles(request: Request, body: dict = Body(...)):
+    """
+    Manually trigger a candle sync for a specific strategy or all strategies.
+    Body: { "strategy": "mtf_ema" }  or  { "strategy": "all" }
+    """
+And add a "Sync Now" button to the Data Backfill section in the System Status tab in admin.py next to each strategy's existing Backfill button, labeled "Sync Candles" that calls this endpoint and shows a toast with the result.
+
+Do NOT change:
+
+The existing force_refresh() method in cache_layer.py — the new functions call it internally
+The existing backfill.py CLI script — it remains available for manual use
+Any strategy exit logic — price validation only applies to entries
+The existing _should_fetch() logic — it remains as the passive cache check, the new functions are the active sync layer
+
+
+References — follow patterns from:
+
+trading_engine/cache_layer.py — existing force_refresh() and _should_fetch() for the candle fetch pattern
+trading_engine/utils/backup_manager.py — for the batch processing with per-item error handling pattern
+main.py — existing _pre_sync style from _sync_performance_context() for the scheduler function pattern
+admin.py — existing runBackfill() JavaScript and api_backfill_strategy() endpoint for the admin button pattern
+backfill.py — for the asset/timeframe iteration pattern

@@ -1087,6 +1087,81 @@ def _scheduled_nasdaq_sync():
         logger.error(f"[SCHEDULER] NASDAQ sync failed: {e}", exc_info=True)
 
 
+# ── Pre-evaluation candle sync functions ─────────────────────────────────────
+
+def _pre_sync_trend_non_forex():
+    """Pre-warm D1 candles for all trend_non_forex assets 30min before eval."""
+    from trading_engine.strategies.trend_non_forex import get_active_symbols
+    et = _get_et_context()
+    symbols = get_active_symbols()
+    logger.info(
+        f"[PRE-SYNC] trend_non_forex | {len(symbols)} assets | "
+        f"{et['time_str']} {et['label']}"
+    )
+    pairs = [(sym, "D1") for sym in symbols]
+    result = cache.ensure_fresh_candles_batch(pairs)
+    logger.info(
+        f"[PRE-SYNC] trend_non_forex complete | "
+        f"refreshed={result['refreshed']} fresh={result['already_fresh']} "
+        f"failed={result['failed']}"
+    )
+
+
+def _pre_sync_trend_forex():
+    """Pre-warm D1 candles for all trend_forex assets 30min before eval."""
+    from trading_engine.strategies.trend_forex import get_active_symbols
+    et = _get_et_context()
+    symbols = get_active_symbols()
+    logger.info(
+        f"[PRE-SYNC] trend_forex | {len(symbols)} assets | "
+        f"{et['time_str']} {et['label']}"
+    )
+    pairs = [(sym, "D1") for sym in symbols]
+    result = cache.ensure_fresh_candles_batch(pairs)
+    logger.info(
+        f"[PRE-SYNC] trend_forex complete | "
+        f"refreshed={result['refreshed']} fresh={result['already_fresh']} "
+        f"failed={result['failed']}"
+    )
+
+
+def _pre_sync_mtf_ema():
+    """Pre-warm D1, 4H, 1H candles for all MTF EMA assets 15min before eval."""
+    from trading_engine.strategies.multi_timeframe import get_all_mtf_assets
+    et = _get_et_context()
+    symbols = get_all_mtf_assets()
+    logger.info(
+        f"[PRE-SYNC] mtf_ema | {len(symbols)} assets × 3 timeframes | "
+        f"{et['time_str']} {et['label']}"
+    )
+    pairs: list[tuple[str, str]] = []
+    for sym in symbols:
+        pairs.extend([(sym, "D1"), (sym, "4H"), (sym, "1H")])
+    result = cache.ensure_fresh_candles_batch(pairs)
+    logger.info(
+        f"[PRE-SYNC] mtf_ema complete | "
+        f"refreshed={result['refreshed']} fresh={result['already_fresh']} "
+        f"failed={result['failed']}"
+    )
+
+
+def _pre_sync_sp500():
+    """Pre-warm 30m and D1 candles for SPX before each SP500 momentum eval."""
+    et = _get_et_context()
+    et_minutes = et["now"].hour * 60 + et["now"].minute
+    # Only run during ARCA session pre-eval windows
+    if not (9 * 60 + 15 <= et_minutes <= 15 * 60 + 45):
+        return
+    logger.info(f"[PRE-SYNC] sp500 | {et['time_str']} {et['label']}")
+    pairs: list[tuple[str, str]] = [("SPX", "30m"), ("SPX", "D1")]
+    result = cache.ensure_fresh_candles_batch(pairs)
+    logger.info(
+        f"[PRE-SYNC] sp500 complete | "
+        f"refreshed={result['refreshed']} fresh={result['already_fresh']} "
+        f"failed={result['failed']}"
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from trading_engine.database import get_setting
@@ -1244,6 +1319,40 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
     )
+
+    # ── Pre-evaluation candle sync jobs ──────────────────────────────────────
+    scheduler.add_job(
+        _pre_sync_trend_non_forex,
+        trigger=CronTrigger(hour=15, minute=30, timezone=ET_ZONE),
+        id="pre_sync_trend_non_forex",
+        name="Pre-sync Trend Non-Forex candles (3:30 PM ET, 30min before eval)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
+    scheduler.add_job(
+        _pre_sync_trend_forex,
+        trigger=CronTrigger(hour=16, minute=30, timezone=ET_ZONE),
+        id="pre_sync_trend_forex",
+        name="Pre-sync Trend Forex candles (4:30 PM ET, 30min before eval)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
+    scheduler.add_job(
+        _pre_sync_mtf_ema,
+        trigger=CronTrigger(minute=45, timezone=ET_ZONE),
+        id="pre_sync_mtf_ema",
+        name="Pre-sync MTF EMA candles (every hour :45, 15min before eval)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
+    scheduler.add_job(
+        _pre_sync_sp500,
+        trigger=CronTrigger(minute="15,45", timezone=ET_ZONE),
+        id="pre_sync_sp500",
+        name="Pre-sync SP500 30m candles (:15 and :45, before each 30m eval)",
+        replace_existing=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
     scheduler.start()
 
     import asyncio as _asyncio
@@ -1264,6 +1373,44 @@ async def lifespan(app: FastAPI):
         logger.info("[STARTUP] NASDAQ 100 symbol sync complete")
     except Exception as e:
         logger.warning(f"[STARTUP] NASDAQ symbol sync failed (non-fatal): {e}")
+
+    # ── Startup candle sync — ensure all assets have fresh data ─────────────
+    async def _startup_candle_sync():
+        try:
+            from trading_engine.strategies.multi_timeframe import get_all_mtf_assets
+            from trading_engine.strategies.trend_non_forex import get_active_symbols as _tnf
+            from trading_engine.strategies.trend_forex import get_active_symbols as _tf
+
+            pairs: list[tuple[str, str]] = []
+            for sym in get_all_mtf_assets():
+                pairs.extend([(sym, "D1"), (sym, "4H"), (sym, "1H")])
+            for sym in _tnf():
+                pairs.append((sym, "D1"))
+            for sym in _tf():
+                pairs.append((sym, "D1"))
+            pairs.append(("SPX", "30m"))
+            pairs.append(("SPX", "D1"))
+            # Deduplicate while preserving order
+            seen: set = set()
+            deduped: list[tuple[str, str]] = []
+            for item in pairs:
+                if item not in seen:
+                    seen.add(item)
+                    deduped.append(item)
+            pairs = deduped
+
+            logger.info(f"[STARTUP-SYNC] Syncing {len(pairs)} asset/timeframe pairs...")
+            result = cache.ensure_fresh_candles_batch(pairs)
+            logger.info(
+                f"[STARTUP-SYNC] Complete | "
+                f"refreshed={result['refreshed']} | "
+                f"fresh={result['already_fresh']} | "
+                f"failed={result['failed']}"
+            )
+        except Exception as e:
+            logger.warning(f"[STARTUP-SYNC] Failed (non-fatal): {e}")
+
+    _asyncio.create_task(_startup_candle_sync())
 
     try:
         recovery_check()

@@ -323,6 +323,19 @@ class StocksAlgo1Strategy(BaseStrategy):
             entry_price = float(sym_candles[-1]["close"])
             stop_loss = round(entry_price * (1 - STOP_LOSS_PCT), 6)
 
+            # Validate entry price against live FCSAPI before inserting signal
+            price_check = self.cache._validate_entry_price(sym, entry_price, timeframe="D1")
+            if not price_check["valid"]:
+                logger.warning(
+                    f"[ALGO1] {sym} | Entry price validation FAILED | "
+                    f"cached={price_check['cached_price']:.5f} | "
+                    f"live={price_check['live_price']:.5f} | "
+                    f"diff={price_check['diff_pct']:.2f}% | "
+                    f"Cache refreshed — re-evaluating on next tick"
+                )
+                results["skipped"] = results.get("skipped", 0) + 1
+                continue
+
             signal = {
                 "strategy_name": STRATEGY_NAME,
                 "asset": sym,

@@ -714,6 +714,17 @@ class MultiTimeframeEMAStrategy(BaseStrategy):
             "atr_at_entry": round(atr_at_entry, 6),
             "signal_timestamp": signal_timestamp,
         }
+        # Validate entry price against live FCSAPI before inserting signal
+        price_check = self.cache._validate_entry_price(asset, current_price, timeframe=TIMEFRAME_H1)
+        if not price_check["valid"]:
+            logger.warning(
+                f"[MTF-EMA] {asset} | Entry price validation FAILED | "
+                f"cached={price_check['cached_price']:.5f} | "
+                f"live={price_check['live_price']:.5f} | "
+                f"diff={price_check['diff_pct']:.2f}% | "
+                f"Cache refreshed — re-evaluating on next tick"
+            )
+            return None
         close_opposite_signal_if_exists(STRATEGY_NAME, asset, direction)
         signal_id = insert_signal(signal)
         if signal_id:

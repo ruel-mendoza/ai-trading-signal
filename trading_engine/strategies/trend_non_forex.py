@@ -464,6 +464,17 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                 "suggested_quantity": suggested_qty,
                 "risk_pct": RISK_PCT_PER_TRADE if suggested_qty else None,
             }
+            # Validate entry price against live FCSAPI before inserting signal
+            price_check = self.cache._validate_entry_price(asset, current_close, timeframe=TIMEFRAME)
+            if not price_check["valid"]:
+                logger.warning(
+                    f"[TREND-NONFX] {asset} | Entry price validation FAILED | "
+                    f"cached={price_check['cached_price']:.5f} | "
+                    f"live={price_check['live_price']:.5f} | "
+                    f"diff={price_check['diff_pct']:.2f}% | "
+                    f"Cache refreshed — re-evaluating on next tick"
+                )
+                return SignalResult()
             # Close opposite direction signal if this strategy has one open
             close_opposite_signal_if_exists(STRATEGY_NAME, asset, "BUY")
             signal_id = insert_signal(signal)
@@ -572,6 +583,17 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                     "suggested_quantity": suggested_qty,
                     "risk_pct": RISK_PCT_PER_TRADE if suggested_qty else None,
                 }
+                # Validate entry price against live FCSAPI before inserting signal
+                price_check = self.cache._validate_entry_price(asset, current_close, timeframe=TIMEFRAME)
+                if not price_check["valid"]:
+                    logger.warning(
+                        f"[TREND-NONFX] {asset} | SHORT entry price validation FAILED | "
+                        f"cached={price_check['cached_price']:.5f} | "
+                        f"live={price_check['live_price']:.5f} | "
+                        f"diff={price_check['diff_pct']:.2f}% | "
+                        f"Cache refreshed — re-evaluating on next tick"
+                    )
+                    return SignalResult()
                 # Close opposite direction signal if this strategy has one open
                 close_opposite_signal_if_exists(STRATEGY_NAME, asset, "SELL")
                 signal_id = insert_signal(signal)
