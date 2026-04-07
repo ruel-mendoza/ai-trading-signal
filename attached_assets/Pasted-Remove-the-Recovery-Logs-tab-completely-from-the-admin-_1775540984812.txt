@@ -1,0 +1,65 @@
+Remove the Recovery Logs tab completely from the admin dashboard in trading_engine/admin.py. This includes removing all related frontend code, backend endpoints, and sidebar navigation links.
+Remove from admin.py:
+
+Sidebar link — remove this line from the admin sidebar HTML:
+
+pythonadmin_system_links += _sidebar_link(
+    "recovery", "Recovery Logs", svg_calendar, tab, "sidebar-recovery"
+)
+
+Mobile tab bar — remove:
+
+pythonadmin_mobile_tabs += _mobile_tab("recovery", "Recovery", tab)
+
+Tab content HTML block — remove the entire tab-recovery div block:
+
+html<div id="tab-recovery" class="tab-content ...">
+    ...
+</div>
+
+JavaScript functions — remove these functions from ADMIN_JS:
+
+loadRecoveryLogs()
+formatRecoveryDate()
+muteAlert()
+
+
+showTab() function — remove this line from inside showTab() in ADMIN_JS:
+
+javascriptif (tabName === 'recovery') loadRecoveryLogs();
+
+Backend endpoints — remove these two route handlers:
+
+python@router.get("/api/recovery-logs")
+def api_recovery_logs(...)
+
+@router.delete("/api/recovery-logs/{log_id}")
+def api_delete_recovery_log(...)
+
+Default tab redirect — in the admin_dashboard() route function, find this block and remove "recovery" from the list of tabs that get redirected to "signals" for non-admin users:
+
+pythonif not is_admin and tab in (
+    ...
+    "recovery",  # remove this line
+    ...
+):
+    tab = "signals"
+
+Do NOT remove:
+
+The RecoveryNotification model in trading_engine/models.py — keep the DB table in case it is needed later
+The insert_recovery_notification() and get_recovery_notifications() functions in trading_engine/database.py — these are still called by trading_engine/services/notification_service.py
+The log_recovery_event() calls in main.py — these still write to the table for audit purposes
+The PROXIMITY_ALERT insertion logic in trading_engine/engine/watchdog.py
+
+
+After removing, verify:
+
+The sidebar no longer shows "Recovery Logs"
+No JavaScript errors in the browser console related to missing functions
+The admin dashboard loads correctly on all other tabs
+The remaining tabs (Scheduler Health, System Status) still work normally
+
+References:
+
+trading_engine/admin.py — all changes are contained in this single file
