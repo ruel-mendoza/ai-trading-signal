@@ -146,6 +146,28 @@ def _calculate_momentum(candles: list[dict]) -> Optional[float]:
     return (price_1m_ago - price_12m_ago) / price_12m_ago
 
 
+def _count_trading_days_since_entry(entry_date_str: str) -> int:
+    """Count actual trading weekdays elapsed since entry date to today ET.
+    Used as a cross-check against the scheduler-based hold counter.
+    """
+    now_et = datetime.now(ET_ZONE).date()
+    try:
+        entry_dt = datetime.strptime(
+            str(entry_date_str)[:19], "%Y-%m-%dT%H:%M:%S"
+        ).date()
+    except (ValueError, TypeError):
+        return 0
+    while entry_dt.weekday() >= 5:
+        entry_dt += timedelta(days=1)
+    count = 0
+    current = entry_dt
+    while current <= now_et:
+        if current.weekday() < 5:
+            count += 1
+        current += timedelta(days=1)
+    return count
+
+
 class StocksAlgo1Strategy(BaseStrategy):
     """Monthly Momentum — NASDAQ 100."""
 
@@ -171,6 +193,26 @@ class StocksAlgo1Strategy(BaseStrategy):
         logger.info(
             f"[ALGO1] ====== Monthly cycle start | {now_et.strftime('%Y-%m-%d %H:%M')} ET ======"
         )
+
+        from trading_engine.utils.holiday_manager import is_trading_holiday
+        if now_et.weekday() >= 5:
+            logger.info(
+                f"[ALGO1] Weekend ({now_et.strftime('%A')}) — skipping run_monthly"
+            )
+            return {
+                "signals_opened": 0,
+                "signals_closed": 0,
+                "skipped": True,
+                "error": "weekend",
+            }
+        if is_trading_holiday(now_et):
+            logger.info("[ALGO1] Trading holiday — skipping run_monthly")
+            return {
+                "signals_opened": 0,
+                "signals_closed": 0,
+                "skipped": True,
+                "error": "holiday",
+            }
 
         result = {
             "signals_opened": 0,
@@ -359,6 +401,30 @@ class StocksAlgo1Strategy(BaseStrategy):
         Does NOT evaluate monthly rebalancing — that is handled by run_monthly().
         """
         closed: list[dict] = []
+
+        from trading_engine.utils.holiday_manager import is_trading_holiday as _is_holiday
+        _now_et = datetime.now(ET_ZONE)
+
+        # Weekend and holiday gate
+        if _now_et.weekday() >= 5 or _is_holiday(_now_et):
+            logger.info(
+                f"[ALGO1-EXIT] Weekend or holiday ({_now_et.strftime('%A')}) — "
+                f"skipping exit checks"
+            )
+            return closed
+
+        # NYSE session gate: only evaluate stop loss after market close (16:05-16:30 ET)
+        # Matches the same gate used in stocks_algo2.py
+        _et_minutes = _now_et.hour * 60 + _now_et.minute
+        _gate_start = 16 * 60 + 5   # 4:05 PM ET
+        _gate_end   = 16 * 60 + 30  # 4:30 PM ET
+        _in_gate    = _gate_start <= _et_minutes <= _gate_end
+        if not _in_gate:
+            logger.info(
+                f"[ALGO1-EXIT] Outside exit window (16:05-16:30 ET) — "
+                f"current={_now_et.strftime('%H:%M')} ET — skipping"
+            )
+            return closed
 
         # ── Orphan detection: find OPEN signals with no matching open_positions row ──
         from trading_engine.database import get_active_signals, SessionFactory

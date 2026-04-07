@@ -1,0 +1,133 @@
+Add weekend gate, holiday gate, and NYSE session gate to trading_engine/strategies/stocks_algo1.py to match the same pattern already implemented in stocks_algo2.py.
+
+Fix 1 — Add weekend and holiday gate to run_monthly()
+In the run_monthly() method, immediately after now_et = datetime.now(ET_ZONE) and before the result = {...} dict, add:
+pythonfrom trading_engine.utils.holiday_manager import is_trading_holiday
+if now_et.weekday() >= 5:
+    logger.info(
+        f"[ALGO1] Weekend ({now_et.strftime('%A')}) — skipping run_monthly"
+    )
+    return {
+        "signals_opened": 0,
+        "signals_closed": 0,
+        "skipped": True,
+        "error": "weekend",
+    }
+if is_trading_holiday(now_et):
+    logger.info("[ALGO1] Trading holiday — skipping run_monthly")
+    return {
+        "signals_opened": 0,
+        "signals_closed": 0,
+        "skipped": True,
+        "error": "holiday",
+    }
+
+Fix 2 — Add weekend, holiday, and session gate to check_exits()
+In the check_exits() method, immediately after closed: list[dict] = [] and before the orphan detection block, add:
+pythonfrom trading_engine.utils.holiday_manager import is_trading_holiday as _is_holiday
+_now_et = datetime.now(ET_ZONE)
+
+# Weekend and holiday gate
+if _now_et.weekday() >= 5 or _is_holiday(_now_et):
+    logger.info(
+        f"[ALGO1-EXIT] Weekend or holiday ({_now_et.strftime('%A')}) — "
+        f"skipping exit checks"
+    )
+    return closed
+
+# NYSE session gate: only evaluate stop loss after market close (16:05-16:30 ET)
+# Matches the same gate used in stocks_algo2.py
+_et_minutes = _now_et.hour * 60 + _now_et.minute
+_gate_start = 16 * 60 + 5   # 4:05 PM ET
+_gate_end   = 16 * 60 + 30  # 4:30 PM ET
+_in_gate    = _gate_start <= _et_minutes <= _gate_end
+if not _in_gate:
+    logger.info(
+        f"[ALGO1-EXIT] Outside exit window (16:05-16:30 ET) — "
+        f"current={_now_et.strftime('%H:%M')} ET — skipping"
+    )
+    return closed
+
+Fix 3 — Add _count_trading_days() helper
+Add the same helper function already used in stocks_algo2.py at the module level in stocks_algo1.py, directly below the _calculate_momentum() function:
+pythondef _count_trading_days_since_entry(entry_date_str: str) -> int:
+    """Count actual trading weekdays elapsed since entry date to today ET.
+    Used as a cross-check against the scheduler-based hold counter.
+    """
+    from datetime import timedelta
+    now_et = datetime.now(ET_ZONE).date()
+    try:
+        entry_dt = datetime.strptime(
+            str(entry_date_str)[:19], "%Y-%m-%dT%H:%M:%S"
+        ).date()
+    except (ValueError, TypeError):
+        return 0
+    while entry_dt.weekday() >= 5:
+        entry_dt += timedelta(days=1)
+    count = 0
+    current = entry_dt
+    while current <= now_et:
+        if current.weekday() < 5:
+            count += 1
+        current += timedelta(days=1)
+    return count
+
+Fix 4 — Update the scheduler job in main.py
+In main.py, the _scheduled_stocks_algo1_exit_check() function currently runs at 4:05 PM ET daily with no weekend check at the scheduler level. Add a guard at the top of the function:
+pythondef _scheduled_stocks_algo1_exit_check():
+    from trading_engine.utils.holiday_manager import is_trading_holiday
+    et = _get_et_context()
+    
+    # Weekend and holiday gate at scheduler level
+    if et["now"].weekday() >= 5:
+        logger.info(
+            f"[SCHEDULER] stocks_algo1_exit | Weekend ({et['now'].strftime('%A')}) — skipping"
+        )
+        return
+    if is_trading_holiday(et["now"]):
+        logger.info("[SCHEDULER] stocks_algo1_exit | Trading holiday — skipping")
+        return
+    
+    logger.info(
+        f"[SCHEDULER] stocks_algo1 daily exit check | {et['time_str']} {et['label']}"
+    )
+    try:
+        exits = stocks_algo1_strategy.check_exits()
+        if exits:
+            logger.info(
+                f"[SCHEDULER] stocks_algo1 | {len(exits)} stop-loss exit(s) triggered"
+            )
+    except Exception as e:
+        logger.error(
+            f"[SCHEDULER] stocks_algo1 exit check failed: {e}", exc_info=True
+        )
+Also add the same guard to _scheduled_stocks_algo1_monthly() in main.py at the top of the function after et = _get_et_context():
+pythonif et["now"].weekday() >= 5:
+    logger.info(
+        f"[SCHEDULER] stocks_algo1 | Weekend ({et['now'].strftime('%A')}) — skipping monthly"
+    )
+    return
+if is_trading_holiday(et["now"]):
+    logger.info("[SCHEDULER] stocks_algo1 | Trading holiday — skipping monthly")
+    return
+
+Do NOT change:
+
+The run_monthly() logic for scoring, ranking, and opening/closing signals
+The check_exits() stop loss calculation (entry * (1 - STOP_LOSS_PCT))
+The orphan detection and recovery logic
+Any imports already at the top of the file
+stocks_algo2.py — already correct, no changes needed
+
+
+Verify after applying:
+bash# Confirm weekend gate works by checking logs on next Saturday scheduler run
+sqlite3 trading_engine/trading_data.db "
+SELECT strategy_name, status, started_at, error_detail 
+FROM scheduler_job_log 
+WHERE strategy_name='stocks_algo1' 
+ORDER BY id DESC LIMIT 5;"
+References — follow patterns exactly from:
+
+trading_engine/strategies/stocks_algo2.py — the weekend gate, holiday gate, session gate, and _count_trading_days() helper are all already implemented there and should be mirrored exactly
+main.py — _scheduled_stocks_algo2_daily() for the scheduler-level guard pattern

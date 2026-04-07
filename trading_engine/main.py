@@ -958,8 +958,17 @@ def recovery_check():
 
 def _scheduled_stocks_algo1_monthly():
     from trading_engine.strategies.stocks_algo1 import _is_first_trading_day_of_month
+    from trading_engine.utils.holiday_manager import is_trading_holiday
     et = _get_et_context()
     logger.info(f"[SCHEDULER] ====== stocks_algo1 monthly tick | {et['time_str']} {et['label']} ======")
+    if et["now"].weekday() >= 5:
+        logger.info(
+            f"[SCHEDULER] stocks_algo1 | Weekend ({et['now'].strftime('%A')}) — skipping monthly"
+        )
+        return
+    if is_trading_holiday(et["now"]):
+        logger.info("[SCHEDULER] stocks_algo1 | Trading holiday — skipping monthly")
+        return
     if not _is_first_trading_day_of_month():
         logger.info("[SCHEDULER] stocks_algo1 | Not first trading day - skipping")
         return
@@ -993,7 +1002,19 @@ def _scheduled_stocks_algo1_monthly():
 
 
 def _scheduled_stocks_algo1_exit_check():
+    from trading_engine.utils.holiday_manager import is_trading_holiday
     et = _get_et_context()
+
+    # Weekend and holiday gate at scheduler level
+    if et["now"].weekday() >= 5:
+        logger.info(
+            f"[SCHEDULER] stocks_algo1_exit | Weekend ({et['now'].strftime('%A')}) — skipping"
+        )
+        return
+    if is_trading_holiday(et["now"]):
+        logger.info("[SCHEDULER] stocks_algo1_exit | Trading holiday — skipping")
+        return
+
     logger.info(f"[SCHEDULER] stocks_algo1 daily exit check | {et['time_str']} {et['label']}")
     try:
         exits = stocks_algo1_strategy.check_exits()
