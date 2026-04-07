@@ -1,0 +1,49 @@
+Create a Python function sync_staging_from_live() in trading_engine/utils/staging_sync.py that copies live production data into a staging/development database for testing purposes.
+Requirements:
+The function should:
+
+Copy the SQLite database from the live path (trading_engine/trading_data.db) to a staging path (trading_engine/trading_data_staging.db), using shutil.copy2 so metadata is preserved.
+Accept optional filters via parameters:
+
+strategies: list[str] | None — only sync signals/positions for these strategy names (e.g. ["mtf_ema", "trend_forex"]). If None, sync all.
+max_age_days: int — only copy signals with signal_timestamp newer than this many days. Default 92 to match the existing retention policy.
+include_candles: bool — whether to copy the candles table (it can be very large). Default False.
+dry_run: bool — if True, print what would be copied without writing anything. Default False.
+
+
+Sanitise sensitive data in the staging copy:
+
+Clear the fcsapi_key row in app_settings (set value to empty string).
+Clear all rows in admin_sessions.
+Replace all password_hash values in admin_users with the hash of the string "staging123" using the existing _hash_password helper from trading_engine/database.py.
+Clear encrypted_app_password in user_cms_configs (set to empty string).
+Clear webhook_url in app_settings.
+
+
+Return a summary dict like:
+
+python{
+    "source": "trading_data.db",
+    "destination": "trading_data_staging.db",
+    "signals_copied": 142,
+    "positions_copied": 3,
+    "candles_copied": 0,
+    "rows_sanitised": 7,
+    "dry_run": False,
+    "completed_at": "2026-04-07T14:32:00Z"
+}
+
+Add a CLI entry point at the bottom so the file can be run directly:
+
+bashpython3 trading_engine/utils/staging_sync.py
+python3 trading_engine/utils/staging_sync.py --strategies mtf_ema trend_forex --max-age-days 30 --include-candles --dry-run
+
+Log all steps using the existing logging pattern (logging.getLogger("trading_engine.utils.staging_sync")).
+Do not modify the live database at any point. All writes go only to the staging copy.
+
+References — use the patterns already established in these files:
+
+trading_engine/utils/backup_manager.py — for file copy pattern and path constants
+trading_engine/database.py — for _hash_password, session/settings access, and the SQLAlchemy engine setup
+trading_engine/utils/storage_manager.py — for direct SQLAlchemy text query pattern
+backfill.py — for the CLI argparse pattern

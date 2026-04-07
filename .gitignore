@@ -7,3 +7,4 @@ vite.config.ts.*
 *.db-shm
 *.db-wal
 *.db-journal
+trading_data_staging.db
