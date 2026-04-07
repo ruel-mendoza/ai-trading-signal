@@ -1,0 +1,73 @@
+Create a Python CLI script restore_closed_signals.py in the project root that manually inserts specific closed signals into the staging database to match the live site signal history.
+The two signals to insert:
+pythonSIGNALS_TO_RESTORE = [
+    {
+        "strategy_name": "trend_non_forex",
+        "asset": "USO",
+        "direction": "BUY",
+        "entry_price": 139.16000,
+        "stop_loss": 128.92046,
+        "take_profit": None,
+        "atr_at_entry": None,
+        "signal_timestamp": "2026-04-06T16:01:00",
+        "status": "CLOSED",
+        "exit_price": 138.94000,
+        "exit_reason": "Manual restore — matched from live site",
+        "asset_class": "forex",
+    },
+    {
+        "strategy_name": "trend_non_forex",
+        "asset": "UGA",
+        "direction": "BUY",
+        "entry_price": 106.86000,
+        "stop_loss": 99.95472,
+        "take_profit": None,
+        "atr_at_entry": None,
+        "signal_timestamp": "2026-04-06T16:01:00",
+        "status": "CLOSED",
+        "exit_price": 106.50000,
+        "exit_reason": "Manual restore — matched from live site",
+        "asset_class": "forex",
+    },
+]
+Requirements:
+
+Target the staging database by default (trading_engine/trading_data_staging.db). Accept an optional --db-path argument to override (so it can also be pointed at the live DB if needed).
+For each signal, do the following in a single transaction:
+
+Check if a signal already exists for (strategy_name, asset, signal_timestamp) using the existing signal_exists() function from trading_engine/database.py. If it exists, skip and log a warning.
+Insert the signal row directly via SQLAlchemy using the Signal model from trading_engine/models.py, setting all fields including status="CLOSED", exit_price, and exit_reason.
+Resolve full_name from _ASSET_NAME_MAP in trading_engine/database.py (USO → "United States Oil Fund", UGA → "United States Gasoline Fund").
+Do not create an open_positions row — these are already closed signals.
+Do not call insert_signal() since that function forces status="OPEN". Write directly to the Signal model.
+
+
+Support --dry-run — print what would be inserted without writing to the DB.
+Support --force — skip the confirmation prompt.
+Print a summary table after completion:
+
+─────────────────────────────────────────────
+  Asset      : USO
+  Full Name  : United States Oil Fund
+  Direction  : BUY
+  Entry      : 139.16000
+  Stop Loss  : 128.92046
+  Exit Price : 138.94000
+  Status     : CLOSED
+  Timestamp  : 2026-04-06T16:01:00
+─────────────────────────────────────────────
+✓ Inserted signal id=<id>
+
+After all inserts, call invalidate_signal_caches() from trading_engine/api_v1.py to flush the TTL cache so the signals appear immediately (swallow the exception if the engine is offline).
+Log all steps using logging.getLogger("restore_closed_signals").
+CLI usage:
+
+bashpython3 restore_closed_signals.py                          # insert into staging DB
+python3 restore_closed_signals.py --dry-run                # preview only
+python3 restore_closed_signals.py --force                  # skip confirmation
+python3 restore_closed_signals.py --db-path trading_engine/trading_data.db  # target live DB
+References — follow patterns from:
+
+restore_signal.py — for CLI structure, confirmation prompt, print summary, and cache invalidation
+trading_engine/database.py — for Signal model access, signal_exists(), _ASSET_NAME_MAP, and SessionFactory
+trading_engine/models.py — for the Signal SQLAlchemy model fields
