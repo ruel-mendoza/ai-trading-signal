@@ -32,7 +32,6 @@ STOP_LOSS_ATR_MULT = 2.0
 TIME_EXIT_HOURS = 6
 
 ET_ZONE = pytz.timezone("America/New_York")
-TOKYO_ZONE = pytz.timezone("Asia/Tokyo")
 
 
 class HighestLowestFXStrategy(BaseStrategy):
@@ -60,19 +59,18 @@ class HighestLowestFXStrategy(BaseStrategy):
 
     def _get_tokyo_session_levels(self, h1_candles: list[dict]) -> Optional[dict]:
         now_utc = datetime.now(pytz.utc)
-        now_et = now_utc.astimezone(ET_ZONE)
-        today_et = now_et.date()
 
-        tokyo_start_local = TOKYO_ZONE.localize(datetime(today_et.year, today_et.month, today_et.day, 8, 0))
-        ny_start_et = ET_ZONE.localize(datetime(today_et.year, today_et.month, today_et.day, 8, 0))
-
-        tokyo_start_utc = tokyo_start_local.astimezone(pytz.utc)
-        ny_start_utc = ny_start_et.astimezone(pytz.utc)
+        # Tokyo market hours: 9:00 AM JST – 6:00 PM JST = 00:00 UTC – 09:00 UTC
+        # We use the current UTC date so the window is always "today's Asian session".
+        today_utc = now_utc.date()
+        tokyo_open_utc  = pytz.utc.localize(datetime(today_utc.year, today_utc.month, today_utc.day, 0, 0))
+        tokyo_close_utc = pytz.utc.localize(datetime(today_utc.year, today_utc.month, today_utc.day, 9, 0))
 
         logger.info(
-            f"[HLC-FX] Tokyo session window | "
-            f"tokyo_start={tokyo_start_utc.strftime('%Y-%m-%d %H:%M')} UTC | "
-            f"ny_start={ny_start_utc.strftime('%Y-%m-%d %H:%M')} UTC"
+            f"[HLC-FX] Tokyo session window (UTC-based) | "
+            f"open={tokyo_open_utc.strftime('%Y-%m-%d %H:%M')} UTC | "
+            f"close={tokyo_close_utc.strftime('%Y-%m-%d %H:%M')} UTC "
+            f"(9:00 AM JST – 6:00 PM JST)"
         )
 
         session_candles = []
@@ -89,11 +87,11 @@ class HighestLowestFXStrategy(BaseStrategy):
                 except (ValueError, TypeError):
                     continue
 
-            if tokyo_start_utc <= c_utc < ny_start_utc:
+            if tokyo_open_utc <= c_utc < tokyo_close_utc:
                 session_candles.append(c)
 
         if not session_candles:
-            logger.warning("[HLC-FX] No H1 candles found in Tokyo→NY session window")
+            logger.warning("[HLC-FX] No H1 candles found in Tokyo session window (00:00–09:00 UTC)")
             return None
 
         highest_close = max(c["close"] for c in session_candles)
@@ -109,8 +107,8 @@ class HighestLowestFXStrategy(BaseStrategy):
             "highest_close": highest_close,
             "lowest_close": lowest_close,
             "candle_count": len(session_candles),
-            "tokyo_start_utc": tokyo_start_utc,
-            "ny_start_utc": ny_start_utc,
+            "tokyo_open_utc": tokyo_open_utc,
+            "tokyo_close_utc": tokyo_close_utc,
         }
 
     def _get_ny_session_candles(self, h1_candles: list[dict]) -> list[dict]:

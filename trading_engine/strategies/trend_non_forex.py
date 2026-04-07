@@ -848,7 +848,7 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                         f"[TREND-NONFX-EXIT] Position #{pos_id} | EXIT: SHORT closing-rule gate triggered"
                     )
                     for sig in active_sigs_for_stop:
-                        close_signal(sig["id"], exit_reason)
+                        close_signal(sig["id"], exit_reason, exit_price=current_close)
                     close_position(STRATEGY_NAME, asset)
                     closed_signals.append(
                         {
@@ -901,7 +901,7 @@ class NonForexTrendFollowingStrategy(BaseStrategy):
                     f"[TREND-NONFX-EXIT] Position #{pos_id} | EXIT: closing-rule gate triggered"
                 )
                 for sig in active_sigs_for_stop:
-                    close_signal(sig["id"], exit_reason)
+                    close_signal(sig["id"], exit_reason, exit_price=current_close)
                 close_position(STRATEGY_NAME, asset)
                 closed_signals.append(
                     {**pos, "exit_price": current_close, "exit_reason": "closing_rule"}
