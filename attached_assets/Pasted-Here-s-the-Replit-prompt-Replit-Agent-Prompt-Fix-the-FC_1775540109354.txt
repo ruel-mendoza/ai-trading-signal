@@ -1,0 +1,155 @@
+Here's the Replit prompt:
+
+Replit Agent Prompt:
+Fix the FCSAPI quota tracking system so the local credit counter automatically syncs with the real FCSAPI account balance, and add a "Sync Credits" button to the admin dashboard Settings tab.
+
+Problem to fix:
+The local app_settings table tracks fcsapi_remaining_credits independently from the real FCSAPI account. When the monthly billing cycle resets, the local counter stays at the exhausted value (remaining=1) while the real account has full credits. This causes the kill switch to keep re-triggering and blocks all API calls even though the account has credits available.
+
+Fix 1 — Update quota_manager.py
+In trading_engine/utils/quota_manager.py, add a new function sync_quota_from_api():
+pythondef sync_quota_from_api() -> dict:
+    """
+    Force-sync the local credit counter by making a lightweight FCSAPI
+    test call and reading the credit_count from the response info block.
+    
+    Called:
+      - On app startup (in main.py lifespan)
+      - When admin clicks "Sync Credits" button
+      - Automatically at the start of each new billing month
+    
+    Returns a dict with the sync result.
+    """
+The function should:
+
+Make a minimal FCSAPI call using the existing FCSAPIClient._get() method — use the /forex/list endpoint with per_page=1 to consume only 1 credit
+Extract credit_count from response["info"]["credit_count"]
+Update fcsapi_remaining_credits in app_settings with the real value
+If the real remaining credits are above the critical threshold (5% of limit), automatically:
+
+Set credit_kill_switch to false
+Set quota_watchdog_disabled to false
+Set credit_kill_switch_month to empty string
+
+
+Also delete stale api_usage_log rows from previous billing months so the daily burn rate recalculates correctly:
+
+python   DELETE FROM api_usage_log WHERE timestamp < date('now', 'start of month')
+
+Return a summary dict:
+
+python   {
+       "success": True,
+       "real_remaining": 499053,
+       "real_limit": 500000,
+       "usage_pct": 0.19,
+       "kill_switch_cleared": True,
+       "stale_logs_deleted": 947,
+       "synced_at": "2026-04-07T05:30:00Z"
+   }
+
+Fix 2 — Auto-sync on new billing month
+In update_quota() in quota_manager.py, add a billing cycle detection check:
+pythondef _is_new_billing_month() -> bool:
+    """
+    Returns True if the stored kill_switch_month is from a previous 
+    calendar month, indicating the billing cycle has reset.
+    """
+If a new billing month is detected inside update_quota(), automatically call sync_quota_from_api() to reset the counters before applying the new credit_count value.
+
+Fix 3 — Add admin API endpoint
+In trading_engine/admin.py, add a new POST endpoint:
+python@router.post("/api/quota/sync")
+def api_sync_quota(request: Request):
+This endpoint should:
+
+Require admin role (_admin_role_guard)
+Call sync_quota_from_api() from quota_manager.py
+Also call invalidate_signal_caches() after sync
+Return the sync result dict directly
+
+
+Fix 4 — Add "Sync Credits" button to admin dashboard
+In the Settings tab HTML inside _build_settings_html() in trading_engine/admin.py, add a new settings section after the existing "API Credit Meter" section:
+html<div class="settings-section" style="margin-top:20px;">
+    <h3>Credit Sync</h3>
+    <p class="settings-desc">
+        If the credit meter shows 0 remaining but your FCSAPI plan has renewed, 
+        click Sync Credits to pull the real balance from FCSAPI and clear the 
+        kill switch automatically.
+    </p>
+    <div style="display:flex;gap:8px;align-items:center;">
+        <button class="btn btn-primary" onclick="syncCredits()" 
+                data-testid="button-sync-credits"
+                id="btn-sync-credits">
+            Sync Credits from FCSAPI
+        </button>
+        <span id="sync-credits-status" style="font-size:13px;color:#94a3b8;"></span>
+    </div>
+    <div id="sync-credits-result" style="margin-top:12px;"></div>
+</div>
+Add the corresponding JavaScript function syncCredits() to ADMIN_JS in admin.py:
+javascriptasync function syncCredits() {
+    const btn = document.getElementById('btn-sync-credits');
+    const resultEl = document.getElementById('sync-credits-result');
+    const statusEl = document.getElementById('sync-credits-status');
+    
+    btn.disabled = true;
+    btn.textContent = 'Syncing...';
+    statusEl.textContent = 'Contacting FCSAPI...';
+    resultEl.innerHTML = '';
+
+    try {
+        const res = await fetch(BASE + '/admin/api/quota/sync', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            // Show success with real credit values
+            // Show kill switch status
+            // Reload credit meter automatically
+            // Update button state
+        } else {
+            // Show error message
+        }
+    } catch (e) {
+        // Show network error
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Sync Credits from FCSAPI';
+}
+The success result display should show:
+
+Real remaining credits with a green badge
+Whether the kill switch was cleared
+How many stale log entries were deleted
+A "Credit meter reloaded" confirmation
+Automatically call loadCreditMeter() to refresh the meter widget
+
+
+Fix 5 — Auto-sync on startup
+In main.py inside the lifespan async context manager, after init_db() is called, add:
+python# Auto-sync quota from FCSAPI on startup to correct any stale local counters
+try:
+    from trading_engine.utils.quota_manager import sync_quota_from_api
+    sync_result = sync_quota_from_api()
+    if sync_result.get("kill_switch_cleared"):
+        logger.info(
+            f"[STARTUP] Quota synced — kill switch cleared | "
+            f"real_remaining={sync_result.get('real_remaining'):,}"
+        )
+    else:
+        logger.info(
+            f"[STARTUP] Quota synced | "
+            f"remaining={sync_result.get('real_remaining'):,}"
+        )
+except Exception as e:
+    logger.warning(f"[STARTUP] Quota sync failed (non-fatal): {e}")
+
+References — follow patterns from:
+
+trading_engine/utils/quota_manager.py — existing update_quota(), check_budget_health(), _disable_watchdog(), _enable_watchdog()
+trading_engine/admin.py — existing _build_settings_html(), ADMIN_JS, loadCreditMeter(), api_quota_check() endpoint pattern
+trading_engine/fcsapi_client.py — existing test_connection() for the lightweight API call pattern
+trading_engine/credit_control.py — existing reset_kill_switch() and is_api_blocked()
+main.py — existing startup sequence in lifespan() for the auto-sync placement

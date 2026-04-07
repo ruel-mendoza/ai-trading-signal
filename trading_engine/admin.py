@@ -606,6 +606,24 @@ def _build_settings_html() -> str:
     </div>
 
     <div class="settings-section" style="margin-top:20px;">
+        <h3>Credit Sync</h3>
+        <p class="settings-desc">
+            If the credit meter shows 0 remaining but your FCSAPI plan has renewed,
+            click Sync Credits to pull the real balance from FCSAPI and clear the
+            kill switch automatically.
+        </p>
+        <div style="display:flex;gap:8px;align-items:center;">
+            <button class="btn btn-primary" onclick="syncCredits()"
+                    data-testid="button-sync-credits"
+                    id="btn-sync-credits">
+                Sync Credits from FCSAPI
+            </button>
+            <span id="sync-credits-status" style="font-size:13px;color:#94a3b8;"></span>
+        </div>
+        <div id="sync-credits-result" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="settings-section" style="margin-top:20px;">
         <h3>Key Priority</h3>
         <div class="timezone-note" style="margin-top:0;">
             <ul>
@@ -4309,6 +4327,38 @@ async function loadCreditMeter() {
             </div>`;
     } catch (e) {
         container.innerHTML = '<div class="result-error">Failed to load credit data.</div>';
+    }
+}
+
+async function syncCredits() {
+    const btn = document.getElementById('btn-sync-credits');
+    const statusEl = document.getElementById('sync-credits-status');
+    const resultEl = document.getElementById('sync-credits-result');
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.textContent = 'Syncing...';
+    if (resultEl) resultEl.innerHTML = '';
+    try {
+        const res = await fetch(BASE + '/admin/api/quota/sync', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            const r = data.result || {};
+            const usagePct = (r.usage_pct || 0).toFixed(1);
+            const remaining = Number(r.real_remaining || 0).toLocaleString();
+            const limit = Number(r.real_limit || 0).toLocaleString();
+            const cleared = r.kill_switch_cleared ? '<span style="color:#22c55e;"> Kill switch cleared.</span>' : '';
+            const stale = r.stale_logs_deleted > 0 ? `<span style="color:#94a3b8;"> Removed ${r.stale_logs_deleted} stale log rows.</span>` : '';
+            resultEl.innerHTML = `<div class="result-success">Synced successfully. Remaining: <strong>${remaining}</strong> / ${limit} (${usagePct}% used).${cleared}${stale}</div>`;
+            if (statusEl) statusEl.textContent = '';
+            loadCreditMeter();
+        } else {
+            resultEl.innerHTML = '<div class="result-error">Sync failed: ' + (data.error || 'Unknown error') + '</div>';
+            if (statusEl) statusEl.textContent = '';
+        }
+    } catch (e) {
+        resultEl.innerHTML = '<div class="result-error">Request error: ' + e.message + '</div>';
+        if (statusEl) statusEl.textContent = '';
+    } finally {
+        if (btn) btn.disabled = false;
     }
 }
 
@@ -8226,6 +8276,22 @@ def api_quota_check(request: Request):
 
     health = check_budget_health()
     return JSONResponse(content={"success": True, "health": health})
+
+
+@router.post("/api/quota/sync")
+def api_quota_sync(request: Request):
+    guard = _admin_role_guard(request)
+    if guard:
+        return guard
+    from trading_engine.utils.quota_manager import sync_quota_from_api
+
+    result = sync_quota_from_api()
+    if result.get("success"):
+        return JSONResponse(content={"success": True, "result": result})
+    return JSONResponse(
+        status_code=502,
+        content={"success": False, "error": result.get("error", "sync failed")},
+    )
 
 
 @router.get("/api/market-pulse")

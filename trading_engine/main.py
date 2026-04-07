@@ -1249,6 +1249,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"[RECOVERY] Startup recovery check failed: {e}", exc_info=True)
 
+    try:
+        from trading_engine.utils.quota_manager import sync_quota_from_api
+        result = sync_quota_from_api()
+        if result.get("success"):
+            logger.info(
+                f"[QUOTA] Startup quota sync complete: remaining={result.get('real_remaining', '?'):,} "
+                f"/ {result.get('real_limit', '?'):,} "
+                f"({result.get('usage_pct', 0):.1f}% used)"
+            )
+        else:
+            logger.warning(f"[QUOTA] Startup quota sync failed (non-fatal): {result.get('error')}")
+    except Exception as e:
+        logger.warning(f"[QUOTA] Startup quota sync error (non-fatal): {e}")
+
     watchdog = threading.Thread(target=_watchdog_thread, daemon=True, name="scheduler-watchdog")
     watchdog.start()
 
